@@ -1,1187 +1,1029 @@
-//! RELAY editor: Polar Night chrome, Share/Join, full-height L/R meters.
+//! The plugin window: header, a four-row form on one grid, footer status.
+//!
+//! Every element sits on two vertical lines: labels and the footer start at
+//! `PAD`, every control starts at `CTRL_X`, every readout ends at `RIGHT_X`.
+//! The whole window is painted into fixed rectangles; no egui panels.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use egui_phosphor::regular as ph;
-use relay_session::{
-    DEFAULT_CONNECT_PORT, PUBLIC_LINK_ORIGIN, SessionPill, SessionView, classify_session,
-    format_session_status, normalize_slug,
+#[cfg(test)]
+use egui::Mesh;
+use egui::epaint::text::{LayoutJob, TextFormat};
+use egui::{
+    Align, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame, Id,
+    Margin, Pos2, Rect, Sense, Stroke, StrokeKind, TextEdit, Ui, Visuals, pos2, vec2,
 };
-use truce_core::editor::{PluginContext, PluginContextReadF32};
+use relay_session::{PUBLIC_LINK_ORIGIN, normalize_slug};
+use truce::prelude::*;
 use truce_egui::EditorUi;
-use truce_font::JETBRAINS_MONO;
 
-use crate::{
-    Codec, MAX_WINDOW_H, MAX_WINDOW_W, METER_FLOOR_DB, MIN_WINDOW_H, MIN_WINDOW_W, Monitor,
-    Product, RelayParams, RelayParamsParamId as P, WINDOW_W, new_slug, publish_control,
-};
+use crate::meter::{PeakHold, db_to_pos, peak_to_db};
+use crate::status::{Facts, Health, describe};
+use crate::{Codec, Mode, Monitor, P, RelayParams, clipboard, slug};
 
-const MATARI_URL: &str = "https://matari-audio.com";
-const RELAY_URL: &str = "https://matari-audio.com";
-const GAIN_DEFAULT_01: f32 = 24.0 / 36.0;
-const METER_COL: f32 = 42.0;
-const METER_RAIL: f32 = 16.0;
-const HEADER_H: f32 = 44.0;
+/// Fixed editor size in logical pixels.
+pub const WINDOW: (u32, u32) = (680, 480);
 
-const BARLOW: &[u8] = include_bytes!("../assets/fonts/Barlow-SemiBold.ttf");
-const BARLOW_BLACK: &[u8] = include_bytes!("../assets/fonts/Barlow-Black.ttf");
-const FONT_BARLOW: &str = "barlow";
-const FONT_BARLOW_BLACK: &str = "barlow-black";
-const FONT_JETBRAINS: &str = "jetbrains";
-const FONT_PHOSPHOR: &str = "phosphor-regular";
+// RELAY white and electric-blue palette.
+const PAPER: Color32 = Color32::from_rgb(0xf4, 0xf6, 0xf8);
+const SURFACE: Color32 = Color32::from_rgb(0xe7, 0xee, 0xf7);
+const WELL: Color32 = Color32::WHITE;
+const HAIRLINE: Color32 = Color32::from_rgb(0xd9, 0xe3, 0xed);
+const TEXT: Color32 = Color32::from_rgb(0x14, 0x2b, 0x3b);
+const MUTED: Color32 = Color32::from_rgb(0x52, 0x6a, 0x7b);
+const DIM: Color32 = Color32::from_rgb(0x60, 0x75, 0x85);
+const STUDIO_BLUE: Color32 = Color32::from_rgb(0x08, 0x66, 0xe8);
+const OK: Color32 = Color32::from_rgb(0x15, 0x83, 0x6e);
+const WARN: Color32 = Color32::from_rgb(0x97, 0x60, 0x00);
+const HOT: Color32 = Color32::from_rgb(0xc2, 0x38, 0x52);
+const GYR_FLOOR: Color32 = Color32::from_rgb(0x3d, 0x8f, 0x6a);
 
-/// BUFFR Studio Blue — same tokens as drop-recorder `themes.json`.
-const BG: egui::Color32 = egui::Color32::from_rgb(25, 25, 25);
-const LANE: egui::Color32 = egui::Color32::from_rgb(37, 37, 37);
-const SURFACE: egui::Color32 = egui::Color32::from_rgb(53, 53, 53);
-const TEXT: egui::Color32 = egui::Color32::WHITE;
-const MUTED: egui::Color32 = egui::Color32::from_rgb(184, 184, 184);
-const PRIMARY: egui::Color32 = egui::Color32::from_rgb(0, 170, 255);
-const OK: egui::Color32 = egui::Color32::from_rgb(91, 232, 179);
-const WARN: egui::Color32 = egui::Color32::from_rgb(255, 199, 92);
-const HOT: egui::Color32 = egui::Color32::from_rgb(255, 112, 136);
-const SUNKEN: egui::Color32 = egui::Color32::from_rgb(16, 16, 16);
-const BORDER: egui::Color32 = egui::Color32::from_rgb(26, 94, 128);
-const GYR_FLOOR: egui::Color32 = egui::Color32::from_rgb(61, 143, 106);
+// Grid.
+const PAD: f32 = 24.0;
+const HEADER_H: f32 = 74.0;
+const CTRL_X: f32 = 112.0;
+const RIGHT_X: f32 = WINDOW.0 as f32 - PAD;
+const READOUT_W: f32 = 88.0;
+const ROW_H: f32 = 42.0;
+const ROW_GAP: f32 = 12.0;
+const FORM_TOP: f32 = 88.0;
+const FORM_RIGHT: f32 = 532.0;
+#[cfg(test)]
+const METER_H: f32 = 11.0;
+const FOOTER_Y: f32 = WINDOW.1 as f32 - 26.0;
 
-const FX_KNOB_DIAMETER: f32 = 62.0;
-const FX_ARC_START: f32 = std::f32::consts::PI * 0.75;
-const FX_ARC_SWEEP: f32 = std::f32::consts::PI * 1.5;
+const R_HARDWARE: CornerRadius = CornerRadius::same(21);
+const R_WELL: CornerRadius = CornerRadius::same(18);
+const R_METER: CornerRadius = CornerRadius::same(2);
+const COPIED_FOR: Duration = Duration::from_millis(1200);
+const FRAME: Duration = Duration::from_millis(33);
+const SEGMENT_ANIM_SECS: f32 = 0.12;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Overlay {
-    None,
-    About,
+/// 0 dB on the -24..+12 dB gain range, normalized.
+const GAIN_DEFAULT: f32 = 24.0 / 36.0;
+
+fn font(size: f32) -> FontId {
+    FontId::proportional(size)
+}
+
+/// Installs Barlow `SemiBold` as the only font. Called once per context.
+pub fn setup_context(ctx: &egui::Context) {
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(
+        "barlow".into(),
+        std::sync::Arc::new(FontData::from_static(include_bytes!(
+            "../assets/fonts/Barlow-SemiBold.ttf"
+        ))),
+    );
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, "barlow".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
+/// Light controls with a single blue interaction accent.
+pub fn visuals() -> Visuals {
+    if std::fs::read_to_string(theme_path()).is_ok_and(|v| v == "dark") {
+        dark_visuals()
+    } else {
+        light_visuals()
+    }
+}
+
+fn dark_visuals() -> Visuals {
+    let mut v = Visuals::dark();
+    v.override_text_color = Some(Color32::from_rgb(238, 238, 238));
+    v.weak_text_color = Some(Color32::from_rgb(184, 184, 184));
+    v.window_fill = Color32::from_rgb(32, 32, 32);
+    v.extreme_bg_color = v.window_fill;
+    v.selection.bg_fill = STUDIO_BLUE;
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.bg_fill = Color32::from_rgb(48, 48, 48);
+        w.weak_bg_fill = w.bg_fill;
+        w.bg_stroke = Stroke::new(1.0, Color32::from_rgb(72, 72, 72));
+        w.fg_stroke = Stroke::new(1.0, Color32::from_rgb(238, 238, 238));
+        w.corner_radius = CornerRadius::same(10);
+    }
+    v
+}
+
+fn light_visuals() -> Visuals {
+    let mut v = Visuals::light();
+    v.panel_fill = PAPER;
+    v.window_fill = PAPER;
+    v.extreme_bg_color = WELL;
+    v.override_text_color = Some(TEXT);
+    v.selection.bg_fill = STUDIO_BLUE.gamma_multiply(0.35);
+    v.selection.stroke = Stroke::new(1.0, STUDIO_BLUE);
+    v.text_cursor.stroke = Stroke::new(1.5, STUDIO_BLUE);
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.bg_fill = SURFACE;
+        w.weak_bg_fill = SURFACE;
+        w.bg_stroke = Stroke::new(1.0, HAIRLINE);
+        w.fg_stroke = Stroke::new(1.0, TEXT);
+    }
+    v
+}
+
+fn theme_path() -> std::path::PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+        })
+        .join("matari/relay-theme")
+}
+
+fn tone(ui: &Ui, color: Color32) -> Color32 {
+    if !ui.visuals().dark_mode {
+        return color;
+    }
+    match color {
+        PAPER => Color32::from_rgb(21, 21, 21),
+        WELL => Color32::from_rgb(32, 32, 32),
+        SURFACE => Color32::from_rgb(48, 48, 48),
+        HAIRLINE => Color32::from_rgb(72, 72, 72),
+        TEXT => Color32::from_rgb(238, 238, 238),
+        MUTED | DIM => Color32::from_rgb(184, 184, 184),
+        _ => color,
+    }
+}
+
+fn relay_mark(ui: &Ui, origin: Pos2, size: f32) {
+    let point = |x: f32, y: f32| origin + vec2(x, y) * size / 100.0;
+    let color = if ui.visuals().dark_mode { tone(ui, TEXT) } else { STUDIO_BLUE };
+    let stroke = Stroke::new(size * 0.14, color);
+    ui.painter().line_segment([point(20.0, 82.0), point(20.0, 20.0)], stroke);
+    ui.painter().line_segment([point(20.0, 20.0), point(56.0, 20.0)], stroke);
+    for points in [
+        [point(56.0, 20.0), point(71.0, 20.0), point(80.0, 28.0), point(80.0, 40.0)],
+        [point(80.0, 40.0), point(80.0, 52.0), point(71.0, 60.0), point(56.0, 60.0)],
+    ] {
+        ui.painter().add(egui::epaint::CubicBezierShape::from_points_stroke(points, false, Color32::TRANSPARENT, stroke));
+    }
+    ui.painter().line_segment([point(56.0, 60.0), point(42.0, 60.0)], stroke);
+    ui.painter().line_segment([point(52.0, 69.0), point(70.0, 82.0)], stroke);
+}
+
+/// Text the user is typing. Committed to the session store on Enter or blur,
+/// so half-typed names never reach the network.
+struct Fields {
+    name: String,
+    peer: String,
+    password: String,
 }
 
 pub struct RelayUi {
-    pub peer_buf: String,
-    pub name_buf: String,
-    pub pass_buf: String,
-    copied: Option<(String, Instant)>,
-    hold_l: f32,
-    hold_r: f32,
-    hold_age_l: f32,
-    hold_age_r: f32,
-    last_h: u32,
-    overlay: Overlay,
+    dark: bool,
+    fields: Option<Fields>,
+    copied_at: Option<Instant>,
+    hold: [PeakHold; 2],
+    spectrum: crate::spectrum::Spectrum,
+    tap: Option<std::sync::Arc<crate::spectrum::SpectrumTap>>,
 }
 
-impl RelayUi {
-    pub fn new(window_h: u32) -> Self {
+impl Default for RelayUi {
+    fn default() -> Self {
         Self {
-            peer_buf: String::new(),
-            name_buf: String::new(),
-            pass_buf: String::new(),
-            copied: None,
-            hold_l: 0.0,
-            hold_r: 0.0,
-            hold_age_l: 0.0,
-            hold_age_r: 0.0,
-            last_h: window_h,
-            overlay: Overlay::None,
-        }
-    }
-
-    fn sync_fields_from_persist(&mut self, ctx: &PluginContext<RelayParams>) {
-        if let Ok(session) = ctx.params().session.read() {
-            if self.name_buf.is_empty() {
-                self.name_buf.clone_from(&session.name);
-            }
-            if self.peer_buf.is_empty() {
-                self.peer_buf.clone_from(&session.peer);
-            }
-            if self.pass_buf.is_empty() {
-                self.pass_buf.clone_from(&session.password);
-            }
-        }
-        if self.peer_buf.is_empty() {
-            self.peer_buf = format!("127.0.0.1:{DEFAULT_CONNECT_PORT}");
-        }
-        if self.name_buf.is_empty() {
-            self.name_buf = new_slug();
-            if let Ok(mut session) = ctx.params().session.write() {
-                session.name.clone_from(&self.name_buf);
-            }
+            dark: std::fs::read_to_string(theme_path()).is_ok_and(|v| v == "dark"),
+            fields: None,
+            copied_at: None,
+            hold: Default::default(),
+            spectrum: Default::default(),
+            tap: None,
         }
     }
 }
 
 impl EditorUi<RelayParams> for RelayUi {
     fn opened(&mut self, ctx: &PluginContext<RelayParams>) {
-        self.sync_fields_from_persist(ctx);
-        if ctx.params().product.value().is_link() {
-            ctx.params().link.set_value(true);
-        }
-        ctx.params().web.set_value(true);
-        let _ = ctx.params().control.set_peer(self.peer_buf.clone());
-        let _ = ctx.params().control.set_session_name(self.name_buf.clone());
-        let _ = ctx.params().control.set_password(self.pass_buf.clone());
-        publish_control(ctx.params());
+        self.dark = std::fs::read_to_string(theme_path()).is_ok_and(|v| v == "dark");
+        self.fields = None;
+        ctx.params().spectrum.audio.clear();
+        ctx.params()
+            .spectrum
+            .active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.tap = Some(ctx.params().spectrum.clone());
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, ctx: &PluginContext<RelayParams>) {
-        // Headless screenshot (and any host that draws before `opened`)
-        // still needs the persist slug in the name field.
-        self.sync_fields_from_persist(ctx);
-        install_chrome(ui.ctx());
-        apply_buffr_spacing(ui);
-        let snap = ctx.params().control.snapshot();
-        let linked = ctx.params().link.value();
-        let product = ctx.params().product.value();
-        let web_ok = ctx.params().control.web_ok();
-        let web_silent = ctx.params().control.web_silent();
-        egui::Panel::top("header")
-            .exact_size(HEADER_H)
-            .frame(egui::Frame::NONE.fill(BG))
-            .show(ui, |ui| {
-                let rect = ui.max_rect();
-                let mid_w = 156.0;
-                let side_w = ((rect.width() - mid_w) * 0.5).max(96.0);
-                let left =
-                    egui::Rect::from_min_size(rect.left_top(), egui::vec2(side_w, rect.height()));
-                let mid =
-                    egui::Rect::from_center_size(rect.center(), egui::vec2(mid_w, rect.height()));
-                let right = egui::Rect::from_min_max(
-                    egui::pos2(rect.right() - side_w, rect.top()),
-                    rect.right_bottom(),
-                );
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(left)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                    |ui| {
-                        ui.add_space(12.0);
-                        if relay_logo(ui).clicked() {
-                            self.overlay = if self.overlay == Overlay::About {
-                                Overlay::None
-                            } else {
-                                Overlay::About
-                            };
-                        }
-                    },
-                );
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(mid)
-                        .layout(egui::Layout::top_down(egui::Align::Center)),
-                    |ui| {
-                        ui.add_space(((HEADER_H - 26.0) * 0.5).max(0.0));
-                        mode_nav(ui, ctx, product);
-                    },
-                );
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(right)
-                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    |ui| {
-                        ui.add_space(12.0);
-                        live_pill(ui, ctx, linked, snap, web_ok, web_silent);
-                    },
-                );
+    fn closed(&mut self) {
+        if let Some(tap) = self.tap.take() {
+            tap.active
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn state_changed(&mut self, _ctx: &PluginContext<RelayParams>) {
+        self.fields = None;
+    }
+
+    fn ui(&mut self, ui: &mut Ui, ctx: &PluginContext<RelayParams>) {
+        let params = ctx.params();
+        if ui.visuals().dark_mode != self.dark {
+            ui.ctx().set_visuals(if self.dark {
+                dark_visuals()
+            } else {
+                light_visuals()
             });
-
-        let peak_l = ctx.get_meter(P::MeterLeft);
-        let peak_r = ctx.get_meter(P::MeterRight);
-        update_hold(&mut self.hold_l, &mut self.hold_age_l, peak_l);
-        update_hold(&mut self.hold_r, &mut self.hold_age_r, peak_r);
-
-        egui::Panel::left("meter-l")
-            .exact_size(METER_COL)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(
-                egui::Frame::NONE
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
-            )
-            .show(ui, |ui| {
-                meter_column(ui, peak_l, self.hold_l, "L");
-            });
-
-        egui::Panel::right("meter-r")
-            .exact_size(METER_COL)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(
-                egui::Frame::NONE
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
-            )
-            .show(ui, |ui| {
-                meter_column(ui, peak_r, self.hold_r, "R");
-            });
-
-        let mut content_bottom = 0.0;
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::central_panel(ui.style())
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(12, 10)),
-            )
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                if product.is_link() {
-                    session_row(ui, self, ctx);
-                } else {
-                    labeled_field(
-                        ui,
-                        "Peer",
-                        &mut self.peer_buf,
-                        false,
-                        "host:port or session name",
-                        |value| {
-                            if let Ok(mut session) = ctx.params().session.write() {
-                                session.peer = value.to_owned();
-                            }
-                            let _ = ctx.params().control.set_peer(value.to_owned());
-                            if !value.trim().is_empty() {
-                                ctx.params().link.set_value(true);
-                                publish_control(ctx.params());
-                            }
-                        },
-                    );
-                }
-                password_row(ui, self, ctx);
-                codec_row(ui, ctx);
-                if !product.is_link() {
-                    let current = ctx.params().monitor.value();
-                    if let Some(next) = buffr_segmented(
-                        ui,
-                        "relay-monitor",
-                        &[
-                            (Monitor::Dry, "Dry"),
-                            (Monitor::Mix, "Mix"),
-                            (Monitor::Remote, "Hear"),
-                        ],
-                        current,
-                    ) {
-                        ctx.params().monitor.set_value(next);
-                    }
-                }
-
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 16.0;
-                    gain_knob(ui, ctx, P::InputGain, "Send");
-                    if !product.is_link() {
-                        gain_knob(ui, ctx, P::OutputGain, "Hear");
-                    }
-                });
-
-                ui.label(
-                    egui::RichText::new(editor_status(ctx, linked, snap, web_ok, web_silent))
-                        .size(12.0)
-                        .color(MUTED),
-                );
-                content_bottom = ui.cursor().min.y;
-            });
-
-        match self.overlay {
-            Overlay::None => {}
-            Overlay::About => about_window(ui, &mut self.overlay),
         }
+        let screen = ui.ctx().content_rect();
+        ui.painter()
+            .rect_filled(screen, CornerRadius::ZERO, tone(ui, PAPER));
 
-        let needed = (content_bottom + 16.0)
-            .ceil()
-            .clamp(MIN_WINDOW_H as f32, MAX_WINDOW_H as f32) as u32;
-        if needed.abs_diff(self.last_h) >= 8 {
-            let _ = ctx.request_resize(WINDOW_W, needed);
-            self.last_h = needed;
-        }
-        let _ = (MIN_WINDOW_W, MAX_WINDOW_W);
-        ui.ctx().request_repaint_after(Duration::from_millis(33));
-    }
-}
+        let mode = params.mode.value();
+        let share = mode.is_share();
+        header(ui, ctx, mode, &mut self.dark);
 
-pub fn buffr_visuals() -> egui::Visuals {
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = BG;
-    visuals.window_fill = BG;
-    visuals.extreme_bg_color = SUNKEN;
-    visuals.faint_bg_color = LANE;
-    visuals.override_text_color = Some(TEXT);
-    visuals.selection.bg_fill = PRIMARY;
-    visuals.selection.stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.inactive.bg_fill = SUNKEN;
-    visuals.widgets.inactive.weak_bg_fill = SUNKEN;
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, MUTED);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-    visuals.widgets.hovered.bg_fill = SURFACE;
-    visuals.widgets.hovered.weak_bg_fill = SURFACE;
-    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BORDER);
-    visuals.widgets.active.bg_fill = SURFACE;
-    visuals.widgets.active.weak_bg_fill = SURFACE;
-    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-    visuals.widgets.open.bg_fill = SURFACE;
-    visuals.widgets.open.weak_bg_fill = SURFACE;
-    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
-    visuals.widgets.open.bg_stroke = egui::Stroke::NONE;
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, MUTED);
-    visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 48, 48));
-    visuals.popup_shadow = egui::epaint::Shadow {
-        offset: [0, 3],
-        blur: 16,
-        spread: 0,
-        color: egui::Color32::from_black_alpha(48),
-    };
-    visuals.window_shadow = egui::epaint::Shadow {
-        offset: [0, 6],
-        blur: 28,
-        spread: 0,
-        color: egui::Color32::from_black_alpha(56),
-    };
-    visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 48, 48));
-    let radius = egui::CornerRadius::same(4);
-    visuals.menu_corner_radius = radius;
-    visuals.window_corner_radius = radius;
-    for widget in [
-        &mut visuals.widgets.noninteractive,
-        &mut visuals.widgets.inactive,
-        &mut visuals.widgets.hovered,
-        &mut visuals.widgets.active,
-        &mut visuals.widgets.open,
-    ] {
-        widget.corner_radius = radius;
-    }
-    visuals
-}
-
-/// Install named font families and SVG loaders before the first `Ui` layout.
-///
-/// Call from `EguiEditor::with_context_setup` so the font atlas exists when
-/// the wgpu renderer first uploads textures. Calling `ctx.set_fonts` inside
-/// `EditorUi::ui` rebuilds the atlas mid-frame and leaves the editor blank.
-pub(crate) fn install_chrome(ctx: &egui::Context) {
-    let id = egui::Id::new("relay_chrome_initialized");
-    if ctx.data(|data| data.get_temp::<bool>(id).unwrap_or(false)) {
-        return;
-    }
-    ctx.set_fonts(font_definitions());
-    egui_extras::install_image_loaders(ctx);
-    ctx.data_mut(|data| data.insert_temp(id, true));
-}
-
-fn font_definitions() -> egui::FontDefinitions {
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        FONT_BARLOW.into(),
-        Arc::new(egui::FontData::from_static(BARLOW)),
-    );
-    fonts.font_data.insert(
-        FONT_BARLOW_BLACK.into(),
-        Arc::new(egui::FontData::from_static(BARLOW_BLACK)),
-    );
-    fonts.font_data.insert(
-        FONT_JETBRAINS.into(),
-        Arc::new(egui::FontData::from_static(JETBRAINS_MONO)),
-    );
-    fonts
-        .families
-        .entry(egui::FontFamily::Proportional)
-        .or_default()
-        .insert(0, FONT_BARLOW.into());
-    fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default()
-        .insert(0, FONT_JETBRAINS.into());
-    fonts.families.insert(
-        egui::FontFamily::Name(FONT_BARLOW_BLACK.into()),
-        vec![FONT_BARLOW_BLACK.to_owned(), FONT_BARLOW.to_owned()],
-    );
-    fonts.font_data.insert(
-        FONT_PHOSPHOR.into(),
-        Arc::new(egui_phosphor::Variant::Regular.font_data()),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name(FONT_PHOSPHOR.into()),
-        vec![FONT_PHOSPHOR.into()],
-    );
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    fonts
-}
-
-fn phosphor_family() -> egui::FontFamily {
-    egui::FontFamily::Name(FONT_PHOSPHOR.into())
-}
-
-fn apply_buffr_spacing(ui: &mut egui::Ui) {
-    let spacing = &mut ui.style_mut().spacing;
-    spacing.item_spacing = egui::vec2(8.0, 6.0);
-    spacing.button_padding = egui::vec2(8.0, 5.0);
-    spacing.combo_width = 160.0;
-    spacing.interact_size.y = 26.0;
-}
-
-fn relay_logo(ui: &mut egui::Ui) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        paint_matari_mark(ui, egui::vec2(26.0, 16.0));
-        ui.label(
-            egui::RichText::new("RELAY")
-                .family(egui::FontFamily::Name(FONT_BARLOW_BLACK.into()))
-                .size(18.0)
-                .color(TEXT)
-                .extra_letter_spacing(1.4),
-        );
-    })
-    .response
-    .interact(egui::Sense::click())
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-    .on_hover_text("About RELAY")
-}
-
-fn mode_nav(ui: &mut egui::Ui, ctx: &PluginContext<RelayParams>, product: Product) {
-    let options = [(true, "Share"), (false, "Join")];
-    let current = product.is_link();
-    if let Some(link) = buffr_segmented(ui, "relay-mode", &options, current) {
-        let next = if link {
-            Product::Link
-        } else {
-            Product::Connect
-        };
-        ctx.params().product.set_value(next);
-        if link {
-            ctx.params().link.set_value(true);
-        }
-        publish_control(ctx.params());
-    }
-}
-
-fn buffr_segmented<T: Copy + PartialEq>(
-    ui: &mut egui::Ui,
-    id: &str,
-    options: &[(T, &str)],
-    current: T,
-) -> Option<T> {
-    let font = egui::FontId::proportional(12.0);
-    let pad = 12.0;
-    let inset = 2.0;
-    let height = 26.0;
-    let radius = 4.0;
-    let seg_w = options
-        .iter()
-        .map(|(_, label)| {
-            ui.fonts_mut(|fonts| {
-                fonts
-                    .layout_no_wrap((*label).to_owned(), font.clone(), TEXT)
-                    .size()
-                    .x
-            }) + pad * 2.0
-        })
-        .fold(56.0_f32, f32::max);
-    let total_w = seg_w * options.len() as f32 + inset * 2.0;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, height), egui::Sense::hover());
-    ui.painter().rect_filled(rect, radius, SUNKEN);
-    ui.painter().rect_stroke(
-        rect,
-        radius,
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 48, 48)),
-        egui::StrokeKind::Inside,
-    );
-    let selected = options
-        .iter()
-        .position(|(value, _)| *value == current)
-        .unwrap_or(0);
-    let eased = ui.ctx().animate_value_with_time(
-        ui.id().with((id, "indicator")),
-        selected as f32,
-        ui.style().animation_time,
-    );
-    ui.painter().rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.left() + inset + eased * seg_w, rect.top() + inset),
-            egui::vec2(seg_w, height - inset * 2.0),
-        ),
-        3.0,
-        PRIMARY,
-    );
-    let mut chosen = None;
-    let mut x = rect.left() + inset;
-    for (index, (value, label)) in options.iter().enumerate() {
-        let seg = egui::Rect::from_min_size(
-            egui::pos2(x, rect.top() + inset),
-            egui::vec2(seg_w, height - inset * 2.0),
-        );
-        let response = ui.interact(seg, ui.id().with((id, index)), egui::Sense::click());
-        let selected = *value == current;
-        if !selected && response.hovered() {
-            ui.painter().rect_filled(seg, 3.0, SURFACE);
-        }
+        let fields = self.fields.get_or_insert_with(|| {
+            let saved = params.session.read();
+            Fields {
+                name: saved.name,
+                peer: saved.peer,
+                password: saved.password,
+            }
+        });
+        let peaks = [ctx.get_meter(P::MeterLeft), ctx.get_meter(P::MeterRight)];
+        let held = [self.hold[0].update(peaks[0]), self.hold[1].update(peaks[1])];
+        self.spectrum.update(&params.spectrum);
+        let scope = Rect::from_min_max(pos2(PAD, 326.0), pos2(RIGHT_X, 434.0));
+        ui.painter()
+            .rect_filled(scope, CornerRadius::same(20), if ui.visuals().dark_mode { tone(ui, WELL) } else { STUDIO_BLUE });
         ui.painter().text(
-            seg.center(),
-            egui::Align2::CENTER_CENTER,
-            *label,
-            font.clone(),
-            if selected { BG } else { TEXT },
+            pos2(scope.min.x + 16.0, scope.min.y + 12.0),
+            Align2::LEFT_TOP,
+            "Send spectrum",
+            font(12.0),
+            Color32::WHITE,
         );
-        if response.clicked() && !selected {
-            chosen = Some(*value);
-        }
-        x += seg_w;
-    }
-    chosen
-}
-
-fn gain_knob(ui: &mut egui::Ui, ctx: &PluginContext<RelayParams>, id: P, label: &str) {
-    let diameter = FX_KNOB_DIAMETER;
-    let width = (diameter * (4.7 / 4.15)).max(diameter);
-    let (_, rect) = ui.allocate_space(egui::vec2(width, diameter));
-    let response = ui.interact(
-        rect,
-        ui.id().with(("fx-knob", label)),
-        egui::Sense::click_and_drag(),
-    );
-    let mut value = ctx.get_param(id);
-    let reset = response.double_clicked();
-    if reset {
-        ctx.automate(id, f64::from(GAIN_DEFAULT_01));
-        value = GAIN_DEFAULT_01;
-    } else if response.dragged() {
-        let drag_id = response.id.with("normalized-drag-value");
-        if response.drag_started() {
-            ctx.begin_edit(id);
-            ui.ctx().data_mut(|data| data.insert_temp(drag_id, value));
-        }
-        let mut drag = ui
-            .ctx()
-            .data(|data| data.get_temp::<f32>(drag_id))
-            .unwrap_or(value);
-        let fine = ui.input(|input| input.modifiers.shift);
-        let sensitivity = if fine { 0.0007 } else { 0.005 };
-        drag = (drag - ui.input(|input| input.pointer.delta().y) * sensitivity).clamp(0.0, 1.0);
-        ui.ctx().data_mut(|data| data.insert_temp(drag_id, drag));
-        value = drag;
-        ctx.set_param(id, f64::from(value));
-    }
-    if response.drag_stopped() {
-        ui.ctx()
-            .data_mut(|data| data.remove::<f32>(response.id.with("normalized-drag-value")));
-        ctx.end_edit(id);
-    }
-
-    let interactive = response.hovered() || response.dragged() || response.has_focus();
-    let interactive_t =
-        ui.ctx()
-            .animate_bool_with_time(response.id.with("outer-arc"), interactive, 0.18);
-    let center = rect.center();
-    let radius = diameter * 0.43;
-    let value_angle = FX_ARC_START + value * FX_ARC_SWEEP;
-    let fill_start = FX_ARC_START + GAIN_DEFAULT_01 * FX_ARC_SWEEP;
-    let track = mix(SUNKEN, TEXT, 0.24);
-    let rim = mix(SUNKEN, TEXT, 0.18);
-    ui.painter().circle_filled(
-        center + egui::vec2(0.0, 2.0),
-        radius + 1.0,
-        egui::Color32::from_black_alpha(if interactive { 92 } else { 68 }),
-    );
-    ui.painter().circle_filled(center, radius, rim);
-    ui.painter().circle_filled(center, radius - 2.0, SUNKEN);
-    let arc_radius = radius + 3.5;
-    paint_arc(
-        ui.painter(),
-        center,
-        arc_radius,
-        FX_ARC_START,
-        FX_ARC_START + FX_ARC_SWEEP,
-        egui::Stroke::new(1.2 + interactive_t * 0.3, track),
-    );
-    if (value_angle - fill_start).abs() > 0.001 {
-        let value_width = 1.35 + interactive_t * 1.35;
-        paint_arc(
-            ui.painter(),
-            center,
-            arc_radius + (value_width - 1.35) * 0.5,
-            fill_start,
-            value_angle,
-            egui::Stroke::new(value_width, PRIMARY),
+        let upper = (params
+            .spectrum
+            .rate
+            .load(std::sync::atomic::Ordering::Relaxed) as f32
+            * 0.45)
+            .min(18000.0);
+        ui.painter().text(
+            pos2(scope.max.x - 16.0, scope.min.y + 12.0),
+            Align2::RIGHT_TOP,
+            format!("50 Hz — {:.1} kHz", upper / 1000.0),
+            font(11.0),
+            Color32::WHITE,
         );
-    }
-    let direction = egui::emath::Rot2::from_angle(value_angle) * egui::vec2(1.0, 0.0);
-    ui.painter().line_segment(
-        [
-            center + direction * radius * 0.62,
-            center + direction * radius * 0.86,
-        ],
-        egui::Stroke::new((radius * 0.075).clamp(1.75, 2.75), TEXT),
-    );
-    ui.painter().text(
-        egui::pos2(center.x, center.y - 4.8),
-        egui::Align2::CENTER_CENTER,
-        ctx.format_param(id),
-        egui::FontId::monospace(11.0),
-        TEXT,
-    );
-    ui.painter().text(
-        egui::pos2(center.x, center.y + 8.8),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(9.5),
-        MUTED,
-    );
-    if response.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-    }
-    response
-        .on_hover_text("Double-click to reset")
-        .on_hover_cursor(egui::CursorIcon::ResizeVertical);
-}
-
-fn mix(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let inv = 1.0 - t;
-    egui::Color32::from_rgba_unmultiplied(
-        (f32::from(a.r()) * inv + f32::from(b.r()) * t).round() as u8,
-        (f32::from(a.g()) * inv + f32::from(b.g()) * t).round() as u8,
-        (f32::from(a.b()) * inv + f32::from(b.b()) * t).round() as u8,
-        (f32::from(a.a()) * inv + f32::from(b.a()) * t).round() as u8,
-    )
-}
-
-fn paint_arc(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    radius: f32,
-    start: f32,
-    end: f32,
-    stroke: egui::Stroke,
-) {
-    let steps = (((end - start).abs() / std::f32::consts::PI) * 32.0)
-        .ceil()
-        .max(4.0) as usize;
-    for step in 0..steps {
-        let t0 = step as f32 / steps as f32;
-        let t1 = (step + 1) as f32 / steps as f32;
-        let a0 = start + (end - start) * t0;
-        let a1 = start + (end - start) * t1;
-        painter.line_segment(
-            [
-                center + egui::emath::Rot2::from_angle(a0) * egui::vec2(radius, 0.0),
-                center + egui::emath::Rot2::from_angle(a1) * egui::vec2(radius, 0.0),
-            ],
-            stroke,
-        );
-    }
-}
-
-fn live_pill(
-    ui: &mut egui::Ui,
-    ctx: &PluginContext<RelayParams>,
-    linked: bool,
-    snap: relay_session::SessionSnapshot,
-    web_ok: bool,
-    web_silent: bool,
-) {
-    let view = editor_view(ctx, linked, snap, web_ok, web_silent);
-    let pill = classify_session(view);
-    let (fill, tip) = match pill {
-        SessionPill::Off => (SURFACE, "Start sending"),
-        SessionPill::Failed => (HOT, "Bind failed — click to retry"),
-        SessionPill::Asleep => (WARN, "Silent — click to wake"),
-        SessionPill::Hosting | SessionPill::Streaming => {
-            (PRIMARY, "Ready — waiting for a listener")
+        for (index, level) in self.spectrum.bands.iter().enumerate() {
+            let height = (*level * 62.0).max(2.0);
+            let x = scope.min.x + 16.0 + index as f32 * (scope.width() - 32.0) / 40.0;
+            let bar = Rect::from_min_max(
+                pos2(x, scope.max.y - 14.0 - height),
+                pos2(x + 7.0, scope.max.y - 14.0),
+            );
+            ui.painter()
+                .rect_filled(bar, CornerRadius::same(3), if ui.visuals().dark_mode { STUDIO_BLUE } else { Color32::WHITE });
         }
-        SessionPill::Joining => (PRIMARY, "Joining"),
-        SessionPill::Live => (OK, "Pause or resume"),
+        vertical_meters(ui, peaks, held);
+        let mut rows = Rows { next_y: FORM_TOP };
+        if share {
+            share_form(ui, ctx, &mut rows, fields, &mut self.copied_at);
+        } else {
+            join_form(ui, ctx, &mut rows, fields);
+        }
+
+        let facts = Facts::read(&params.control, share);
+        footer(ui, ctx, &facts);
+
+        ui.ctx().request_repaint_after(FRAME);
+    }
+}
+
+fn header(ui: &mut Ui, ctx: &PluginContext<RelayParams>, mode: Mode, dark: &mut bool) {
+    ui.painter().rect_filled(
+        Rect::from_min_max(pos2(0.0, 0.0), pos2(WINDOW.0 as f32, HEADER_H)),
+        CornerRadius::ZERO,
+        tone(ui, WELL),
+    );
+    relay_mark(ui, pos2(PAD, 21.0), 32.0);
+    let theme = Rect::from_min_size(pos2(244.0, 19.0), vec2(36.0, 36.0));
+    let response = ui.interact(theme, Id::new("theme"), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Switch color theme")
+    });
+    ui.painter()
+        .rect_filled(theme, CornerRadius::same(12), tone(ui, SURFACE));
+    ui.painter()
+        .circle_stroke(theme.center(), 7.0, Stroke::new(1.5, tone(ui, TEXT)));
+    ui.painter().add(egui::Shape::convex_polygon(
+        (0..=16)
+            .map(|i| {
+                let a = std::f32::consts::PI * (i as f32 / 16.0 - 0.5);
+                theme.center() + vec2(a.cos(), a.sin()) * 7.0
+            })
+            .collect(),
+        tone(ui, TEXT),
+        Stroke::NONE,
+    ));
+    if response.on_hover_text("Switch color theme").clicked() {
+        *dark = !*dark;
+        let path = theme_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, if *dark { "dark" } else { "light" });
+    }
+    let mid_y = HEADER_H / 2.0;
+    tracked_text(
+        ui,
+        pos2(PAD + 42.0, mid_y),
+        Align2::LEFT_CENTER,
+        "RELAY",
+        28.0,
+        -0.02,
+        if *dark {
+            Color32::from_rgb(238, 238, 238)
+        } else {
+            STUDIO_BLUE
+        },
+    );
+    let seg = Rect::from_min_max(pos2(300.0, mid_y - 18.0), pos2(490.0, mid_y + 18.0));
+    if let Some(index) = segmented(
+        ui,
+        seg,
+        Id::new("mode"),
+        &["Share", "Join"],
+        mode.to_index(),
+    ) {
+        ctx.automate(P::Mode, normalized_index(index, Mode::variant_count()));
+    }
+    ui.painter().hline(
+        0.0..=WINDOW.0 as f32,
+        HEADER_H - 0.5,
+        Stroke::new(1.0, tone(ui, HAIRLINE)),
+    );
+}
+
+/// Session status with an explicit live control.
+fn footer(ui: &mut Ui, ctx: &PluginContext<RelayParams>, facts: &Facts) {
+    let status = describe(facts);
+    let lamp = match status.health {
+        Health::Off => tone(ui, DIM),
+        Health::Failed => HOT,
+        Health::Asleep => WARN,
+        Health::Ready | Health::Pending => GYR_FLOOR,
+        Health::Live => OK,
     };
-    let button = egui::Button::new(
-        egui::RichText::new(pill.as_str())
-            .size(11.0)
-            .color(BG)
-            .strong(),
-    )
-    .fill(fill)
-    .corner_radius(4.0)
-    .min_size(egui::vec2(56.0, 22.0));
-    if ui.add(button).on_hover_text(tip).clicked() {
-        if pill == SessionPill::Asleep {
+    let button = Rect::from_min_max(pos2(548.0, 19.0), pos2(RIGHT_X, 55.0));
+    let response = ui.interact(button, Id::new("live"), Sense::click());
+    let label = if status.health == Health::Asleep {
+        "Wake"
+    } else if facts.live {
+        "Disconnect"
+    } else {
+        "Go live"
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    ui.painter().rect_filled(
+        button,
+        R_HARDWARE,
+        if response.hovered() {
+            Color32::from_rgb(0, 78, 188)
+        } else if facts.live {
+            tone(ui, SURFACE)
+        } else {
+            STUDIO_BLUE
+        },
+    );
+    ui.painter().text(
+        button.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font(14.0),
+        if facts.live && !response.hovered() {
+            tone(ui, TEXT)
+        } else {
+            Color32::WHITE
+        },
+    );
+    let color = tone(ui, MUTED);
+    ui.painter()
+        .circle_filled(pos2(PAD + 4.0, FOOTER_Y), 4.0, lamp);
+    ui.painter().text(
+        pos2(PAD + 16.0, FOOTER_Y),
+        Align2::LEFT_CENTER,
+        &status.line,
+        font(12.0),
+        color,
+    );
+    if response.clicked() {
+        if status.health == Health::Asleep {
             ctx.params().control.request_web_wake();
         } else {
-            ctx.params().link.set_value(!linked);
-            publish_control(ctx.params());
+            ctx.automate(P::Live, if facts.live { 0.0 } else { 1.0 });
         }
     }
 }
 
-fn editor_view(
-    ctx: &PluginContext<RelayParams>,
-    linked: bool,
-    snap: relay_session::SessionSnapshot,
-    web_ok: bool,
-    web_silent: bool,
-) -> SessionView {
-    SessionView {
-        linked,
-        role: ctx.params().control.role(),
-        state: snap.state,
-        peers: snap.peers,
-        lan_browsers: ctx.params().control.lan_listeners(),
-        web_listeners: ctx.params().control.web_listeners(),
-        web_ok,
-        web_silent,
-        web_wanted: ctx.params().product.value().is_link(),
-        bound: snap.bound,
+/// Hands out one labelled row at a time, top to bottom.
+struct Rows {
+    next_y: f32,
+}
+
+impl Rows {
+    /// Paints the label and returns the full control rectangle.
+    fn row(&mut self, ui: &Ui, label: &str) -> Rect {
+        let y = self.next_y;
+        self.next_y += ROW_H + ROW_GAP;
+        tracked_text(
+            ui,
+            pos2(PAD, y + ROW_H / 2.0),
+            Align2::LEFT_CENTER,
+            label,
+            14.0,
+            0.0,
+            tone(ui, MUTED),
+        );
+        Rect::from_min_max(pos2(CTRL_X, y), pos2(FORM_RIGHT, y + ROW_H))
     }
 }
 
-fn editor_status(
+fn share_form(
+    ui: &mut Ui,
     ctx: &PluginContext<RelayParams>,
-    linked: bool,
-    snap: relay_session::SessionSnapshot,
-    web_ok: bool,
-    web_silent: bool,
-) -> String {
-    let view = editor_view(ctx, linked, snap, web_ok, web_silent);
-    let error = ctx.params().control.last_error().unwrap_or_default();
-    let who = ctx.params().control.who().unwrap_or_default();
-    format_session_status(view, snap.local_port, 0, snap.dropouts, &who, &error)
-}
-
-fn session_row(ui: &mut egui::Ui, state: &mut RelayUi, ctx: &PluginContext<RelayParams>) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let width = (ui.available_width() - 100.0).max(80.0);
-        let name = ui.add(
-            egui::TextEdit::singleline(&mut state.name_buf)
-                .desired_width(width)
-                .hint_text("session name")
-                .margin(egui::Margin::symmetric(10, 6)),
-        );
-        if name.lost_focus()
-            || (name.changed() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-        {
-            commit_name(state, ctx);
-        }
-        if icon_btn(ui, ph::DICE_FIVE, "New name").clicked() {
-            state.name_buf = new_slug();
-            commit_name(state, ctx);
-        }
-        let copied = state
-            .copied
-            .as_ref()
-            .is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(2));
-        let (copy_glyph, copy_tip) = if copied {
-            (ph::CHECK, "Copied listen link")
-        } else {
-            (ph::COPY, "Copy listen link")
-        };
-        if icon_btn(ui, copy_glyph, copy_tip).clicked() {
-            commit_name(state, ctx);
-            let url = public_url(&state.name_buf);
-            copy_link(&url);
-            ui.ctx().copy_text(url.clone());
-            state.copied = Some((url, Instant::now()));
-        }
-        if icon_btn(ui, ph::ARROW_SQUARE_OUT, "Open listen page").clicked() {
-            commit_name(state, ctx);
-            let url = public_url(&state.name_buf);
-            let _ = open::that_detached(&url);
-        }
-    });
-}
-
-fn password_row(ui: &mut egui::Ui, state: &mut RelayUi, ctx: &PluginContext<RelayParams>) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        ui.label(
-            egui::RichText::new(ph::LOCK_SIMPLE)
-                .family(phosphor_family())
-                .size(16.0)
-                .color(MUTED),
-        );
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut state.pass_buf)
-                .password(true)
-                .hint_text("optional")
-                .desired_width(f32::INFINITY)
-                .margin(egui::Margin::symmetric(10, 6)),
-        );
-        if response.changed() || response.lost_focus() {
-            commit_password(ctx, &state.pass_buf);
-        }
-    });
-}
-
-fn labeled_field(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut String,
-    password: bool,
-    hint: &str,
-    mut on_change: impl FnMut(&str),
+    rows: &mut Rows,
+    fields: &mut Fields,
+    copied_at: &mut Option<Instant>,
 ) {
-    ui.label(egui::RichText::new(label).size(11.0).color(MUTED));
-    let mut edit = egui::TextEdit::singleline(value)
-        .desired_width(f32::INFINITY)
+    let params = ctx.params();
+
+    let row = rows.row(ui, "Session");
+    let copied = copied_at.is_some_and(|t| t.elapsed() < COPIED_FOR);
+    let labels = [if copied { "Copied" } else { "Copy" }, "Open"];
+    let widths = [40.0, 40.0];
+    let actions_w: f32 = widths.iter().sum();
+    let field = row.with_max_x(row.max.x - actions_w - 4.0);
+    if text_field(
+        ui,
+        field,
+        Id::new("name"),
+        &mut fields.name,
+        "room name",
+        false,
+    ) {
+        let clean = normalize_slug(&fields.name);
+        let name = if clean.is_empty() {
+            slug::new_slug()
+        } else {
+            clean
+        };
+        fields.name.clone_from(&name);
+        params.session.update(|s| s.name = name);
+    }
+    let mut x = field.max.x + 4.0;
+    for (i, (label, w)) in labels.iter().zip(widths).enumerate() {
+        let rect = Rect::from_min_max(pos2(x, row.min.y), pos2(x + w, row.max.y));
+        x += w;
+        if !icon_button(ui, rect, Id::new(("name-action", i)), label) {
+            continue;
+        }
+        let link = format!("{PUBLIC_LINK_ORIGIN}/{}", fields.name);
+        if i == 0 {
+            if clipboard::copy(&link) {
+                *copied_at = Some(Instant::now());
+            }
+        } else {
+            // Best effort: no browser is not an error the plugin can act on.
+            let _ = open::that_detached(link);
+        }
+    }
+
+    let row = rows.row(ui, "Password");
+    if text_field(
+        ui,
+        row,
+        Id::new("password"),
+        &mut fields.password,
+        "optional",
+        true,
+    ) {
+        let password = fields.password.clone();
+        params.session.update(|s| s.password = password);
+    }
+
+    let row = rows.row(ui, "Format");
+    let codec = params.codec.value();
+    let seg = row.with_max_x(row.max.x - 118.0);
+    if let Some(index) = segmented(
+        ui,
+        seg,
+        Id::new("codec"),
+        &["Opus", "FLAC", "PCM"],
+        codec.to_index(),
+    ) {
+        ctx.automate(P::Codec, normalized_index(index, Codec::variant_count()));
+    }
+    let chip = row.with_min_x(seg.max.x + 8.0);
+    let (label, hint) = match codec {
+        Codec::Opus => (
+            format!("{} kbps", params.bitrate.value()),
+            "Bitrate: higher values preserve more detail and use more bandwidth.",
+        ),
+        Codec::Flac => (
+            format!("Level {}", params.flac_level.value()),
+            "Lossless compression: higher levels use more CPU, not higher audio quality.",
+        ),
+        Codec::Pcm => (
+            "24-bit".into(),
+            "Uncompressed 24-bit audio. No quality setting needed.",
+        ),
+    };
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(chip.shrink2(vec2(0.0, 7.0))),
+        |ui| {
+            if codec == Codec::Pcm {
+                ui.label("24-bit PCM").on_hover_text(hint);
+                return;
+            }
+            ui.spacing_mut().interact_size.y = 28.0;
+            for widget in [&mut ui.visuals_mut().widgets.inactive] {
+                widget.corner_radius = CornerRadius::same(10);
+            }
+            egui::ComboBox::from_id_salt("quality")
+                .selected_text(label)
+                .width(chip.width() - 8.0)
+                .height(220.0)
+                .show_ui(ui, |ui| match codec {
+                    Codec::Opus => {
+                        ui.label("Bitrate / kbps");
+                        for value in [64, 96, 128, 160, 192, 256] {
+                            if ui
+                                .selectable_label(
+                                    params.bitrate.value() == value,
+                                    format!("{value} kbps"),
+                                )
+                                .clicked()
+                            {
+                                ctx.automate(P::Bitrate, (value - 64) as f64 / 192.0);
+                            }
+                        }
+                    }
+                    Codec::Flac => {
+                        ui.label("Lossless compression");
+                        for value in 0..=8 {
+                            if ui
+                                .selectable_label(
+                                    params.flac_level.value() == value,
+                                    format!("Level {value}"),
+                                )
+                                .clicked()
+                            {
+                                ctx.automate(P::FlacLevel, value as f64 / 8.0);
+                            }
+                        }
+                    }
+                    Codec::Pcm => {
+                        ui.label("24-bit · uncompressed");
+                    }
+                })
+                .response
+                .on_hover_text(hint);
+        },
+    );
+
+    let row = rows.row(ui, "Send");
+    fader(ui, ctx, row, P::Send);
+}
+
+fn join_form(ui: &mut Ui, ctx: &PluginContext<RelayParams>, rows: &mut Rows, fields: &mut Fields) {
+    let params = ctx.params();
+
+    let row = rows.row(ui, "Session");
+    if text_field(
+        ui,
+        row,
+        Id::new("peer"),
+        &mut fields.peer,
+        "host:port",
+        false,
+    ) {
+        let peer = fields.peer.trim().to_owned();
+        fields.peer.clone_from(&peer);
+        params.session.update(|s| s.peer = peer);
+    }
+
+    let row = rows.row(ui, "Monitor");
+    let seg = row.with_max_x(row.max.x - READOUT_W);
+    if let Some(index) = segmented(
+        ui,
+        seg,
+        Id::new("monitor"),
+        &["Dry", "Mix", "Remote"],
+        params.monitor.value().to_index(),
+    ) {
+        ctx.automate(
+            P::Monitor,
+            normalized_index(index, Monitor::variant_count()),
+        );
+    }
+
+    let row = rows.row(ui, "Send");
+    fader(ui, ctx, row, P::Send);
+
+    let row = rows.row(ui, "Receive");
+    fader(ui, ctx, row, P::Hear);
+}
+
+/// Enum index → normalized parameter value.
+fn normalized_index(index: usize, count: usize) -> f64 {
+    let last = count.saturating_sub(1).max(1);
+    index.min(last) as f64 / last as f64
+}
+
+// ---------------------------------------------------------------- widgets
+
+/// Segmented switch. Returns the newly clicked index, if any.
+fn segmented(ui: &mut Ui, rect: Rect, id: Id, labels: &[&str], selected: usize) -> Option<usize> {
+    ui.painter()
+        .rect_filled(rect, R_HARDWARE, tone(ui, SURFACE));
+
+    let count = labels.len().max(1) as f32;
+    let cell_w = (rect.width() - 4.0) / count;
+    let target = rect.min.x + 2.0 + cell_w * selected as f32;
+    let x = ui
+        .ctx()
+        .animate_value_with_time(id.with("indicator"), target, SEGMENT_ANIM_SECS);
+    let indicator =
+        Rect::from_min_size(pos2(x, rect.min.y + 2.0), vec2(cell_w, rect.height() - 4.0));
+    ui.painter().rect_filled(indicator, R_WELL, STUDIO_BLUE);
+
+    let mut clicked = None;
+    for (i, label) in labels.iter().enumerate() {
+        let cell = Rect::from_min_size(
+            pos2(rect.min.x + 2.0 + cell_w * i as f32, rect.min.y),
+            vec2(cell_w, rect.height()),
+        );
+        let response = ui.interact(cell, id.with(i), Sense::click());
+        if response.clicked() {
+            clicked = Some(i);
+        }
+        let color = if i == selected {
+            Color32::WHITE
+        } else if response.hovered() {
+            tone(ui, MUTED)
+        } else {
+            tone(ui, DIM)
+        };
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), *label)
+        });
+        let is_mode = labels == ["Share", "Join"];
+        if is_mode {
+            let center = pos2(cell.min.x + 18.0, cell.center().y);
+            let direction = if i == 0 { -1.0 } else { 1.0 };
+            let tip = center + vec2(0.0, 6.0 * direction);
+            let stroke = Stroke::new(1.6, color);
+            ui.painter()
+                .line_segment([center + vec2(0.0, -6.0 * direction), tip], stroke);
+            ui.painter()
+                .line_segment([tip + vec2(-4.0, -4.0 * direction), tip], stroke);
+            ui.painter()
+                .line_segment([tip + vec2(4.0, -4.0 * direction), tip], stroke);
+        }
+        ui.painter().text(
+            cell.center() + vec2(if is_mode { 8.0 } else { 0.0 }, 0.0),
+            Align2::CENTER_CENTER,
+            label,
+            font(14.0),
+            color,
+        );
+    }
+    clicked
+}
+
+/// Single-line input in a well. Returns `true` when the value was committed.
+fn text_field(
+    ui: &mut Ui,
+    rect: Rect,
+    id: Id,
+    text: &mut String,
+    hint: &str,
+    secret: bool,
+) -> bool {
+    ui.painter().rect_filled(rect, R_WELL, tone(ui, WELL));
+    let edit = TextEdit::singleline(text)
+        .id(id)
         .hint_text(hint)
-        .margin(egui::Margin::symmetric(10, 6));
-    if password {
-        edit = edit.password(true);
+        .password(secret)
+        .font(font(15.0))
+        .text_color(tone(ui, TEXT))
+        .frame(Frame::NONE.inner_margin(Margin::symmetric(10, 0)))
+        .vertical_align(Align::Center)
+        .desired_width(rect.width());
+    let response = ui.put(rect, edit);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            R_WELL,
+            Stroke::new(1.0, STUDIO_BLUE),
+            StrokeKind::Inside,
+        );
     }
-    let response = ui.add(edit);
-    if response.changed() || response.lost_focus() {
-        on_change(value);
-    }
+    response.lost_focus()
 }
 
-fn codec_row(ui: &mut egui::Ui, ctx: &PluginContext<RelayParams>) {
-    let current = ctx.params().codec.value();
-    let selected = codec_summary(ctx, current);
-    egui::ComboBox::from_id_salt("relay-codec")
-        .selected_text(selected)
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for value in [Codec::Opus, Codec::Flac, Codec::Pcm] {
-                if ui
-                    .selectable_label(current == value, codec_name(value))
-                    .clicked()
-                {
-                    ctx.params().codec.set_value(value);
-                    publish_control(ctx.params());
-                }
-            }
-        });
-    match current {
-        Codec::Opus => {
-            let mut kbps = ctx.params().bitrate.value();
-            let drag = ui.add(
-                egui::DragValue::new(&mut kbps)
-                    .range(64..=256)
-                    .suffix(" kbps")
-                    .speed(1.0),
-            );
-            if drag.changed() {
-                ctx.params().bitrate.set_value(kbps);
-                publish_control(ctx.params());
-            }
-        }
-        Codec::Flac => {
-            let mut level = ctx.params().flac_level.value();
-            let drag = ui.add(egui::DragValue::new(&mut level).range(0..=8).speed(1.0));
-            if drag.changed() {
-                ctx.params().flac_level.set_value(level);
-                publish_control(ctx.params());
-            }
-        }
-        Codec::Pcm => {}
+fn icon_button(ui: &mut Ui, rect: Rect, id: Id, label: &str) -> bool {
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    let color = if response.hovered() {
+        STUDIO_BLUE
+    } else {
+        tone(ui, MUTED)
+    };
+    ui.painter().rect_filled(
+        rect.shrink2(vec2(2.0, 3.0)),
+        CornerRadius::same(12),
+        tone(ui, SURFACE),
+    );
+    let center = rect.center();
+    let stroke = Stroke::new(1.7, color);
+    let box_rect = Rect::from_center_size(center, vec2(13.0, 13.0));
+    if label == "Copied" {
+        ui.painter()
+            .line_segment([center + vec2(-6.0, 0.0), center + vec2(-1.0, 5.0)], stroke);
+        ui.painter()
+            .line_segment([center + vec2(-1.0, 5.0), center + vec2(7.0, -5.0)], stroke);
+    } else if label == "Open" {
+        ui.painter().rect_stroke(
+            box_rect.translate(vec2(-2.0, 2.0)),
+            CornerRadius::same(2),
+            stroke,
+            StrokeKind::Inside,
+        );
+        ui.painter()
+            .line_segment([center, center + vec2(9.0, -9.0)], stroke);
+        ui.painter()
+            .line_segment([center + vec2(2.0, -9.0), center + vec2(9.0, -9.0)], stroke);
+        ui.painter()
+            .line_segment([center + vec2(9.0, -9.0), center + vec2(9.0, -2.0)], stroke);
+    } else {
+        ui.painter().rect_stroke(
+            box_rect.translate(vec2(-3.0, -3.0)),
+            CornerRadius::same(3),
+            stroke,
+            StrokeKind::Inside,
+        );
+        ui.painter().rect_filled(
+            box_rect.translate(vec2(3.0, 3.0)),
+            CornerRadius::same(3),
+            tone(ui, PAPER),
+        );
+        ui.painter().rect_stroke(
+            box_rect.translate(vec2(3.0, 3.0)),
+            CornerRadius::same(3),
+            stroke,
+            StrokeKind::Inside,
+        );
     }
-}
-
-fn codec_name(codec: Codec) -> &'static str {
-    match codec {
-        Codec::Opus => "Opus",
-        Codec::Flac => "FLAC",
-        Codec::Pcm => "PCM · LAN",
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            CornerRadius::same(12),
+            Stroke::new(1.5, STUDIO_BLUE),
+            StrokeKind::Inside,
+        );
     }
+    let clicked = response.clicked();
+    response.on_hover_text(if label == "Open" {
+        "Open listener in browser"
+    } else if label == "Copied" {
+        "Link copied"
+    } else {
+        "Copy listener link"
+    });
+    clicked
 }
 
-fn codec_summary(ctx: &PluginContext<RelayParams>, codec: Codec) -> String {
-    match codec {
-        Codec::Opus => format!("Opus · {} kbps", ctx.params().bitrate.value()),
-        Codec::Flac => format!("FLAC · {}", ctx.params().flac_level.value()),
-        Codec::Pcm => "PCM · 16-bit LAN".into(),
-    }
-}
-
-fn icon_btn(ui: &mut egui::Ui, glyph: &str, tip: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(
-            egui::RichText::new(glyph)
-                .family(phosphor_family())
-                .size(16.0)
-                .color(TEXT),
-        )
-        .fill(LANE)
-        .corner_radius(4.0)
-        .min_size(egui::vec2(28.0, 28.0)),
-    )
-    .on_hover_text(tip)
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-fn about_window(ui: &mut egui::Ui, overlay: &mut Overlay) {
-    let mut open = true;
-    egui::Window::new("About RELAY")
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .collapsible(false)
-        .resizable(false)
-        .open(&mut open)
-        .frame(egui::Frame::window(ui.style()).fill(SURFACE))
-        .show(ui.ctx(), |ui| {
-            ui.set_width(280.0);
-            ui.vertical_centered(|ui| {
-                let _ = relay_logo(ui);
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new("Send the track. Hear it next door.")
-                        .size(13.0)
-                        .color(TEXT),
-                );
-                ui.label(
-                    egui::RichText::new("CLAP + VST3 · LAN and web")
-                        .size(11.0)
-                        .color(MUTED),
-                );
-            });
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                paint_matari_mark(ui, egui::vec2(31.0, 19.0));
-                ui.vertical(|ui| {
-                    ui.hyperlink_to(
-                        egui::RichText::new("Matari Audio")
-                            .size(13.0)
-                            .color(TEXT)
-                            .strong(),
-                        MATARI_URL,
-                    );
-                    ui.label(
-                        egui::RichText::new("Share copies the listen link.")
-                            .size(11.0)
-                            .color(MUTED),
-                    );
-                });
-            });
-            ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.hyperlink_to("matari-audio.com", MATARI_URL);
-                ui.label(egui::RichText::new("·").color(MUTED));
-                ui.hyperlink_to("RELAY", RELAY_URL);
-            });
-        });
-    if !open {
-        *overlay = Overlay::None;
-    }
-}
-
-fn paint_matari_mark(ui: &mut egui::Ui, size: egui::Vec2) {
-    ui.add(
-        egui::Image::from_bytes(
-            "bytes://matari-mark.svg",
-            &include_bytes!("../assets/matari-mark.svg")[..],
-        )
-        .fit_to_exact_size(size)
-        .tint(TEXT)
-        .alt_text("Matari Audio"),
+fn readout(ui: &Ui, rect: Rect, text: &str) {
+    ui.painter().text(
+        rect.right_center(),
+        Align2::RIGHT_CENTER,
+        text,
+        font(12.0),
+        tone(ui, MUTED),
     );
 }
 
-fn meter_column(ui: &mut egui::Ui, peak: f32, hold: f32, label: &str) {
-    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-        let db = peak_to_db(peak);
-        let clip = db >= -0.2;
-        let (lamp, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-        ui.painter().circle_filled(
-            lamp.center(),
-            3.5,
-            if clip {
+/// Horizontal gain fader with a right-aligned readout.
+fn fader(ui: &mut Ui, ctx: &PluginContext<RelayParams>, row: Rect, param: P) {
+    let hit = row.with_max_x(row.max.x - READOUT_W);
+    let track = Rect::from_min_max(
+        pos2(hit.min.x, hit.center().y - 4.0),
+        pos2(hit.max.x, hit.center().y + 4.0),
+    );
+    let response = ui.interact(
+        hit,
+        Id::new(("fader", param as u32)),
+        Sense::click_and_drag(),
+    );
+
+    let mut value = ctx.get_param(param);
+    if response.drag_started() {
+        ctx.begin_edit(param);
+    }
+    if response.dragged() && track.width() > 0.0 {
+        value = (value + response.drag_delta().x / track.width()).clamp(0.0, 1.0);
+        ctx.set_param(param, f64::from(value));
+    }
+    if response.drag_stopped() {
+        ctx.end_edit(param);
+    }
+    if response.clicked()
+        && let Some(point) = response.interact_pointer_pos()
+    {
+        value = ((point.x - track.min.x) / track.width()).clamp(0.0, 1.0);
+        ctx.automate(param, f64::from(value));
+    }
+    if response.double_clicked() {
+        value = GAIN_DEFAULT;
+        ctx.automate(param, f64::from(GAIN_DEFAULT));
+    }
+
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Slider,
+            ui.is_enabled(),
+            ctx.format_param(param),
+        )
+    });
+    if response.has_focus() {
+        let step = ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp) {
+                1.0
+            } else if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowDown) {
+                -1.0
+            } else {
+                0.0
+            }
+        });
+        if step != 0.0 {
+            value = (value + step / 36.0).clamp(0.0, 1.0);
+            ctx.automate(param, f64::from(value));
+        }
+        ui.painter().rect_stroke(
+            hit,
+            CornerRadius::same(8),
+            Stroke::new(1.0, STUDIO_BLUE),
+            StrokeKind::Inside,
+        );
+    }
+    let painter = ui.painter();
+    painter.rect_filled(track, CornerRadius::same(4), tone(ui, SURFACE));
+    let x_value = track.min.x + track.width() * value;
+    let fill = Rect::from_min_max(pos2(track.min.x, track.min.y), pos2(x_value, track.max.y));
+    painter.rect_filled(fill, R_METER, STUDIO_BLUE);
+    painter.circle_filled(pos2(x_value, track.center().y), 9.0, STUDIO_BLUE);
+    painter.circle_filled(pos2(x_value, track.center().y), 3.0, Color32::WHITE);
+
+    readout(ui, row.with_min_x(hit.max.x), &ctx.format_param(param));
+}
+
+fn vertical_meters(ui: &Ui, peaks: [f32; 2], held: [f32; 2]) {
+    let panel = Rect::from_min_max(pos2(548.0, 88.0), pos2(RIGHT_X, 310.0));
+    ui.painter()
+        .rect_filled(panel, CornerRadius::same(20), tone(ui, WELL));
+    for channel in 0..2 {
+        let x = 572.0 + channel as f32 * 42.0;
+        let rail = Rect::from_min_max(pos2(x, 118.0), pos2(x + 14.0, 274.0));
+        ui.painter()
+            .rect_filled(rail, CornerRadius::same(7), tone(ui, SURFACE));
+        let top = rail.max.y - rail.height() * db_to_pos(peak_to_db(peaks[channel]));
+        ui.painter().rect_filled(
+            Rect::from_min_max(pos2(x, top), rail.max),
+            CornerRadius::same(7),
+            if peaks[channel] >= 1.0 {
                 HOT
             } else {
-                egui::Color32::from_rgb(42, 32, 32)
+                STUDIO_BLUE
             },
         );
-        ui.add_space(6.0);
-        let rail_h = (ui.available_height() - 18.0).max(48.0);
-        let (rail, _) =
-            ui.allocate_exact_size(egui::vec2(METER_RAIL, rail_h), egui::Sense::hover());
-        paint_gyr_rail(ui.painter(), rail, db, peak_to_db(hold));
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(label).size(11.0).color(MUTED).strong());
-    });
-}
-
-fn paint_gyr_rail(painter: &egui::Painter, rect: egui::Rect, db: f32, hold: f32) {
-    painter.rect_filled(rect, 2.0, SUNKEN);
-    let rail = rect.shrink(1.0);
-    if rail.height() < 2.0 {
-        return;
-    }
-    let stops = [(0.00, GYR_FLOOR), (0.42, OK), (0.78, WARN), (1.00, HOT)];
-    let mut mesh = egui::Mesh::default();
-    for (t, color) in stops {
-        let y = rail.bottom() - rail.height() * t;
-        mesh.colored_vertex(egui::pos2(rail.left(), y), color);
-        mesh.colored_vertex(egui::pos2(rail.right(), y), color);
-    }
-    for i in 0_u32..3 {
-        let n = i * 2;
-        mesh.add_triangle(n, n + 1, n + 2);
-        mesh.add_triangle(n + 2, n + 1, n + 3);
-    }
-    painter.add(egui::Shape::mesh(mesh));
-    let pos = db_to_pos(db);
-    if pos < 1.0 {
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                rail.min,
-                egui::pos2(rail.right(), rail.bottom() - rail.height() * pos),
-            ),
-            0.0,
-            SUNKEN,
+        if held[channel] > 0.000001 {
+            let y = rail.max.y - rail.height() * db_to_pos(peak_to_db(held[channel]));
+            ui.painter().line_segment(
+                [pos2(x - 2.0, y), pos2(x + 16.0, y)],
+                Stroke::new(2.0, tone(ui, TEXT)),
+            );
+        }
+        ui.painter().text(
+            pos2(x + 7.0, 101.0),
+            Align2::CENTER_CENTER,
+            if channel == 0 { "L" } else { "R" },
+            font(12.0),
+            tone(ui, MUTED),
+        );
+        ui.painter().text(
+            pos2(x + 7.0, 291.0),
+            Align2::CENTER_CENTER,
+            format!("{:.0}", peak_to_db(peaks[channel])),
+            font(11.0),
+            tone(ui, MUTED),
         );
     }
-    let hold_pos = db_to_pos(hold);
-    if hold_pos > 0.02 {
-        let y = rail.bottom() - rail.height() * hold_pos;
-        painter.hline(rail.x_range(), y, egui::Stroke::new(1.0, TEXT));
-    }
 }
 
-fn peak_to_db(peak: f32) -> f32 {
-    if !peak.is_finite() || peak <= 1.0e-6 {
-        return METER_FLOOR_DB;
+/// Horizontal four-stop gradient: floor → ok → warn → hot from left to right.
+#[cfg(test)]
+fn gyr_gradient(rect: Rect) -> Mesh {
+    const STOPS: [(f32, Color32); 4] = [(0.0, GYR_FLOOR), (0.42, OK), (0.78, WARN), (1.0, HOT)];
+    let mut mesh = Mesh::default();
+    for pair in STOPS.windows(2) {
+        let (lo, lo_c) = pair[0];
+        let (hi, hi_c) = pair[1];
+        let x_lo = rect.min.x + rect.width() * lo;
+        let x_hi = rect.min.x + rect.width() * hi;
+        let base = u32::try_from(mesh.vertices.len()).unwrap_or(u32::MAX);
+        mesh.colored_vertex(pos2(x_lo, rect.min.y), lo_c);
+        mesh.colored_vertex(pos2(x_hi, rect.min.y), hi_c);
+        mesh.colored_vertex(pos2(x_lo, rect.max.y), lo_c);
+        mesh.colored_vertex(pos2(x_hi, rect.max.y), hi_c);
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base + 1, base + 3, base + 2);
     }
-    (20.0 * peak.log10()).clamp(METER_FLOOR_DB, 6.0)
+    mesh
 }
 
-fn db_to_pos(db: f32) -> f32 {
-    ((db.clamp(METER_FLOOR_DB, 0.0) - METER_FLOOR_DB) / -METER_FLOOR_DB).clamp(0.0, 1.0)
+// ------------------------------------------------------------------- text
+
+fn tracked_job(text: &str, size: f32, tracking_em: f32, color: Color32) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.append(
+        text,
+        0.0,
+        TextFormat {
+            font_id: font(size),
+            extra_letter_spacing: size * tracking_em,
+            color,
+            ..TextFormat::default()
+        },
+    );
+    job
 }
 
-fn update_hold(hold: &mut f32, age: &mut f32, peak: f32) {
-    if peak >= *hold {
-        *hold = peak;
-        *age = 0.0;
-    } else {
-        *age += 0.033;
-        if *age > 0.9 {
-            *hold *= 0.82;
-            if *hold < peak {
-                *hold = peak;
-            }
-        }
-    }
-}
-
-fn public_url(name: &str) -> String {
-    format!("{PUBLIC_LINK_ORIGIN}/{}", normalize_slug(name))
-}
-
-fn commit_name(ui_state: &mut RelayUi, ctx: &PluginContext<RelayParams>) {
-    let slug = normalize_slug(&ui_state.name_buf);
-    if slug.is_empty() {
-        return;
-    }
-    ui_state.name_buf.clone_from(&slug);
-    if let Ok(mut session) = ctx.params().session.write() {
-        session.name.clone_from(&slug);
-    }
-    let _ = ctx.params().control.set_session_name(slug);
-}
-
-fn commit_password(ctx: &PluginContext<RelayParams>, value: &str) {
-    if let Ok(mut session) = ctx.params().session.write() {
-        session.password = value.to_owned();
-    }
-    let _ = ctx.params().control.set_password(value.to_owned());
-}
-
-fn copy_link(value: &str) {
-    if arboard::Clipboard::new()
-        .and_then(|mut clipboard| clipboard.set_text(value.to_owned()))
-        .is_ok()
-    {
-        return;
-    }
-    for command in [
-        ("wl-copy", vec![]),
-        ("xclip", vec!["-selection", "clipboard"]),
-        ("xsel", vec!["--clipboard", "--input"]),
-    ] {
-        if pipe_copy(command.0, &command.1, value) {
-            return;
-        }
-    }
-}
-
-fn pipe_copy(bin: &str, args: &[&str], value: &str) -> bool {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new(bin)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    let wrote = child
-        .stdin
-        .as_mut()
-        .is_some_and(|stdin| stdin.write_all(value.as_bytes()).is_ok());
-    wrote && child.wait().map(|status| status.success()).unwrap_or(false)
+fn tracked_text(
+    ui: &Ui,
+    anchor: Pos2,
+    align: Align2,
+    text: &str,
+    size: f32,
+    tracking_em: f32,
+    color: Color32,
+) {
+    let galley = ui
+        .painter()
+        .layout_job(tracked_job(text, size, tracking_em, color));
+    let rect = align.anchor_size(anchor, galley.size());
+    ui.painter().galley(rect.min, galley, color);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use relay_session::{
-        ConnectionState, SessionRole, SessionView, classify_session, format_session_status,
-    };
 
     #[test]
-    fn named_families_resolve_to_registered_data() {
-        let fonts = font_definitions();
-        for key in [
-            FONT_BARLOW,
-            FONT_BARLOW_BLACK,
-            FONT_JETBRAINS,
-            FONT_PHOSPHOR,
-        ] {
-            assert!(
-                fonts.font_data.contains_key(key),
-                "font data missing for {key}"
-            );
-        }
-        let black = fonts
-            .families
-            .get(&egui::FontFamily::Name(FONT_BARLOW_BLACK.into()))
-            .expect("barlow-black family");
-        assert!(black.contains(&FONT_BARLOW.to_owned()));
-        let phosphor = fonts
-            .families
-            .get(&phosphor_family())
-            .expect("phosphor family");
-        assert_eq!(phosphor.first().map(String::as_str), Some(FONT_PHOSPHOR));
-        let proportional = fonts
-            .families
-            .get(&egui::FontFamily::Proportional)
-            .expect("proportional family");
-        assert_eq!(proportional.first().map(String::as_str), Some(FONT_BARLOW));
-    }
-
-    fn view(silent: bool, web: u32) -> SessionView {
-        SessionView {
-            linked: true,
-            role: SessionRole::ConnectListen,
-            state: ConnectionState::Connecting,
-            peers: 0,
-            lan_browsers: 0,
-            web_listeners: web,
-            web_ok: true,
-            web_silent: silent,
-            web_wanted: true,
-            bound: true,
-        }
+    fn normalized_index_spans_the_unit_range() {
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(close(normalized_index(0, 2), 0.0));
+        assert!(close(normalized_index(1, 2), 1.0));
+        assert!(close(normalized_index(1, 3), 0.5));
+        assert!(close(normalized_index(9, 3), 1.0));
+        assert!(close(normalized_index(0, 1), 0.0));
     }
 
     #[test]
-    fn status_line_names_asleep_when_silent() {
-        assert_eq!(classify_session(view(true, 0)).as_str(), "asleep");
-        assert!(
-            format_session_status(view(true, 2), Some(17_492), 8787, 0, "", "")
-                .starts_with("Asleep")
-        );
-        assert_eq!(classify_session(view(false, 0)).as_str(), "ready");
-        let ready = format_session_status(view(false, 0), Some(17_492), 8787, 0, "", "");
-        assert!(ready.starts_with("Ready"), "{ready}");
-        assert!(!ready.contains("UDP"), "{ready}");
-        assert!(!ready.contains("Web"), "{ready}");
+    fn gradient_covers_the_bar_with_two_triangles_per_stop() {
+        let mesh = gyr_gradient(Rect::from_min_size(Pos2::ZERO, vec2(100.0, 4.0)));
+        assert_eq!(mesh.vertices.len(), 12);
+        assert_eq!(mesh.indices.len(), 18);
+    }
+
+    #[test]
+    fn window_fits_four_rows_a_meter_and_the_footer() {
+        let form_bottom = FORM_TOP + 4.0 * ROW_H + 3.0 * ROW_GAP + METER_H + 4.0;
+        assert!(form_bottom <= FOOTER_Y - 12.0);
     }
 }

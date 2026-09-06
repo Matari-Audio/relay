@@ -103,7 +103,7 @@ The same tokens ship in the DAW editor. The website is a listen accessory for th
 - Vertical L / fader / R as the first-viewport object
 - Barlow 11 / 12 / 13 / 22px; tracked labels, tabular dB
 - Hardware radii 2–4px; 44px minimum on touch controls
-- Plugin editor: Share / Join in the nav; L and R meters run from the header to the floor; Phosphor icons for new / copy / open / lock
+- Plugin editor: a fixed 400×260 plate on a two-line grid (labels at 16px, controls at 80px, readouts flush right). Header: tracked RELAY wordmark, Share / Join segmented switch. Four labelled rows: wells for text, segmented switches for enums, a flat-cap fader for gain with a stereo L / R GYR bar pair attached under Send. Footer: status lamp plus one sentence, and the lamp is the Live switch. Text-only actions (Copy / Open), no icons.
 
 ## Colors
 

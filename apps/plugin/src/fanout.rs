@@ -1,43 +1,91 @@
-//! Public named-session claim and P2P signaling to `relay.matari-audio.com`.
-//! Same-LAN browsers are served from [`crate::local_listen`] instead.
+//! Off-audio-thread worker: mirrors session strings into the engine, serves
+//! same-LAN browsers, claims the public room, and feeds WebRTC listeners.
+//!
+//! One thread, one 2–8 ms tick. Anything that can block (DNS, TLS, the
+//! claim POST) runs on a short-lived dial thread and is polled here, so LAN
+//! audio never stalls behind the internet.
 
-use std::collections::VecDeque;
-use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::local_listen::LocalHub;
-use relay_session::{
-    CodecSettings, PUBLIC_LINK_ORIGIN, SessionControl, SessionRole, WIRE_BITS, local_ipv4_addrs,
-    normalize_slug,
-};
+use relay_session::{PUBLIC_LINK_ORIGIN, SessionControl, SessionRole, normalize_slug};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
-type CloudSocket = WebSocket<MaybeTlsStream<std::net::TcpStream>>;
+use crate::local_listen::LocalHub;
+use crate::signal::{ClaimBody, Outbound, Signal};
+use crate::ws;
+use crate::{SessionPersist, SessionStore, default_peer};
 
-pub fn spawn(control: Arc<SessionControl>, stop: Arc<AtomicBool>) -> thread::JoinHandle<()> {
-    thread::Builder::new()
-        .name("relay-link-fanout".into())
-        .spawn(move || {
-            while !stop.load(Ordering::Acquire) {
-                let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run(Arc::clone(&control), Arc::clone(&stop));
-                }));
-                if stop.load(Ordering::Acquire) {
-                    break;
-                }
-                if again.is_err() {
-                    control.set_last_error("listen thread restarted");
-                }
-                thread::sleep(Duration::from_millis(80));
-            }
-        })
-        .expect("link fanout thread")
+type CloudSocket = WebSocket<MaybeTlsStream<TcpStream>>;
+
+/// 20 ms of 48 kHz stereo: one wire batch.
+const WEB_BATCH_SAMPLES: usize = 48_000 / 50 * 2;
+/// Keep at most 80 ms queued so a stall jumps to live instead of playing late.
+const KEEP_SAMPLES: usize = 48_000 / 5 * 2;
+/// Smallest batch worth a frame (5 ms). Shorter fragments accumulate.
+const MIN_EMIT_SAMPLES: usize = 480;
+/// Protocol pings keep the idle `/in` socket alive through Cloudflare.
+const PING_EVERY: Duration = Duration::from_secs(12);
+/// Per-address TCP timeout; a black-holed IPv6 must not eat the dial.
+const CONNECT_WAIT: Duration = Duration::from_secs(2);
+/// Empty takes before we declare the DAW stopped and hold the room.
+const STARVE_EMPTY: u32 = 12;
+/// While held, tick the Opus clock so browsers keep their jitter buffer.
+const RTP_KEEP_EVERY: Duration = Duration::from_millis(20);
+const ROOM_EVERY: Duration = Duration::from_millis(400);
+const IDLE_TICK: Duration = Duration::from_millis(80);
+const STARVED_TICK: Duration = Duration::from_millis(8);
+const USER_AGENT: &str = "Mozilla/5.0 RELAY/0.1";
+
+/// Owns the worker thread; dropping stops and joins it.
+pub struct Fanout {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Fanout {
+    pub fn spawn(control: Arc<SessionControl>, session: SessionStore) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::Builder::new()
+            .name("relay-fanout".into())
+            .spawn(move || supervise(&control, &session, &thread_stop))
+            .ok();
+        Self { stop, thread }
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
+}
+
+impl Drop for Fanout {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Restart the worker if it ever panics; the DAW must never lose audio
+/// because the network side tripped.
+fn supervise(control: &Arc<SessionControl>, session: &SessionStore, stop: &Arc<AtomicBool>) {
+    while !stop.load(Ordering::Acquire) {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Worker::new(Arc::clone(control), session.clone(), Arc::clone(stop)).run();
+        }));
+        if outcome.is_err() && !stop.load(Ordering::Acquire) {
+            control.set_last_error("listen thread restarted");
+            thread::sleep(IDLE_TICK);
+        }
+    }
 }
 
 fn is_sender(role: SessionRole) -> bool {
@@ -46,31 +94,6 @@ fn is_sender(role: SessionRole) -> bool {
         SessionRole::ConnectListen | SessionRole::StreamHub | SessionRole::StreamPublish
     )
 }
-
-/// 20 ms of 48 kHz stereo — one incoming DO message, lowest practical listen latency.
-const WEB_BATCH_SAMPLES: usize = 48_000 / 50 * 2;
-/// Keep at most 80 ms queued so a stall jumps to live instead of playing late.
-const KEEP_SAMPLES: usize = 48_000 / 5 * 2;
-/// ~−60 dBFS. Below this we treat a batch as silence.
-const SILENCE_PEAK: f32 = 0.001;
-/// Two 20 ms frames — delay send so silence/unsilence is visible 40 ms early.
-const LOOKAHEAD_FRAMES: usize = 2;
-/// 20 ms raised-cosine fade across DTX edges (stereo 48 kHz).
-const FADE_SAMPLES: usize = WEB_BATCH_SAMPLES;
-/// 20 × 20 ms of already-quiet audio before we stop sending. Short gaps must
-/// not fade a still-audible tail — that is the click on silence / unsilence.
-const HANGOVER_FRAMES: u32 = 20;
-/// Protocol pings keep the Cloudflare `/in` socket from being dropped idle.
-const PING_EVERY: Duration = Duration::from_secs(12);
-/// Per-address TCP timeout. `tungstenite::connect` has none, so a black-holed
-/// IPv6 (common on Linux DAW hosts) stalls the fan-out thread and the listen
-/// page sits on `want no offer` until the OS gives up.
-const CONNECT_WAIT: Duration = Duration::from_secs(2);
-/// Host-callback starvation (DAW suspended / no PCM) after this many empty takes.
-const STARVE_EMPTY: u32 = 12;
-/// Keep the Opus RTP clock ticking while the DAW is stopped so browsers
-/// do not rebuild a ~2 s jitter buffer on resume.
-const RTP_KEEP_EVERY: Duration = Duration::from_millis(20);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MediaEdge {
@@ -82,675 +105,479 @@ enum MediaEdge {
 }
 
 fn media_edge(held: bool, has_pcm: bool, empty_runs: u32, has_listeners: bool) -> MediaEdge {
-    if has_pcm {
-        return if held {
-            MediaEdge::Resume
-        } else {
-            MediaEdge::Speak
-        };
-    }
-    if !has_listeners {
-        return MediaEdge::Idle;
-    }
-    if held {
-        MediaEdge::KeepAlive
-    } else if empty_runs >= STARVE_EMPTY {
-        MediaEdge::HoldStart
-    } else {
-        MediaEdge::Idle
+    match (has_pcm, held, has_listeners) {
+        (true, true, _) => MediaEdge::Resume,
+        (true, false, _) => MediaEdge::Speak,
+        (false, true, true) => MediaEdge::KeepAlive,
+        (false, false, true) if empty_runs >= STARVE_EMPTY => MediaEdge::HoldStart,
+        (false, _, _) => MediaEdge::Idle,
     }
 }
 
-fn run(control: Arc<SessionControl>, stop: Arc<AtomicBool>) {
-    let hub = LocalHub::start(Arc::clone(&control), Arc::clone(&stop));
-    let mut p2p = crate::p2p::Hub::new();
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(2))
-        .user_agent("Mozilla/5.0 RELAY/0.1")
-        .build();
-    let mut last_claim = String::new();
-    let mut last_cfg = String::new();
-    let mut lan_seq = 0_u32;
-    let mut socket: Option<CloudSocket> = None;
-    let mut last_ws_try = Instant::now()
-        .checked_sub(Duration::from_secs(2))
-        .unwrap_or_else(Instant::now);
-    let mut ws_backoff = Duration::from_secs(1);
-    let mut claim_backoff = Duration::from_secs(2);
-    let mut dtx = Dtx::default();
-    let mut delay = DelayLine::default();
-    let mut fader = Fader::default();
-    let mut listeners = 0_u32;
-    let mut last_ping = Instant::now();
-    let mut empty_runs = 0_u32;
-    let mut last_l = 0.0_f32;
-    let mut last_r = 0.0_f32;
-    let mut last_room = Instant::now()
-        .checked_sub(Duration::from_secs(1))
-        .unwrap_or_else(Instant::now);
-    let mut last_stat = String::new();
-    let mut last_keep = Instant::now()
-        .checked_sub(RTP_KEEP_EVERY)
-        .unwrap_or_else(Instant::now);
-    let silence = vec![0.0_f32; WEB_BATCH_SAMPLES];
-    while !stop.load(Ordering::Acquire) {
-        let lan_n = hub.prune_and_count();
-        control.set_lan_listeners(lan_n);
-        let announce = last_room.elapsed() >= Duration::from_millis(400);
-        if announce {
-            hub.broadcast_text(&room_json(&control, lan_n, hub.port()));
-            last_room = Instant::now();
+struct Worker {
+    control: Arc<SessionControl>,
+    session: SessionStore,
+    stop: Arc<AtomicBool>,
+    lan: Arc<LocalHub>,
+    p2p: crate::p2p::Hub,
+    cloud: Cloud,
+    synced: Option<SessionPersist>,
+    lan_seq: u32,
+    next_room: Instant,
+    /// DTX hold: the DAW stopped delivering PCM.
+    held: bool,
+    empty_runs: u32,
+    /// Last emitted stereo sample, for a click-free fade into a hold.
+    tail: (f32, f32),
+    last_keep: Instant,
+    /// Sub-batch PCM waiting for enough samples to emit.
+    pending: Vec<f32>,
+    silence: Vec<f32>,
+}
+
+impl Worker {
+    fn new(control: Arc<SessionControl>, session: SessionStore, stop: Arc<AtomicBool>) -> Self {
+        let lan = LocalHub::start(Arc::clone(&control), Arc::clone(&stop));
+        Self {
+            control,
+            session,
+            stop,
+            lan,
+            p2p: crate::p2p::Hub::default(),
+            cloud: Cloud::new(),
+            synced: None,
+            lan_seq: 0,
+            next_room: Instant::now(),
+            held: false,
+            empty_runs: 0,
+            tail: (0.0, 0.0),
+            last_keep: Instant::now(),
+            pending: Vec::with_capacity(KEEP_SAMPLES),
+            silence: vec![0.0; WEB_BATCH_SAMPLES],
         }
-        if !control.linked() || !is_sender(control.role()) {
-            control.set_web_ok(false);
-            control.set_web_silent(false);
-            control.set_web_listeners(0);
-            socket = None;
-            last_claim.clear();
-            last_cfg.clear();
-            last_stat.clear();
-            listeners = 0;
-            p2p.clear();
-            dtx = Dtx::default();
-            delay = DelayLine::default();
-            fader = Fader::default();
-            empty_runs = 0;
-            thread::sleep(Duration::from_millis(80));
-            continue;
+    }
+
+    fn run(&mut self) {
+        while !self.stop.load(Ordering::Acquire) {
+            self.tick();
         }
-        let Ok(name) = control.session_name() else {
-            thread::sleep(Duration::from_millis(80));
-            continue;
+        self.cloud.reset(&self.control);
+        self.p2p.clear();
+    }
+
+    fn tick(&mut self) {
+        self.sync_session();
+        let lan_n = self.lan.prune_and_count();
+        self.control.set_lan_listeners(lan_n);
+        if Instant::now() >= self.next_room {
+            self.lan.broadcast_text(&self.room_json(lan_n));
+            self.next_room = Instant::now() + ROOM_EVERY;
+        }
+
+        if !self.control.linked() || !is_sender(self.control.role()) {
+            self.go_idle();
+            thread::sleep(IDLE_TICK);
+            return;
+        }
+        let Ok(name) = self.control.session_name() else {
+            thread::sleep(IDLE_TICK);
+            return;
         };
         let slug = normalize_slug(&name);
         if slug.is_empty() {
-            thread::sleep(Duration::from_millis(80));
-            continue;
+            thread::sleep(IDLE_TICK);
+            return;
         }
+
+        if self.control.web_wanted() {
+            let signals = self.cloud.maintain(&self.control, &slug, self.lan.port());
+            self.pump_p2p(&signals, lan_n);
+        } else {
+            self.cloud.reset(&self.control);
+            self.p2p.clear();
+        }
+        self.step_audio(lan_n);
+    }
+
+    /// Mirror the editor's strings into the engine; only on change.
+    fn sync_session(&mut self) {
+        let now = self.session.read();
+        if self.synced.as_ref() == Some(&now) {
+            return;
+        }
+        let name = normalize_slug(&now.name);
+        if !name.is_empty() {
+            let _ = self.control.set_session_name(name);
+        }
+        let peer = now.peer.trim();
+        let _ = self.control.set_peer(if peer.is_empty() {
+            default_peer()
+        } else {
+            peer.to_owned()
+        });
+        let _ = self.control.set_password(now.password.clone());
+        self.synced = Some(now);
+    }
+
+    fn go_idle(&mut self) {
+        self.cloud.reset(&self.control);
+        self.p2p.clear();
+        self.held = false;
+        self.empty_runs = 0;
+        self.pending.clear();
+    }
+
+    fn pump_p2p(&mut self, signals: &[Signal], lan_n: u32) {
+        let mut outgoing = Vec::new();
+        self.p2p.apply_all(signals, &mut outgoing);
+        self.p2p.drive(&mut outgoing);
+        self.cloud.send_all(outgoing);
+        self.control.set_web_listeners(self.p2p.peer_count());
+        self.control.set_web_ok(self.cloud.socket.is_some());
+        let stat = self.stat_json(lan_n);
+        self.cloud.send_stat(&stat);
+    }
+
+    fn step_audio(&mut self, lan_n: u32) {
+        let wake = self.control.take_web_wake();
+        let listeners = self.p2p.peer_count();
+        let has_out = listeners > 0 || lan_n > 0;
+
+        if let Ok(pcm) = self.control.take_pcm_live(WEB_BATCH_SAMPLES, KEEP_SAMPLES) {
+            self.pending.extend_from_slice(&pcm);
+        }
+        if self.pending.len() >= MIN_EMIT_SAMPLES {
+            let batch = std::mem::take(&mut self.pending);
+            self.empty_runs = 0;
+            if self.held || wake {
+                self.tell_live(true);
+            }
+            self.held = false;
+            if let [.., l, r] = batch[..] {
+                self.tail = (l, r);
+            }
+            self.emit(&batch, lan_n, listeners);
+            self.control.set_web_silent(false);
+            self.pending = batch;
+            self.pending.clear();
+            return;
+        }
+
+        if wake && self.held {
+            self.held = false;
+            self.empty_runs = 0;
+            self.tell_live(true);
+            self.control.set_web_silent(false);
+        }
+        self.empty_runs = self.empty_runs.saturating_add(1);
+        match media_edge(self.held, false, self.empty_runs, has_out) {
+            MediaEdge::HoldStart => {
+                let fade = fade_from_last(self.tail.0, self.tail.1);
+                self.tail = (0.0, 0.0);
+                self.emit(&fade, lan_n, listeners);
+                self.tell_live(false);
+                self.held = true;
+                self.control.set_web_silent(true);
+                self.last_keep = Instant::now();
+            }
+            MediaEdge::KeepAlive if self.last_keep.elapsed() >= RTP_KEEP_EVERY => {
+                let silence = std::mem::take(&mut self.silence);
+                self.emit(&silence, lan_n, listeners);
+                self.silence = silence;
+                self.last_keep = Instant::now();
+            }
+            _ => {}
+        }
+        thread::sleep(STARVED_TICK);
+    }
+
+    fn emit(&mut self, pcm: &[f32], lan_n: u32, listeners: u32) {
+        if lan_n > 0 {
+            self.lan_seq = self.lan_seq.wrapping_add(1);
+            self.lan.broadcast_bin(&encode_frame(self.lan_seq, pcm));
+        }
+        if listeners > 0 {
+            self.p2p.push_pcm(pcm, self.control.bitrate_kbps());
+        }
+    }
+
+    fn tell_live(&mut self, live: bool) {
+        let msg = if live { Outbound::Go } else { Outbound::Dtx }.to_json();
+        self.cloud.send_text(&msg);
+        self.lan.broadcast_text(&msg);
+    }
+
+    fn room_json(&self, lan_n: u32) -> String {
+        let snap = self.control.snapshot();
+        let silent = self.control.web_silent();
+        Outbound::Room {
+            host: true,
+            live: lan_n > 0 || snap.peers > 0 || self.control.web_listeners() > 0,
+            silent,
+            listeners: lan_n,
+            peers: snap.peers,
+            dropouts: snap.dropouts,
+            port: self.lan.port(),
+            asleep: silent,
+        }
+        .to_json()
+    }
+
+    fn stat_json(&self, lan_n: u32) -> String {
+        let snap = self.control.snapshot();
+        Outbound::Stat {
+            dropouts: snap.dropouts,
+            peers: snap.peers,
+            lan: lan_n,
+            web: self.p2p.peer_count(),
+            ready: self.p2p.ready_count(),
+            sent: self.p2p.frames_sent(),
+            peak: (self.p2p.last_peak() * 1000.0).round() / 1000.0,
+            port: snap.local_port.unwrap_or(0),
+        }
+        .to_json()
+    }
+}
+
+/// Result of one background dial attempt.
+struct DialOutcome {
+    /// Room identity that was claimed, if a claim was attempted and accepted.
+    claimed: Option<String>,
+    claim_failed: bool,
+    socket: Option<CloudSocket>,
+}
+
+/// The public room: claim + `/in` signaling socket.
+struct Cloud {
+    agent: ureq::Agent,
+    socket: Option<CloudSocket>,
+    claimed: String,
+    sent_cfg: String,
+    sent_stat: String,
+    last_ping: Instant,
+    ws_backoff: Duration,
+    next_ws_try: Instant,
+    claim_backoff: Duration,
+    next_claim_try: Instant,
+    dial: Option<Receiver<DialOutcome>>,
+}
+
+impl Cloud {
+    const WS_BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(30));
+    const CLAIM_BACKOFF: (Duration, Duration) = (Duration::from_secs(2), Duration::from_secs(60));
+
+    fn new() -> Self {
+        Self {
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(2))
+                .user_agent(USER_AGENT)
+                .build(),
+            socket: None,
+            claimed: String::new(),
+            sent_cfg: String::new(),
+            sent_stat: String::new(),
+            last_ping: Instant::now(),
+            ws_backoff: Self::WS_BACKOFF.0,
+            next_ws_try: Instant::now(),
+            claim_backoff: Self::CLAIM_BACKOFF.0,
+            next_claim_try: Instant::now(),
+            dial: None,
+        }
+    }
+
+    /// Forget the room entirely (Live off, Join mode, or shutdown).
+    fn reset(&mut self, control: &SessionControl) {
+        self.drop_socket();
+        self.claimed.clear();
+        self.dial = None;
+        control.set_web_ok(false);
+        control.set_web_silent(false);
+        control.set_web_listeners(0);
+    }
+
+    fn drop_socket(&mut self) {
+        if self.socket.take().is_some() {
+            self.next_ws_try = Instant::now() + self.ws_backoff;
+            self.ws_backoff = (self.ws_backoff * 2).min(Self::WS_BACKOFF.1);
+        }
+        self.sent_cfg.clear();
+        self.sent_stat.clear();
+    }
+
+    /// One tick of room upkeep. Returns inbound WebRTC signals.
+    fn maintain(&mut self, control: &SessionControl, slug: &str, lan_http: u16) -> Vec<Signal> {
+        self.poll_dial();
         let port = control
             .snapshot()
             .local_port
             .unwrap_or_else(|| control.bind_port());
         let settings = control.codec_settings();
         let pass = control.password_hex();
-        let device_rate = control.device_rate_hz();
-        let block = control.block_frames();
-        if control.web_wanted() {
-            let key = claim_key(&slug, port, settings, &pass, hub.port());
-            if key != last_claim {
-                if claim(
-                    &agent,
-                    &slug,
+        let key = format!("{slug}|{lan_http}|{pass}");
+        let need_claim = key != self.claimed;
+        let now = Instant::now();
+        let due = if need_claim {
+            now >= self.next_claim_try
+        } else {
+            self.socket.is_none() && now >= self.next_ws_try
+        };
+        if self.dial.is_none() && due {
+            let body = need_claim.then(|| {
+                ClaimBody::new(
+                    slug,
                     port,
                     settings,
                     &pass,
-                    device_rate,
-                    block,
-                    hub.port(),
+                    control.device_rate_hz(),
+                    control.block_frames(),
+                    lan_http,
                 )
-                .is_ok()
-                {
-                    last_claim = key;
-                    last_cfg = cfg_json(settings, port, hub.port());
-                    socket = None;
-                    claim_backoff = Duration::from_secs(2);
-                } else {
-                    claim_backoff = (claim_backoff * 2).min(Duration::from_secs(60));
-                    thread::sleep(claim_backoff.min(Duration::from_millis(80)));
-                }
-            }
-            if socket.is_none() && last_ws_try.elapsed() >= ws_backoff {
-                socket = open_in(&slug);
-                last_ws_try = Instant::now();
-                if socket.is_some() {
-                    ws_backoff = Duration::from_secs(1);
-                } else {
-                    ws_backoff = (ws_backoff * 2).min(Duration::from_secs(30));
-                }
-            }
-            if let Some(ws) = socket.as_mut() {
-                let cfg = cfg_json(settings, port, hub.port());
-                if cfg != last_cfg && send_keep(ws, Message::Text(cfg.clone().into())) {
-                    last_cfg = cfg;
-                }
-            }
-            let sending_pcm = listeners > 0 && !control.web_silent();
-            let mut inbound = Vec::new();
-            if !keep_socket(
-                &mut socket,
-                &mut listeners,
-                &mut last_ping,
-                sending_pcm,
-                &mut inbound,
-            ) {
-                socket = None;
-                last_cfg.clear();
-                last_stat.clear();
-            }
-            flush_p2p(
-                &mut p2p,
-                &mut socket,
-                &inbound,
-                &mut last_cfg,
-                &mut last_stat,
-            );
-            listeners = p2p.peer_count();
-            control.set_web_listeners(listeners);
-            control.set_web_ok(socket.is_some());
-            if let Some(ws) = socket.as_mut() {
-                let stat = stat_json(&control, &p2p, lan_n);
-                if stat != last_stat && send_keep(ws, Message::Text(stat.clone().into())) {
-                    last_stat = stat;
-                }
-            }
-        } else {
-            socket = None;
-            last_claim.clear();
-            last_cfg.clear();
-            last_stat.clear();
-            listeners = 0;
-            p2p.clear();
-            control.set_web_ok(false);
-            control.set_web_silent(false);
-            control.set_web_listeners(0);
+                .to_json()
+            });
+            self.start_dial(slug.to_owned(), key, body);
         }
-        let wake = control.take_web_wake();
-        let has_out = listeners > 0 || lan_n > 0;
-        match control.take_pcm_live(WEB_BATCH_SAMPLES, KEEP_SAMPLES) {
-            Ok(pcm) if pcm.len() >= 480 => {
-                empty_runs = 0;
-                let resume = dtx.held || wake;
-                let outgoing = if resume {
-                    delay.clear();
-                    tell_live(&mut socket, &hub, true);
-                    dtx.force_wake();
-                    fader = Fader::default();
-                    pcm
-                } else if let Some(frame) = delay.push(pcm) {
-                    frame
-                } else {
-                    continue;
+
+        let mut signals = Vec::new();
+        let Some(ws) = self.socket.as_mut() else {
+            return signals;
+        };
+        let cfg = Outbound::cfg(settings, port, lan_http).to_json();
+        if cfg != self.sent_cfg {
+            if !ws::send_keep(ws, Message::Text(cfg.clone().into())) {
+                self.drop_socket();
+                return signals;
+            }
+            self.sent_cfg = cfg;
+        }
+        if self.last_ping.elapsed() >= PING_EVERY {
+            if !ws::send_keep(ws, Message::Ping(Vec::new().into())) {
+                self.drop_socket();
+                return signals;
+            }
+            self.last_ping = Instant::now();
+        }
+        let open = ws::drain(ws, |text| signals.extend(Signal::parse(text)));
+        if !open {
+            self.drop_socket();
+        }
+        signals
+    }
+
+    fn start_dial(&mut self, slug: String, key: String, claim_body: Option<String>) {
+        let (tx, rx) = mpsc::channel();
+        let agent = self.agent.clone();
+        let spawned = thread::Builder::new()
+            .name("relay-dial".into())
+            .spawn(move || {
+                let outcome = match claim_body {
+                    Some(body) if claim(&agent, &body).is_err() => DialOutcome {
+                        claimed: None,
+                        claim_failed: true,
+                        socket: None,
+                    },
+                    Some(_) => DialOutcome {
+                        claimed: Some(key),
+                        claim_failed: false,
+                        socket: open_in(&slug),
+                    },
+                    None => DialOutcome {
+                        claimed: None,
+                        claim_failed: false,
+                        socket: open_in(&slug),
+                    },
                 };
-                remember_tail(&outgoing, &mut last_l, &mut last_r);
-                emit_pcm(
-                    &hub,
-                    lan_n,
-                    &mut lan_seq,
-                    &mut p2p,
-                    listeners,
-                    control.web_wanted(),
-                    &outgoing,
-                    control.bitrate_kbps(),
-                );
-                if listeners == 0 || !control.web_wanted() {
-                    dtx = Dtx::default();
-                    fader = Fader::default();
-                }
-                control.set_web_silent(false);
-                control.set_web_ok(socket.is_some());
-            }
-            _ => {
-                if wake && dtx.held {
-                    dtx.force_wake();
-                    empty_runs = 0;
-                    tell_live(&mut socket, &hub, true);
-                    control.set_web_silent(false);
-                }
-                empty_runs = empty_runs.saturating_add(1);
-                let edge = media_edge(dtx.held, false, empty_runs, has_out);
-                match edge {
-                    MediaEdge::HoldStart => {
-                        let mut outgoing = fade_from_last(last_l, last_r);
-                        last_l = 0.0;
-                        last_r = 0.0;
-                        fader.start_out();
-                        fader.apply(&mut outgoing);
-                        emit_pcm(
-                            &hub,
-                            lan_n,
-                            &mut lan_seq,
-                            &mut p2p,
-                            listeners,
-                            control.web_wanted(),
-                            &outgoing,
-                            control.bitrate_kbps(),
-                        );
-                        tell_live(&mut socket, &hub, false);
-                        dtx.phase = DtxPhase::Held;
-                        dtx.held = true;
-                        dtx.silent_run = HANGOVER_FRAMES;
-                        control.set_web_silent(true);
-                        last_keep = Instant::now();
-                    }
-                    MediaEdge::KeepAlive if last_keep.elapsed() >= RTP_KEEP_EVERY => {
-                        emit_pcm(
-                            &hub,
-                            lan_n,
-                            &mut lan_seq,
-                            &mut p2p,
-                            listeners,
-                            control.web_wanted(),
-                            &silence,
-                            control.bitrate_kbps(),
-                        );
-                        last_keep = Instant::now();
-                    }
-                    _ => {}
-                }
-                let mut inbound = Vec::new();
-                if !keep_socket(
-                    &mut socket,
-                    &mut listeners,
-                    &mut last_ping,
-                    false,
-                    &mut inbound,
-                ) {
-                    socket = None;
-                    last_cfg.clear();
-                    last_stat.clear();
-                }
-                flush_p2p(
-                    &mut p2p,
-                    &mut socket,
-                    &inbound,
-                    &mut last_cfg,
-                    &mut last_stat,
-                );
-                control.set_web_ok(socket.is_some());
-                thread::sleep(Duration::from_millis(8));
-            }
+                let _ = tx.send(outcome);
+            });
+        if spawned.is_ok() {
+            self.dial = Some(rx);
         }
     }
-}
 
-fn apply_web_frame(
-    socket: &mut Option<CloudSocket>,
-    seq: &mut u32,
-    dtx: &mut Dtx,
-    fader: &mut Fader,
-    outgoing: Vec<f32>,
-    ahead_silent: bool,
-    wake: bool,
-) {
-    let event = dtx.push(is_silent(&outgoing), ahead_silent, fader.is_done(), wake);
-    let mut frame = outgoing;
-    match event {
-        DtxEvent::FadeOut => fader.start_out(),
-        DtxEvent::FadeIn => {
-            if let Some(ws) = socket.as_mut() {
-                let _ = send_keep(ws, Message::Text(r#"{"t":"go"}"#.into()));
+    fn poll_dial(&mut self) {
+        let Some(rx) = self.dial.as_ref() else {
+            return;
+        };
+        let outcome = match rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.dial = None;
+                return;
             }
-            if fader.is_fading_out() {
-                fader.reverse();
-            } else {
-                fader.start_in();
-            }
-        }
-        DtxEvent::Hold | DtxEvent::Speak => {}
-    }
-    if event != DtxEvent::Hold {
-        fader.apply(&mut frame);
-        send_pcm(socket, seq, &frame);
-        if dtx.phase == DtxPhase::FadingOut && fader.is_done() {
-            if let Some(ws) = socket.as_mut() {
-                let _ = send_keep(ws, Message::Text(r#"{"t":"dtx"}"#.into()));
-            }
-            dtx.phase = DtxPhase::Held;
-            dtx.held = true;
-        }
-    }
-}
-
-fn flush_p2p(
-    p2p: &mut crate::p2p::Hub,
-    socket: &mut Option<CloudSocket>,
-    inbound: &[String],
-    last_cfg: &mut String,
-    last_stat: &mut String,
-) {
-    let mut outbound = Vec::new();
-    p2p.apply_all(inbound, &mut outbound);
-    p2p.drive(&mut outbound);
-    let Some(ws) = socket.as_mut() else {
-        return;
-    };
-    for msg in outbound {
-        if !send_keep(ws, Message::Text(msg.into())) {
-            *socket = None;
-            last_cfg.clear();
-            last_stat.clear();
+        };
+        self.dial = None;
+        if outcome.claim_failed {
+            self.next_claim_try = Instant::now() + self.claim_backoff;
+            self.claim_backoff = (self.claim_backoff * 2).min(Self::CLAIM_BACKOFF.1);
             return;
         }
-    }
-}
-
-fn keep_socket(
-    socket: &mut Option<CloudSocket>,
-    listeners: &mut u32,
-    last_ping: &mut Instant,
-    sending_pcm: bool,
-    inbound: &mut Vec<String>,
-) -> bool {
-    let Some(ws) = socket.as_mut() else {
-        return false;
-    };
-    if !sending_pcm && last_ping.elapsed() >= PING_EVERY {
-        if !send_keep(ws, Message::Ping(Vec::new().into())) {
-            return false;
+        if let Some(key) = outcome.claimed {
+            self.claimed = key;
+            self.claim_backoff = Self::CLAIM_BACKOFF.0;
+            self.drop_socket();
         }
-        *last_ping = Instant::now();
-    }
-    service_socket(ws, listeners, inbound)
-}
-
-fn remember_tail(pcm: &[f32], last_l: &mut f32, last_r: &mut f32) {
-    if pcm.len() >= 2 {
-        *last_l = pcm[pcm.len() - 2];
-        *last_r = pcm[pcm.len() - 1];
-    }
-}
-
-fn fade_from_last(last_l: f32, last_r: f32) -> Vec<f32> {
-    let frames = WEB_BATCH_SAMPLES / 2;
-    let mut out = vec![0.0; WEB_BATCH_SAMPLES];
-    for i in 0..frames {
-        let t = (i + 1) as f32 / frames as f32;
-        let shaped = 0.5 - 0.5 * (core::f32::consts::PI * t).cos();
-        let gain = 1.0 - shaped;
-        out[i * 2] = last_l * gain;
-        out[i * 2 + 1] = last_r * gain;
-    }
-    out
-}
-
-fn claim_key(
-    slug: &str,
-    _port: u16,
-    _settings: CodecSettings,
-    pass: &str,
-    lan_http: u16,
-) -> String {
-    format!("{slug}|{lan_http}|{pass}")
-}
-
-fn cfg_json(settings: CodecSettings, port: u16, lan_http: u16) -> String {
-    format!(
-        "{{\"t\":\"cfg\",\"codec\":\"{}\",\"bitrate\":{},\"bits\":{},\"compression\":{},\"rate\":48000,\"port\":{port},\"lanHttp\":{lan_http}}}",
-        settings.codec().as_str(),
-        settings.bitrate_kbps().unwrap_or(0),
-        settings.bits().max(WIRE_BITS),
-        settings.flac_level().unwrap_or(0)
-    )
-}
-
-fn is_silent(pcm: &[f32]) -> bool {
-    pcm.iter().all(|s| s.abs() < SILENCE_PEAK)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DtxEvent {
-    Speak,
-    FadeOut,
-    Hold,
-    FadeIn,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum DtxPhase {
-    #[default]
-    Live,
-    FadingOut,
-    Held,
-    FadingIn,
-}
-
-#[derive(Default)]
-struct Dtx {
-    phase: DtxPhase,
-    held: bool,
-    silent_run: u32,
-}
-
-impl Dtx {
-    fn is_idle(&self) -> bool {
-        matches!(self.phase, DtxPhase::Live) && self.silent_run == 0
-    }
-
-    fn force_wake(&mut self) {
-        self.phase = DtxPhase::Live;
-        self.held = false;
-        self.silent_run = 0;
-    }
-
-    /// `now` is the delayed frame about to go on the wire. `ahead` is true
-    /// when the next ~40 ms is also below the silence floor.
-    fn push(
-        &mut self,
-        now_silent: bool,
-        ahead_silent: bool,
-        fade_done: bool,
-        wake: bool,
-    ) -> DtxEvent {
-        if now_silent {
-            self.silent_run = self.silent_run.saturating_add(1);
+        if let Some(socket) = outcome.socket {
+            self.socket = Some(socket);
+            self.ws_backoff = Self::WS_BACKOFF.0;
+            self.last_ping = Instant::now();
+            self.sent_cfg.clear();
+            self.sent_stat.clear();
         } else {
-            self.silent_run = 0;
+            self.next_ws_try = Instant::now() + self.ws_backoff;
+            self.ws_backoff = (self.ws_backoff * 2).min(Self::WS_BACKOFF.1);
         }
-        match self.phase {
-            DtxPhase::Live => {
-                if wake {
-                    return DtxEvent::Speak;
-                }
-                if now_silent && ahead_silent && self.silent_run >= HANGOVER_FRAMES {
-                    self.phase = DtxPhase::FadingOut;
-                    return DtxEvent::FadeOut;
-                }
-                DtxEvent::Speak
+    }
+
+    fn send_text(&mut self, text: &str) {
+        if let Some(ws) = self.socket.as_mut()
+            && !ws::send_keep(ws, Message::Text(text.to_owned().into()))
+        {
+            self.drop_socket();
+        }
+    }
+
+    fn send_all(&mut self, messages: Vec<String>) {
+        for message in messages {
+            if self.socket.is_none() {
+                return;
             }
-            DtxPhase::FadingOut => {
-                if wake || !now_silent {
-                    self.phase = DtxPhase::FadingIn;
-                    self.held = false;
-                    return DtxEvent::FadeIn;
-                }
-                if fade_done {
-                    self.phase = DtxPhase::Held;
-                    self.held = true;
-                    return DtxEvent::Hold;
-                }
-                DtxEvent::Speak
-            }
-            DtxPhase::Held => {
-                if wake || !now_silent {
-                    self.phase = DtxPhase::FadingIn;
-                    self.held = false;
-                    return DtxEvent::FadeIn;
-                }
-                DtxEvent::Hold
-            }
-            DtxPhase::FadingIn => {
-                if fade_done {
-                    self.phase = DtxPhase::Live;
-                }
-                DtxEvent::Speak
+            self.send_text(&message);
+        }
+    }
+
+    fn send_stat(&mut self, stat: &str) {
+        if self.socket.is_some() && stat != self.sent_stat {
+            self.send_text(stat);
+            if self.socket.is_some() {
+                stat.clone_into(&mut self.sent_stat);
             }
         }
     }
 }
 
-/// Raised-cosine gain ramp that spans multiple 20 ms batches.
-struct Fader {
-    remaining: i32,
-    total: i32,
-    dir: i8,
+fn claim(agent: &ureq::Agent, body: &str) -> Result<(), Box<ureq::Error>> {
+    agent
+        .post(&format!("{PUBLIC_LINK_ORIGIN}/api/claim"))
+        .set("content-type", "application/json")
+        .send_string(body)
+        .map(drop)
+        .map_err(Box::new)
 }
 
-impl Default for Fader {
-    fn default() -> Self {
-        Self {
-            remaining: 0,
-            total: FADE_SAMPLES as i32,
-            dir: 0,
-        }
-    }
-}
-
-impl Fader {
-    fn start_out(&mut self) {
-        self.total = FADE_SAMPLES as i32;
-        self.remaining = self.total;
-        self.dir = -1;
-    }
-
-    fn start_in(&mut self) {
-        self.total = FADE_SAMPLES as i32;
-        self.remaining = self.total;
-        self.dir = 1;
-    }
-
-    fn is_done(&self) -> bool {
-        self.dir == 0 || self.remaining <= 0
-    }
-
-    fn is_fading_out(&self) -> bool {
-        self.dir < 0 && self.remaining > 0
-    }
-
-    fn reverse(&mut self) {
-        if self.dir >= 0 || self.remaining <= 0 {
-            return;
-        }
-        self.remaining = self.total.saturating_sub(self.remaining);
-        self.dir = 1;
-    }
-
-    #[cfg(test)]
-    fn is_muted(&self) -> bool {
-        self.dir <= 0 && self.remaining <= 0
-    }
-
-    fn apply(&mut self, pcm: &mut [f32]) {
-        if self.dir == 0 {
-            return;
-        }
-        let total = self.total.max(1) as f32;
-        for sample in pcm {
-            if self.remaining <= 0 {
-                if self.dir < 0 {
-                    *sample = 0.0;
-                }
-                continue;
-            }
-            let t = 1.0 - self.remaining as f32 / total;
-            let shaped = 0.5 - 0.5 * (core::f32::consts::PI * t).cos();
-            let gain = if self.dir > 0 { shaped } else { 1.0 - shaped };
-            *sample *= gain;
-            self.remaining -= 1;
-        }
-        if self.remaining <= 0 {
-            self.dir = 0;
-        }
-    }
-}
-
-#[derive(Default)]
-struct DelayLine {
-    frames: VecDeque<Vec<f32>>,
-}
-
-impl DelayLine {
-    fn push(&mut self, pcm: Vec<f32>) -> Option<Vec<f32>> {
-        self.frames.push_back(pcm);
-        if self.frames.len() <= LOOKAHEAD_FRAMES {
-            return None;
-        }
-        self.frames.pop_front()
-    }
-
-    fn clear(&mut self) {
-        self.frames.clear();
-    }
-
-    fn future_silent(&self) -> bool {
-        !self.frames.is_empty() && self.frames.iter().all(|frame| is_silent(frame))
-    }
-}
-
-fn send_keep(ws: &mut CloudSocket, msg: Message) -> bool {
-    match ws.send(msg) {
-        Ok(()) => true,
-        Err(tungstenite::Error::WriteBufferFull(_)) => true,
-        Err(err) if io_would_block(&err) => true,
-        Err(_) => false,
-    }
-}
-
-fn io_would_block(err: &tungstenite::Error) -> bool {
-    match err {
-        tungstenite::Error::Io(io) => matches!(
-            io.kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
-        ),
-        _ => {
-            let text = err.to_string().to_ascii_lowercase();
-            text.contains("would block") || text.contains("not ready")
-        }
-    }
-}
-
-fn tell_live(socket: &mut Option<CloudSocket>, hub: &LocalHub, live: bool) {
-    let msg = if live {
-        r#"{"t":"go"}"#
-    } else {
-        r#"{"t":"dtx"}"#
-    };
-    if let Some(ws) = socket.as_mut() {
-        let _ = send_keep(ws, Message::Text(msg.to_owned().into()));
-    }
-    hub.broadcast_text(msg);
-}
-
-fn emit_pcm(
-    hub: &LocalHub,
-    lan_n: u32,
-    lan_seq: &mut u32,
-    p2p: &mut crate::p2p::Hub,
-    listeners: u32,
-    web_wanted: bool,
-    pcm: &[f32],
-    bitrate_kbps: u32,
-) {
-    if lan_n > 0 {
-        *lan_seq = lan_seq.wrapping_add(1);
-        hub.broadcast_bin(&encode_frame(*lan_seq, pcm));
-    }
-    if listeners > 0 && web_wanted {
-        p2p.push_pcm(pcm, bitrate_kbps);
-    }
-}
-
-fn send_pcm(socket: &mut Option<CloudSocket>, seq: &mut u32, pcm: &[f32]) {
-    let Some(ws) = socket.as_mut() else {
-        return;
-    };
-    *seq = seq.wrapping_add(1);
-    let bytes = encode_frame(*seq, pcm);
-    if !send_keep(ws, Message::Binary(bytes.into())) {
-        *socket = None;
-    }
-}
-
+/// Blocking: DNS + TCP + TLS + WebSocket handshake for `wss://…/<slug>/in`.
 fn open_in(slug: &str) -> Option<CloudSocket> {
     let host = PUBLIC_LINK_ORIGIN
         .strip_prefix("https://")
         .unwrap_or(PUBLIC_LINK_ORIGIN);
-    let url = format!("wss://{host}/{slug}/in");
-    let mut request = url.into_client_request().ok()?;
-    request.headers_mut().insert(
+    let mut request = format!("wss://{host}/{slug}/in")
+        .into_client_request()
+        .ok()?;
+    let headers = request.headers_mut();
+    headers.insert(
         tungstenite::http::header::USER_AGENT,
-        tungstenite::http::HeaderValue::from_static("Mozilla/5.0 RELAY/0.1"),
+        tungstenite::http::HeaderValue::from_static(USER_AGENT),
     );
-    request.headers_mut().insert(
+    headers.insert(
         tungstenite::http::header::ORIGIN,
         tungstenite::http::HeaderValue::from_static(PUBLIC_LINK_ORIGIN),
     );
@@ -762,13 +589,18 @@ fn open_in(slug: &str) -> Option<CloudSocket> {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
         if let Ok((mut ws, _)) = tungstenite::client_tls(request.clone(), stream) {
-            configure_socket(&mut ws);
+            match ws.get_mut() {
+                MaybeTlsStream::Plain(tcp) => ws::tune_tcp(tcp),
+                MaybeTlsStream::Rustls(tls) => ws::tune_tcp(tls.get_ref()),
+                _ => {}
+            }
             return Some(ws);
         }
     }
     None
 }
 
+/// IPv4 first: a black-holed IPv6 route is common on Linux DAW hosts.
 fn ordered_addrs(host: &str, port: u16) -> Vec<SocketAddr> {
     let mut addrs: Vec<SocketAddr> = (host, port)
         .to_socket_addrs()
@@ -778,85 +610,7 @@ fn ordered_addrs(host: &str, port: u16) -> Vec<SocketAddr> {
     addrs
 }
 
-fn configure_socket(ws: &mut CloudSocket) {
-    match ws.get_mut() {
-        MaybeTlsStream::Plain(tcp) => {
-            let _ = tcp.set_nodelay(true);
-            let _ = tcp.set_nonblocking(true);
-        }
-        MaybeTlsStream::Rustls(stream) => {
-            let tcp = stream.get_mut();
-            let _ = tcp.set_nodelay(true);
-            let _ = tcp.set_nonblocking(true);
-        }
-        _ => {}
-    }
-}
-
-/// Drain incoming frames. Listener count arrives as room events — no HTTP.
-fn service_socket(ws: &mut CloudSocket, listeners: &mut u32, inbound: &mut Vec<String>) -> bool {
-    loop {
-        match ws.read() {
-            Ok(Message::Ping(payload)) => {
-                if !send_keep(ws, Message::Pong(payload)) {
-                    return false;
-                }
-            }
-            Ok(Message::Text(text)) => {
-                if let Some(n) = parse_listeners(text.as_str()) {
-                    *listeners = n;
-                }
-                if is_rtc_signal(text.as_str()) {
-                    inbound.push(text.to_string());
-                }
-            }
-            Ok(Message::Close(_)) => return false,
-            Ok(_) => {}
-            Err(err) if io_would_block(&err) => return true,
-            Err(tungstenite::Error::AlreadyClosed) => return false,
-            Err(_) => return false,
-        }
-    }
-}
-
-fn claim_body(
-    slug: &str,
-    port: u16,
-    settings: CodecSettings,
-    pass: &str,
-    device_rate: u32,
-    block: u32,
-    lan_http: u16,
-) -> String {
-    let lan = local_ipv4_addrs();
-    let codec = settings.codec().as_str();
-    let bitrate = settings.bitrate_kbps().unwrap_or(0);
-    let compression = settings.flac_level().unwrap_or(0);
-    let bits = settings.bits().max(WIRE_BITS);
-    format!(
-        "{{\"name\":\"{slug}\",\"port\":{port},\"lan\":{lan:?},\"lanHttp\":{lan_http},\"mode\":\"{codec}\",\"codec\":\"{codec}\",\"rate\":48000,\"deviceRate\":{device_rate},\"block\":{block},\"bitrate\":{bitrate},\"bits\":{bits},\"compression\":{compression},\"pass\":\"{pass}\"}}"
-    )
-}
-
-fn claim(
-    agent: &ureq::Agent,
-    slug: &str,
-    port: u16,
-    settings: CodecSettings,
-    pass: &str,
-    device_rate: u32,
-    block: u32,
-    lan_http: u16,
-) -> Result<(), ()> {
-    let body = claim_body(slug, port, settings, pass, device_rate, block, lan_http);
-    agent
-        .post(&format!("{PUBLIC_LINK_ORIGIN}/api/claim"))
-        .set("content-type", "application/json")
-        .send_string(&body)
-        .map(|_| ())
-        .map_err(|_| ())
-}
-
+/// LAN wire frame: `RLY1` + LE u32 sequence + s16le interleaved PCM.
 fn encode_frame(seq: u32, pcm: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(8 + pcm.len() * 2);
     bytes.extend_from_slice(b"RLY1");
@@ -868,337 +622,61 @@ fn encode_frame(seq: u32, pcm: &[f32]) -> Vec<u8> {
     bytes
 }
 
-fn room_json(control: &SessionControl, lan_n: u32, lan_http: u16) -> String {
-    let snap = control.snapshot();
-    let live = lan_n > 0 || snap.peers > 0 || control.web_listeners() > 0;
-    format!(
-        "{{\"t\":\"room\",\"host\":true,\"live\":{live},\"silent\":{},\"listeners\":{lan_n},\"peers\":{},\"dropouts\":{},\"port\":{lan_http},\"asleep\":{}}}",
-        control.web_silent(),
-        snap.peers,
-        snap.dropouts,
-        control.web_silent()
-    )
-}
-
-fn stat_json(control: &SessionControl, p2p: &crate::p2p::Hub, lan_n: u32) -> String {
-    let snap = control.snapshot();
-    format!(
-        "{{\"t\":\"stat\",\"dropouts\":{},\"peers\":{},\"lan\":{lan_n},\"web\":{},\"ready\":{},\"sent\":{},\"peak\":{},\"port\":{}}}",
-        snap.dropouts,
-        snap.peers,
-        p2p.peer_count(),
-        p2p.ready_count(),
-        p2p.frames_sent(),
-        format!("{:.3}", p2p.last_peak()),
-        snap.local_port.unwrap_or(0)
-    )
-}
-
-fn is_rtc_signal(body: &str) -> bool {
-    body.contains("\"t\":\"want\"")
-        || body.contains("\"t\":\"answer\"")
-        || body.contains("\"t\":\"ice\"")
-        || body.contains("\"t\":\"bye\"")
-}
-
-fn parse_listeners(body: &str) -> Option<u32> {
-    let key = "\"listeners\":";
-    let rest = body.split(key).nth(1)?;
-    let digits: String = rest
-        .chars()
-        .skip_while(|ch| ch.is_whitespace())
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect();
-    digits.parse().ok()
+/// One batch that ramps the last live sample down to zero.
+fn fade_from_last(last_l: f32, last_r: f32) -> Vec<f32> {
+    let frames = WEB_BATCH_SAMPLES / 2;
+    let mut out = vec![0.0; WEB_BATCH_SAMPLES];
+    for (i, pair) in out.chunks_exact_mut(2).enumerate() {
+        let t = (i + 1) as f32 / frames as f32;
+        let gain = 0.5 + 0.5 * (core::f32::consts::PI * t).cos();
+        pair[0] = last_l * gain;
+        pair[1] = last_r * gain;
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn parse_listeners_from_info() {
-        let body = r#"{"claim":{"name":"mix"},"listeners":4,"waiting":1}"#;
-        assert_eq!(super::parse_listeners(body), Some(4));
-        assert_eq!(super::parse_listeners("{}"), None);
-    }
-
-    #[test]
-    #[ignore = "hits production relay.matari-audio.com"]
-    fn live_cloud_claim_and_in_socket() {
-        let slug = format!(
-            "diag-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or(1)
-        );
-        let settings = relay_session::CodecSettings::live();
-        super::claim(
-            &ureq::AgentBuilder::new()
-                .timeout(std::time::Duration::from_secs(4))
-                .user_agent("Mozilla/5.0 RELAY/diag")
-                .build(),
-            &slug,
-            17_492,
-            settings,
-            "",
-            48_000,
-            128,
-            8_787,
-        )
-        .expect("ureq claim against relay.matari-audio.com");
-        let socket = super::open_in(&slug);
-        assert!(
-            socket.is_some(),
-            "tungstenite rustls /in must open (same crates as the plugin fan-out)"
-        );
-    }
-
-    #[test]
-    #[ignore = "hits production relay.matari-audio.com"]
-    fn live_in_socket_receives_want_from_waiting_out() {
-        let slug = format!(
-            "want-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or(1)
-        );
-        let settings = relay_session::CodecSettings::live();
-        super::claim(
-            &ureq::AgentBuilder::new()
-                .timeout(std::time::Duration::from_secs(4))
-                .user_agent("Mozilla/5.0 RELAY/diag")
-                .build(),
-            &slug,
-            17_492,
-            settings,
-            "",
-            48_000,
-            128,
-            8_787,
-        )
-        .expect("claim");
-        let host = relay_session::PUBLIC_LINK_ORIGIN
-            .strip_prefix("https://")
-            .unwrap();
-        let out_url = format!("wss://{host}/{slug}/out");
-        let (mut listener, _) = tungstenite::connect(out_url).expect("listener /out");
-        listener
-            .send(tungstenite::Message::Text(
-                r#"{"t":"want"}"#.to_owned().into(),
-            ))
-            .expect("listener want");
-        let mut socket = super::open_in(&slug).expect("host /in after waiting listener");
-        super::configure_socket(&mut socket);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
-        let mut inbound = Vec::new();
-        let mut listeners = 0;
-        while std::time::Instant::now() < deadline {
-            assert!(super::service_socket(
-                &mut socket,
-                &mut listeners,
-                &mut inbound
-            ));
-            if inbound.iter().any(|msg| msg.contains("\"t\":\"want\"")) {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(40));
-        }
-        panic!("host /in got no want after waiting /out; inbound={inbound:?}");
-    }
-
-    #[test]
-    fn ordered_addrs_puts_ipv4_first() {
-        let addrs = super::ordered_addrs("localhost", 443);
-        let first_v6 = addrs.iter().position(std::net::SocketAddr::is_ipv6);
-        let last_v4 = addrs.iter().rposition(std::net::SocketAddr::is_ipv4);
-        if let (Some(v6), Some(v4)) = (first_v6, last_v4) {
-            assert!(
-                v4 < v6,
-                "IPv4 must be tried before IPv6 so a black hole cannot stall /in"
-            );
-        }
-    }
-
-    #[test]
-    fn io_would_block_matches_timeout_and_interrupt() {
-        let timeout =
-            tungstenite::Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout"));
-        assert!(super::io_would_block(&timeout));
-        let other = tungstenite::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::ConnectionReset,
-            "reset",
-        ));
-        assert!(!super::io_would_block(&other));
-    }
-
-    #[test]
-    fn encode_frame_has_magic_and_seq() {
-        let bytes = super::encode_frame(7, &[0.0, 0.5]);
-        assert_eq!(&bytes[..4], b"RLY1");
-        assert_eq!(&bytes[4..8], 7_u32.to_le_bytes());
-        assert_eq!(bytes.len(), 12);
-    }
-
-    #[test]
-    fn claim_key_is_room_identity() {
-        let settings = relay_session::CodecSettings::live();
-        let a = super::claim_key("mix", 17492, settings, "", 8787);
-        let b = super::claim_key("mix", 18000, settings, "", 8787);
-        assert_eq!(a, b);
-        assert!(!a.contains("17492"));
-        assert!(!a.contains("opus"));
-        assert!(!a.contains("192"));
-    }
-
-    #[test]
-    fn silence_is_below_threshold() {
-        assert!(super::is_silent(&[0.0; 64]));
-        assert!(super::is_silent(&[0.0004, -0.0004]));
-        assert!(!super::is_silent(&[0.02, 0.0]));
-    }
-
-    #[test]
-    fn dtx_ignores_short_quiet_gaps() {
-        let mut dtx = super::Dtx::default();
-        assert_eq!(dtx.push(false, false, true, false), super::DtxEvent::Speak);
-        for _ in 0..super::HANGOVER_FRAMES - 1 {
-            assert_eq!(dtx.push(true, true, true, false), super::DtxEvent::Speak);
-        }
-        assert_eq!(dtx.push(false, false, true, false), super::DtxEvent::Speak);
-    }
-
-    #[test]
-    fn dtx_fades_out_after_hangover() {
-        let mut dtx = super::Dtx::default();
-        for _ in 0..super::HANGOVER_FRAMES - 1 {
-            assert_eq!(dtx.push(true, true, true, false), super::DtxEvent::Speak);
-        }
-        assert_eq!(dtx.push(true, true, true, false), super::DtxEvent::FadeOut);
-        assert_eq!(dtx.push(true, true, false, false), super::DtxEvent::Speak);
-        assert_eq!(dtx.push(true, true, true, false), super::DtxEvent::Hold);
-        assert_eq!(dtx.push(true, true, true, false), super::DtxEvent::Hold);
-        assert_eq!(dtx.push(false, false, true, false), super::DtxEvent::FadeIn);
-        assert_eq!(dtx.push(false, false, false, false), super::DtxEvent::Speak);
-        assert_eq!(dtx.push(false, false, true, false), super::DtxEvent::Speak);
-    }
-
-    #[test]
-    fn dtx_aborts_fade_out_when_audio_returns() {
-        let mut dtx = super::Dtx::default();
-        for _ in 0..super::HANGOVER_FRAMES {
-            let _ = dtx.push(true, true, true, false);
-        }
-        assert_eq!(dtx.phase, super::DtxPhase::FadingOut);
-        assert_eq!(
-            dtx.push(false, false, false, false),
-            super::DtxEvent::FadeIn
-        );
-    }
-
-    #[test]
-    fn dtx_wake_leaves_hold() {
-        let mut dtx = super::Dtx::default();
-        dtx.phase = super::DtxPhase::Held;
-        dtx.held = true;
-        assert_eq!(dtx.push(true, true, true, true), super::DtxEvent::FadeIn);
-        assert!(!dtx.held);
-    }
-
-    #[test]
-    fn delay_line_holds_lookahead_frames() {
-        let mut delay = super::DelayLine::default();
-        assert!(delay.push(vec![0.0; 4]).is_none());
-        assert!(delay.push(vec![0.1; 4]).is_none());
-        let first = delay.push(vec![0.2; 4]).expect("primed");
-        assert_eq!(first[0], 0.0);
-        assert!(!delay.future_silent());
-    }
-
-    #[test]
-    fn delay_line_clear_drops_stale_lookahead() {
-        let mut delay = super::DelayLine::default();
-        assert!(delay.push(vec![0.0; 4]).is_none());
-        assert!(delay.push(vec![0.1; 4]).is_none());
-        delay.clear();
-        assert!(delay.push(vec![0.9; 4]).is_none());
-        assert!(delay.push(vec![0.4; 4]).is_none());
-        let first = delay.push(vec![0.5; 4]).expect("re-primed");
-        assert_eq!(first[0], 0.9);
-    }
+    use super::*;
+    use relay_session::CodecSettings;
 
     #[test]
     fn media_edge_resume_is_an_event() {
-        assert_eq!(
-            super::media_edge(true, true, 0, true),
-            super::MediaEdge::Resume
-        );
-        assert_eq!(
-            super::media_edge(false, true, 0, true),
-            super::MediaEdge::Speak
-        );
+        assert_eq!(media_edge(true, true, 0, true), MediaEdge::Resume);
+        assert_eq!(media_edge(false, true, 0, true), MediaEdge::Speak);
+        assert_eq!(media_edge(false, true, 99, false), MediaEdge::Speak);
     }
 
     #[test]
     fn media_edge_keeps_rtp_warm_after_hold() {
         assert_eq!(
-            super::media_edge(false, false, super::STARVE_EMPTY - 1, true),
-            super::MediaEdge::Idle
+            media_edge(false, false, STARVE_EMPTY - 1, true),
+            MediaEdge::Idle
         );
         assert_eq!(
-            super::media_edge(false, false, super::STARVE_EMPTY, true),
-            super::MediaEdge::HoldStart
+            media_edge(false, false, STARVE_EMPTY, true),
+            MediaEdge::HoldStart
         );
         assert_eq!(
-            super::media_edge(true, false, super::STARVE_EMPTY + 8, true),
-            super::MediaEdge::KeepAlive
+            media_edge(true, false, STARVE_EMPTY + 8, true),
+            MediaEdge::KeepAlive
         );
-        assert_eq!(
-            super::media_edge(true, false, 3, false),
-            super::MediaEdge::Idle
-        );
+        assert_eq!(media_edge(true, false, 3, false), MediaEdge::Idle);
     }
 
     #[test]
-    fn fader_in_starts_near_zero() {
-        let mut fader = super::Fader::default();
-        fader.start_in();
-        let mut pcm = vec![1.0_f32; 64];
-        fader.apply(&mut pcm);
-        assert!(pcm[0].abs() < 0.05);
-        assert!(pcm[63] > pcm[0]);
+    fn encode_frame_has_magic_and_seq() {
+        let bytes = encode_frame(7, &[0.0, 0.5]);
+        assert_eq!(&bytes[..4], b"RLY1");
+        assert_eq!(&bytes[4..8], 7_u32.to_le_bytes());
+        assert_eq!(bytes.len(), 12);
+        assert_eq!(i16::from_le_bytes([bytes[10], bytes[11]]), 16_383);
     }
 
     #[test]
-    fn fader_out_ends_near_zero() {
-        let mut fader = super::Fader::default();
-        fader.start_out();
-        let mut pcm = vec![1.0_f32; super::FADE_SAMPLES];
-        fader.apply(&mut pcm);
-        assert!(pcm[0] > 0.9);
-        assert!(pcm[pcm.len() - 1].abs() < 0.05);
-        assert!(fader.is_muted());
-    }
-
-    #[test]
-    fn fader_reverse_continues_from_current_gain() {
-        let mut fader = super::Fader::default();
-        fader.start_out();
-        let mut first = vec![1.0_f32; 64];
-        fader.apply(&mut first);
-        let at_reverse = first[63];
-        assert!(fader.is_fading_out());
-        fader.reverse();
-        let mut next = vec![1.0_f32; 64];
-        fader.apply(&mut next);
-        assert!(next[0] > 0.0);
-        assert!((next[0] - at_reverse).abs() < 0.15);
-        assert!(next[63] > next[0]);
-    }
-
-    #[test]
-    fn fade_from_last_starts_near_tail() {
-        let pcm = super::fade_from_last(0.8, -0.4);
+    fn fade_from_last_starts_near_tail_and_ends_silent() {
+        let pcm = fade_from_last(0.8, -0.4);
+        assert_eq!(pcm.len(), WEB_BATCH_SAMPLES);
         assert!((pcm[0] - 0.8).abs() < 0.05);
         assert!((pcm[1] + 0.4).abs() < 0.05);
         assert!(pcm[pcm.len() - 2].abs() < 0.05);
@@ -1206,29 +684,75 @@ mod tests {
     }
 
     #[test]
-    fn cfg_json_names_codec() {
-        let json = super::cfg_json(relay_session::CodecSettings::live(), 17_492, 8787);
-        assert!(json.contains("\"t\":\"cfg\""));
-        assert!(json.contains("\"codec\":\"opus\""));
-        assert!(json.contains("\"port\":17492"));
-        assert!(!json.contains("deviceRate"));
-        assert!(!json.contains("\"block\""));
+    fn ordered_addrs_puts_ipv4_first() {
+        let addrs = ordered_addrs("localhost", 443);
+        let first_v6 = addrs.iter().position(SocketAddr::is_ipv6);
+        let last_v4 = addrs.iter().rposition(SocketAddr::is_ipv4);
+        if let (Some(v6), Some(v4)) = (first_v6, last_v4) {
+            assert!(v4 < v6);
+        }
     }
 
     #[test]
-    fn claim_body_includes_daw_rate_and_block() {
-        let body = super::claim_body(
-            "mix",
-            17492,
-            relay_session::CodecSettings::live(),
-            "",
-            44_100,
-            128,
-            8787,
+    fn dropping_fanout_joins_the_thread() {
+        let control = Arc::new(SessionControl::default());
+        let fanout = Fanout::spawn(control, SessionStore::default());
+        assert!(fanout.is_alive());
+        let start = Instant::now();
+        drop(fanout);
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    fn diag_slug(prefix: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |elapsed| elapsed.as_nanos());
+        format!("{prefix}-{nanos}")
+    }
+
+    fn diag_claim(slug: &str) {
+        let body = ClaimBody::new(slug, 17_492, CodecSettings::live(), "", 48_000, 128, 8_787);
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(4))
+            .user_agent("Mozilla/5.0 RELAY/diag")
+            .build();
+        claim(&agent, &body.to_json()).expect("claim against relay.matari-audio.com");
+    }
+
+    #[test]
+    #[ignore = "hits production relay.matari-audio.com"]
+    fn live_cloud_claim_and_in_socket() {
+        let slug = diag_slug("diag");
+        diag_claim(&slug);
+        assert!(
+            open_in(&slug).is_some(),
+            "/in must open with the plugin's TLS stack"
         );
-        assert!(body.contains("\"rate\":48000"));
-        assert!(body.contains("\"deviceRate\":44100"));
-        assert!(body.contains("\"block\":128"));
-        assert!(body.contains("\"lanHttp\":8787"));
+    }
+
+    #[test]
+    #[ignore = "hits production relay.matari-audio.com"]
+    fn live_in_socket_receives_want_from_waiting_out() {
+        let slug = diag_slug("want");
+        diag_claim(&slug);
+        let host = PUBLIC_LINK_ORIGIN
+            .strip_prefix("https://")
+            .expect("https origin");
+        let (mut listener, _) =
+            tungstenite::connect(format!("wss://{host}/{slug}/out")).expect("listener /out");
+        listener
+            .send(Message::Text(r#"{"t":"want"}"#.to_owned().into()))
+            .expect("listener want");
+        let mut socket = open_in(&slug).expect("host /in after waiting listener");
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let mut signals = Vec::new();
+        while Instant::now() < deadline {
+            assert!(ws::drain(&mut socket, |text| signals.extend(Signal::parse(text))));
+            if signals.iter().any(|s| matches!(s, Signal::Want { .. })) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(40));
+        }
+        panic!("host /in got no want after waiting /out; signals={signals:?}");
     }
 }

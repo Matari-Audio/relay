@@ -517,8 +517,7 @@ function wrapFrame(message: ArrayBuffer, nextSeq: number): { bytes: ArrayBuffer;
   return { bytes: out.buffer, seq, pcmBytes: src.byteLength };
 }
 
-const MATARI_MARK =
-  '<svg class="mark" viewBox="0 0 2408 1488" aria-hidden="true"><path fill="#fff" d="M99.021 1486.974c-53.202.013-96.36-43.07-96.439-96.273C2.179 1122.129 1.048 366.891.645 97.561.606 71.902 10.797 47.286 28.962 29.162 47.126 11.039 71.765.904 97.424 1c69.143.26 159.026.597 212.615.799 29.175.109 56.732 13.423 74.949 36.212 86.302 107.957 344.363 430.771 467.706 585.064 17.097 21.388 42.482 34.497 69.819 36.057 27.337 1.559 54.048-8.578 73.466-27.882 155.807-154.885 504.705-501.721 606.179-602.595 18.054-17.947 42.472-28.026 67.928-28.038 44.951-.022 118.986-.057 173.583-.084 41.56-.02 78.456 26.593 91.552 66.036 75.96 228.788 328.628 989.806 429.472 1293.541 9.759 29.393 4.804 61.685-13.319 86.8-18.123 25.115-47.207 39.995-78.178 39.998-256.183.023-811.251.072-1038.748.093-16.809.001-31.963-10.123-38.396-25.652-6.433-15.529-2.878-33.404 9.007-45.29 59.457-59.456 141.243-141.242 183.755-183.754 18.081-18.081 42.604-28.24 68.174-28.24 56.829-.002 163.744-.005 250.405-.008 30.989-.001 60.088-14.896 78.21-40.034 18.121-25.138 23.056-57.454 13.262-86.855-34.745-104.305-84.02-252.224-120.519-361.795-10.545-31.654-36.704-55.606-69.162-63.328-32.459-7.721-66.602 1.887-90.27 25.402-148.441 147.483-408.034 405.401-530.914 527.487-37.693 37.45-98.58 37.346-136.145-.232-66.869-66.892-171.554-171.613-260.274-260.363-27.571-27.58-69.041-35.836-105.073-20.918-36.031 14.919-59.528 50.074-59.532 89.072-.016 128.53-.034 281.266-.046 378.02-.006 53.237-43.158 96.393-96.394 96.406-69.26.016-162.244.039-231.485.055Z"/></svg>';
+const MATARI_MARK = '<svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><path d="M20 82V20h36c15 0 24 8 24 20S71 60 56 60H42M52 69l18 13" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="square" stroke-linejoin="round"/></svg>';
 
 function indexHtml(): string {
   return listenPage("session", true);
@@ -532,103 +531,52 @@ function listenPage(name: string, landing: boolean): string {
   return `<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
+<meta charset="utf-8"><script>try{document.documentElement.dataset.relayTheme=localStorage.getItem('relay-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch{}</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="relay-listen" content="12">
-<meta name="theme-color" content="#191919">
+<meta name="theme-color" content="#0866e8">
 <title>${landing ? "RELAY" : `RELAY · ${name}`}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#191919;--lane:#252525;--surface:#353535;--sunken:#101010;--text:#fff;--muted:#b8b8b8;--accent:#00aaff;--ok:#5be8b3;--warn:#ffc75c;--hot:#ff7088;--gyr0:#3d8f6a;--ink:#041018;--hair:#2e2e2e}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Barlow,system-ui,sans-serif;color-scheme:dark}
-::selection{background:var(--accent);color:var(--ink)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-body{display:flex;justify-content:center;padding:28px 16px calc(56px + env(safe-area-inset-bottom,0px))}
-.wrap{width:min(400px,100%);padding:20px 18px 16px;background:var(--lane);border-radius:4px;box-shadow:inset 0 1px 0 #3f3f3f,0 18px 40px #00000073}
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.nav{display:flex;align-items:center;gap:10px;height:32px;margin:0 0 18px}
-.home-link{display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none}
-.mark{width:28px;height:17px;display:block;flex:none}
-.product{font-size:13px;font-weight:700;letter-spacing:.16em}
-.lamp{width:8px;height:8px;border-radius:50%;margin-left:auto;background:#5a5a5a;box-shadow:0 1px 2px #0008}
-.lamp[data-state="live"]{background:var(--ok);box-shadow:0 0 10px #5be8b366}
-.lamp[data-state="sleep"]{background:var(--warn)}
-.lamp[data-state="down"]{background:var(--hot)}
-.title{display:block;width:100%;margin:0;padding:2px 0 8px;font:inherit;font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.15;color:var(--text);background:transparent;border:0;border-bottom:1px solid var(--surface);caret-color:var(--accent);outline:none;border-radius:0;cursor:text}
-.title:hover,.title:focus{border-bottom-color:var(--accent)}
-.title::placeholder{color:#9a9a9a}
-.hint{margin:0;max-height:0;opacity:0;overflow:hidden;font-size:12px;color:var(--muted);line-height:1.35}
-.title:focus + .hint{max-height:2.4em;opacity:1;margin:8px 0 0}
-.who{margin:10px 0 16px;color:var(--muted);font-size:13px;min-height:1.2em}
-.home .lamp{visibility:hidden}
-.join{display:flex;flex-direction:column;align-items:stretch}
-.open{align-self:start;min-height:44px;padding:0 18px;margin-top:8px;font:inherit;font-weight:700;border:0;border-radius:4px;background:var(--accent);color:var(--ink);cursor:pointer}
-.open:hover,.gate button:hover{filter:brightness(1.07)}
-.open:active,.gate button:active{transform:translateY(1px)}
-.stage{position:relative}
-.desk{display:flex;justify-content:center;align-items:stretch;gap:22px;height:260px;padding:16px 12px 14px;background:var(--sunken);border-radius:4px}
-.lane{display:flex;flex-direction:column;align-items:center;gap:8px;width:24px;flex:none}
-.ch{font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--muted)}
-.clip{width:6px;height:6px;border-radius:1px;background:#2a2020;flex:none}
-.clip.on{background:var(--hot)}
-.rail{position:relative;flex:1;width:8px;border-radius:2px;overflow:hidden;background:linear-gradient(to top,var(--gyr0) 0%,var(--ok) 42%,var(--warn) 78%,var(--hot) 100%)}
-.cover{position:absolute;left:0;right:0;top:0;height:100%;background:var(--sunken);z-index:1}
-.peak{position:absolute;left:0;right:0;height:1px;background:#fff;bottom:0;z-index:3;pointer-events:none;opacity:0}
-.fader{display:flex;flex-direction:column;align-items:center;gap:8px;width:56px;flex:none}
-.sr-vol{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
-.throw{position:relative;flex:1;width:48px;touch-action:none;cursor:ns-resize}
-.slot{position:absolute;left:50%;top:8px;bottom:8px;width:4px;margin-left:-2px;border-radius:2px;background:#070707}
-.cap{position:absolute;left:50%;width:28px;height:12px;margin-left:-14px;bottom:calc(100% - 12px);border-radius:2px;background:#d8d8d8;pointer-events:none}
-.fader:focus-within .cap{outline:2px solid var(--accent);outline-offset:2px}
-#voln{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;text-align:center;min-height:1.2em}
-#mute{min-height:44px;min-width:52px;padding:0 8px;font:inherit;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;border:0;border-radius:3px;background:var(--surface);color:var(--muted);cursor:pointer}
-#mute.on{background:var(--hot);color:var(--ink)}
-.gate{position:absolute;inset:0;display:none;place-items:center;background:#191919c2;border-radius:4px;z-index:4}
-.gate.show{display:grid}
-.gate button{min-height:48px;min-width:148px;font:inherit;font-weight:700;font-size:16px;border:0;border-radius:4px;padding:0 22px;background:var(--accent);color:var(--ink);cursor:pointer}
-.lock{display:none;margin:0 0 16px}
-.lock.show{display:block}
-.lock label{display:block;font-size:12px;color:var(--muted);margin:0 0 6px}
-.lock input{width:100%;font:inherit;font-size:16px;border:0;border-radius:4px;padding:12px;background:var(--sunken);color:var(--text);caret-color:var(--accent);outline:2px solid transparent}
-.lock input:focus{outline-color:var(--accent)}
-.lock button{margin-top:10px;min-height:44px;font:inherit;font-weight:700;border:0;border-radius:4px;padding:0 16px;background:var(--accent);color:var(--ink);cursor:pointer}
-.lock .err{color:var(--hot);font-size:13px;margin-top:8px;min-height:1.2em}
-.tape{margin:14px 0 0;border-top:1px solid var(--hair);color:var(--muted)}
-.tape summary{list-style:none;cursor:pointer;display:flex;align-items:center;min-height:44px;padding:0 2px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
-.tape summary::-webkit-details-marker{display:none}
-.tape summary::after{content:'';margin-left:auto;width:7px;height:7px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(45deg);flex:none}
-.tape[open] summary::after{transform:rotate(225deg)}
-.log{margin:0 0 4px;padding:10px 12px;max-height:168px;overflow:auto;white-space:pre-wrap;font:inherit;font-size:12px;line-height:1.45;font-variant-numeric:tabular-nums;color:var(--muted);background:var(--sunken);border-radius:3px}
-.tape .log::-webkit-scrollbar{width:8px}.tape .log::-webkit-scrollbar-thumb{background:var(--surface);border-radius:4px}
-@media (max-width:420px){.wrap{padding:16px 14px 14px}.desk{height:232px;gap:16px;padding:14px 8px 12px}.throw{width:40px}.cap{width:24px;margin-left:-12px}.rail{width:6px}.lane{width:20px}}
-@media (prefers-reduced-motion:reduce){.open:active,.gate button:active{transform:none}}
-</style>
+:root{--bg:#f4f6f8;--lane:#fff;--surface:#e7eef7;--sunken:#edf3fb;--text:#142b3b;--muted:#526a7b;--accent:#0866e8;--ok:#15836e;--warn:#976000;--hot:#c23852;--gyr0:#0866e8;--ink:#fff;--hair:#d9e3ed}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Barlow,system-ui,sans-serif;color-scheme:light}body{padding:0 28px}button,input{font:inherit}button,a,input{-webkit-tap-highlight-color:transparent}button{cursor:pointer}a{color:inherit}::selection{background:var(--accent);color:#fff}:focus-visible{outline:3px solid #76adff;outline-offset:4px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.wrap{width:min(1120px,100%);margin:auto}.nav{display:flex;align-items:center;gap:12px;min-height:100px;border-bottom:1px solid var(--hair)}.home-link{display:flex;align-items:center;gap:12px;color:var(--accent);text-decoration:none}.mark{width:32px;height:24px}.product{font-size:24px;font-weight:700;letter-spacing:-.03em}.nav-link{margin-left:auto;text-decoration:none;padding:12px 20px;border:1px solid var(--hair);border-radius:99px;font-weight:600}.lamp{width:9px;height:9px;border-radius:50%;background:var(--muted)}.lamp[data-state=live]{background:var(--ok)}.lamp[data-state=sleep]{background:var(--warn)}.lamp[data-state=down]{background:var(--hot)}
+.intro{padding:64px 0 32px}.intro h1{font-size:clamp(46px,7vw,88px);font-weight:600;letter-spacing:-.045em;line-height:1.02;margin:0 0 24px;max-width:12ch}.intro p{font-size:20px;line-height:1.55;max-width:42ch;color:var(--muted);margin:0}.home .lamp{display:none}.home .intro{padding-block:90px 48px}.join{display:grid;grid-template-columns:1fr auto;gap:12px;max-width:720px;padding:12px;background:#fff;border:1px solid var(--hair);border-radius:24px}.title{min-width:0;width:100%;font-size:24px;font-weight:600;color:var(--text);background:transparent;border:0;padding:16px 20px;outline:none;border-radius:16px}.title::placeholder{color:#647a8c}.who{font-size:16px;color:var(--muted);margin:8px 0 24px}.join .who{grid-column:1/-1;margin:0 20px 8px;font-size:14px}.open,.gate button,.lock button{min-height:52px;padding:0 28px;border:0;border-radius:99px;color:#fff;background:var(--accent);font-weight:600;font-size:17px}.open:hover,.gate button:hover,.lock button:hover{background:#004ebc}.hint{font-size:14px;color:var(--muted);margin:0 20px 8px}.listen .title{padding-left:0;font-size:clamp(28px,4vw,44px);letter-spacing:-.025em}.session-heading{padding-top:44px}.stage{position:relative;background:var(--accent);border-radius:32px;padding:32px;color:#fff}.scope-head{display:flex;justify-content:space-between;gap:16px;font-size:14px;color:#dcecff}.scope{display:block;width:100%;height:260px;margin:16px 0 24px}.scope-idle{margin:0 0 16px;color:#dcecff;font-size:14px}.desk{display:flex;align-items:center;gap:24px;padding:20px 24px;background:#fff;border-radius:22px;color:var(--text)}.lane{display:flex;align-items:center;gap:8px}.ch{font-size:12px;font-weight:700;color:var(--muted)}.rail{position:relative;width:8px;height:44px;border-radius:99px;overflow:hidden;background:var(--accent)}.cover{position:absolute;inset:0 0 auto;height:100%;background:var(--surface)}.peak{position:absolute;left:0;right:0;height:2px;background:var(--text);opacity:0}.clip{width:5px;height:5px;border-radius:50%;background:var(--surface)}.clip.on{background:var(--hot)}.fader{flex:1;display:flex;align-items:center;gap:16px;min-width:0}.sr-vol{width:100%;min-width:40px;min-height:44px;accent-color:var(--accent);cursor:pointer}.throw{display:none}#voln{white-space:nowrap;font-size:14px;font-variant-numeric:tabular-nums}#mute{min-height:44px;min-width:76px;border:1px solid var(--hair);border-radius:99px;background:var(--sunken);color:var(--text);font-weight:600}#mute.on{background:var(--accent);color:#fff}.gate{display:none;position:absolute;inset:80px 32px 128px;place-items:center;border-radius:24px;background:#0866e8cf}.gate.show{display:grid}.gate button{background:#fff;color:var(--accent);min-width:160px}.gate button:hover{background:#e7f0ff}.lock{display:none;margin:24px 0;padding:24px;background:#fff;border:1px solid var(--hair);border-radius:24px}.lock.show{display:block}.lock label{display:block;margin-bottom:8px}.lock input{min-height:48px;padding:12px;border:1px solid var(--hair);border-radius:12px;margin-right:12px;max-width:100%}.err{color:var(--hot)}.tape{margin-top:24px;border-top:1px solid var(--hair);color:var(--muted)}.tape summary{cursor:pointer;padding:20px 0;font-size:14px}.log{padding:20px;background:#fff;border-radius:16px;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:13px}.listener-footer{display:flex;justify-content:space-between;flex-wrap:wrap;gap:20px;margin-top:80px;padding:28px 0;border-top:1px solid var(--hair);font-size:14px;color:var(--muted)}.listener-footer nav{display:flex;gap:24px}.listener-footer a{text-underline-offset:4px}.home-note{margin-top:48px;max-width:55ch;font-size:17px;line-height:1.6;color:var(--muted)}
+@media(max-width:600px){body{padding:0 20px}.nav{min-height:80px}.nav-link{padding:10px 14px;font-size:14px}.home .lamp{display:none}.home .intro{padding-top:56px}.join{grid-template-columns:1fr}.join .who{grid-column:1}.join .open{grid-row:2}.stage{padding:20px;border-radius:24px}.scope{height:210px}.desk{padding:16px;gap:12px;flex-wrap:wrap}.fader{flex-basis:100%;order:3}.gate{inset:64px 20px 154px}.listener-footer{margin-top:48px}.lock button{margin-top:12px}.scope-head{font-size:12px}}
+
+.home .wrap{min-height:100svh;display:flex;flex-direction:column}.home .nav{min-height:88px}.join-shell{display:grid;grid-template-columns:0.9fr 1.1fr;width:min(920px,100%);margin:auto;overflow:hidden;border-radius:32px;background:white}.join-intro{background:var(--accent);color:white;padding:40px;display:flex;flex-direction:column;align-items:flex-start}.headphones{width:72px;height:72px;margin-bottom:32px}.join-intro h1{font-size:clamp(44px,5vw,64px);line-height:1.02;letter-spacing:-.035em;margin:0 0 24px;font-weight:600}.join-intro p{font-size:19px;line-height:1.5;margin:0;color:#e1edff}.join-caption{margin-top:40px;font-size:14px;color:#e1edff}.home .join{display:flex;flex-direction:column;justify-content:center;gap:0;max-width:none;padding:48px;border:0;border-radius:0}.join label{font-size:18px;font-weight:600;margin-bottom:12px}.join-input{display:flex;align-items:center;background:var(--bg);border:1px solid var(--hair);border-radius:16px;padding-left:16px}.join-input:focus-within{border-color:var(--accent);outline:3px solid #0866e81c}.join-input svg{width:22px;height:22px;flex-shrink:0;color:var(--muted)}.home .join .title{font-size:19px;padding:18px 12px;outline:none}.home .join .who{margin:12px 0 28px;font-size:14px;line-height:1.5;min-height:42px}.home .join .open{display:flex;align-items:center;justify-content:space-between;padding:0 24px;min-height:56px}.open svg{width:22px;height:22px;transition:transform .18s ease-out}.open:hover svg{transform:translateX(3px)}.join-help{font-size:14px;color:var(--muted);margin:28px 0 0;line-height:1.5}.join-help a{color:var(--accent);text-underline-offset:3px}.home .listener-footer{margin-top:0}.home .join-shell{margin-block:64px}.home .listener-footer{margin-top:auto}
+@media(max-width:700px){.home .join-shell{grid-template-columns:1fr;margin-block:28px;border-radius:24px}.join-intro{padding:28px}.headphones{width:40px;height:40px;margin-bottom:20px}.join-intro h1{font-size:42px}.join-intro h1 br{display:none}.join-intro p{font-size:17px}.join-caption{margin-top:20px}.home .join{padding:28px}.home .nav{min-height:76px}.home .listener-footer{font-size:13px}}
+@media(prefers-reduced-motion:reduce){.open svg{transition:none}}
+.theme-toggle{display:inline-grid;place-items:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:1px solid var(--hair,#d9e3ed);border-radius:14px;background:var(--lane,#fff);color:var(--text,#142b3b);cursor:pointer}.theme-toggle svg{width:20px;height:20px}.theme-toggle:hover{color:#0866e8;background:var(--surface,#e7eef7)}html[data-relay-theme=dark]{color-scheme:dark;--bg:#151515;--lane:#202020;--surface:#303030;--sunken:#202020;--text:#eeeeee;--muted:#b8b8b8;--hair:#484848}html[data-relay-theme=dark] :is(.join,.join-shell,.desk,.lock,.log,.home-list a){background:var(--lane)}html[data-relay-theme=dark] :is(.join-input,.title){color:var(--text)}html[data-relay-theme=dark] .gate{background:#151515cc}.nav .mark{width:28px;height:28px}.nav .theme-toggle{margin-left:0}html[data-relay-theme=dark] :is(.open,.join-intro,.stage){background:#075bce}html[data-relay-theme=dark] .join-help a{color:#b8b8b8}
+html[data-relay-theme=dark] body{color-scheme:dark}html[data-relay-theme=dark] .title::placeholder{color:#b8b8b8}html[data-relay-theme=dark] :is(.join-intro,.stage){background:#242424}html[data-relay-theme=dark] :is(.home-link,.product){color:#eee}</style>
 </head>
 <body class="${landing ? "home" : "listen"}">
-<!--
-THESIS: A Polar Night listen box. The first viewport is a channel strip, not a WebRTC demo card.
-OWN-WORLD: BUFFR Studio Blue — #191919 ground, #252525 chassis, #101010 wells, #00aaff Listen, flat GYR rails, Barlow, 2–4px corners.
-STORY: Type the session name, tap Listen, watch L/R, pull the fader. Diagnostics live in a tape you open.
-FIRST VIEWPORT: Mark + lamp; typeable session title; status; L rail | fader | R rail; Listen plate over the strip until armed.
-FORM: Pinned BUFFR / channel strip. Flat meters 2026-08-19.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
--->
 <main class="wrap">
   <header class="nav">
     <a class="home-link" href="/" aria-label="RELAY home">${MATARI_MARK}<span class="product">RELAY</span></a>
-    <span class="lamp" id="lamp" data-state="wait" aria-hidden="true"></span>
+    <a class="nav-link" href="https://matari-audio.com/relay">Get the plugin ↗</a>
+    <button class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button><span class="lamp" id="lamp" data-state="wait" aria-hidden="true"></span>
   </header>
-  ${landing ? `<form class="join" id="join">
-    <label class="sr-only" for="title">Session name</label>
-    <input id="title" class="title" placeholder="session name" autocomplete="off" spellcheck="false" enterkeyhint="go">
-    <p class="who" id="who">Name from the plugin.</p>
-    <button class="open" type="submit">Open</button>
-  </form>` : `<label class="sr-only" for="title">Session name</label>
+  ${landing ? `<section class="join-shell" aria-labelledby="join-heading">
+    <div class="join-intro">
+      <svg class="headphones" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><path d="M20 82V20h36c15 0 24 8 24 20S71 60 56 60H42M52 69l18 13" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="square" stroke-linejoin="round"/></svg>
+      <h1 id="join-heading">Join a <br>session.</h1>
+      <p>The sound from their DAW.<br>Right here in your browser.</p>
+      <span class="join-caption">No account. No installation.</span>
+    </div>
+    <form class="join" id="join">
+      <label for="title">Session name or link</label>
+      <div class="join-input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></svg><input id="title" class="title" placeholder="e.g. midnight-studio" autocomplete="off" spellcheck="false" enterkeyhint="go" required aria-describedby="who"></div>
+      <p class="who" id="who" role="status">Ask your host for the name or link shown in RELAY.</p>
+      <button class="open" type="submit">Join session<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></button>
+      <p class="join-help">Sharing your own audio? <a href="https://matari-audio.com/relay">Get RELAY</a></p>
+    </form>
+  </section>` : `<div class="session-heading"><label class="sr-only" for="title">Session name</label>
   <input id="title" class="title" value="${name}" spellcheck="false" autocomplete="off" enterkeyhint="go" aria-describedby="titleHint">
   <p class="hint" id="titleHint">Type another name and press Enter to jump.</p>
-  <p class="who" id="who" role="status" aria-live="polite">Waiting for the host</p>
+  <p class="who" id="who" role="status" aria-live="polite">Waiting for the host</p></div>
   <form class="lock" id="lock">
     <label for="pw">Password</label>
     <input id="pw" type="password" autocomplete="current-password" />
@@ -636,6 +584,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <p class="err" id="pwerr"></p>
   </form>
   <div class="stage">
+    <div class="scope-head"><span>Incoming audio</span><span>Stereo · L / R</span></div>
+    <canvas id="scope" class="scope" width="1056" height="260" aria-label="Live incoming audio level history"></canvas>
+    <p class="scope-idle" id="scope-note">The signal appears here when your host starts playing.</p>
     <div class="desk" role="group" aria-label="Listen levels">
       <div class="lane">
         <span class="ch">L</span>
@@ -668,15 +619,32 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <summary id="tapeLine">Waiting for the host</summary>
     <pre class="log" id="log" aria-hidden="true"></pre>
   </details>`}
-</main>
+<footer class="listener-footer"><span>RELAY by Matari Audio</span><nav><a href="https://matari-audio.com/relay">About RELAY</a><a href="https://matari-audio.com/support">Support</a><a href="https://matari-audio.com/privacy">Privacy</a></nav></footer>
+</main><script>(()=>{const b=document.querySelector('.theme-toggle');if(!b)return;function sync(){const dark=document.documentElement.dataset.relayTheme==='dark';b.setAttribute('aria-pressed',String(dark));b.setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode')}sync();b.addEventListener('click',()=>{const next=document.documentElement.dataset.relayTheme==='dark'?'light':'dark';document.documentElement.dataset.relayTheme=next;try{localStorage.setItem('relay-theme',next)}catch{}sync()})})();</script>
 <audio id="spkr" playsinline webkit-playsinline autoplay aria-hidden="true"></audio>
 ${landing ? `<script>
 const join = document.getElementById('join');
 const title = document.getElementById('title');
+title.oninput = () => {
+  title.removeAttribute('aria-invalid');
+  document.getElementById('who').textContent = 'Ask your host for the name or link shown in RELAY.';
+};
 join.onsubmit = (ev) => {
   ev.preventDefault();
-  const slug = String(title.value || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 48);
-  if (slug) location.assign('/' + slug);
+  let value = title.value.trim();
+  try {
+    if (/^https?:/i.test(value)) {
+      const link = new URL(value);
+      if (link.hostname !== location.hostname && link.hostname !== 'relay.matari-audio.com') throw new Error();
+      value = link.pathname.slice(1);
+    }
+    if (!/^[a-z0-9-]{1,48}$/i.test(value)) throw new Error();
+    location.assign('/' + value.toLowerCase());
+  } catch {
+    document.getElementById('who').textContent = 'Enter a RELAY session name or a valid session link.';
+    title.setAttribute('aria-invalid', 'true');
+    title.focus();
+  }
 };
 title.focus();
 </script>` : `<script>
@@ -853,12 +821,42 @@ function paintRail(cover, peakEl, rail, clip, hold, peak) {
     rail.setAttribute('aria-valuetext', db <= -59 ? 'silent' : Math.round(db) + ' dB');
   }
 }
+const scope = document.getElementById('scope');
+const scopeContext = scope.getContext('2d');
+const scopeHistory = new Float32Array(240);
+let scopeAt = 0, scopeLast = 0;
+function drawScope(left, right) {
+  if (document.hidden || !scopeContext) return;
+  const now = performance.now();
+  if (now - scopeLast < 40) return;
+  scopeLast = now;
+  scopeHistory[scopeAt * 2] = Math.max(0, Math.min(1, Number.isFinite(left) ? left : 0));
+  scopeHistory[scopeAt * 2 + 1] = Math.max(0, Math.min(1, Number.isFinite(right) ? right : 0));
+  scopeAt = (scopeAt + 1) % 120;
+  const g = scopeContext, w = scope.width, h = scope.height;
+  g.clearRect(0, 0, w, h);
+  for (let channel = 0; channel < 2; channel++) {
+    const center = h * (channel ? 0.72 : 0.28);
+    g.strokeStyle = '#ffffff30'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, center); g.lineTo(w, center); g.stroke();
+    g.fillStyle = channel ? '#90c6ff' : '#ffffff';
+    for (let i = 0; i < 120; i++) {
+      const level = scopeHistory[((scopeAt + i) % 120) * 2 + channel];
+      const height = Math.max(2, Math.sqrt(level) * h * 0.37);
+      g.fillRect(i * w / 120, center - height / 2, w / 120 * 0.58, height);
+    }
+  }
+  document.getElementById('scope-note').textContent = left > 0.001 || right > 0.001 ? 'Live input · stereo level history' : 'Listening for audio from your host.';
+}
+drawScope(0, 0);
 function setMeterPeak(peak) {
+  drawScope(peak, peak);
   pluginPeak = peak;
   paintRail(coverL, holdLel, railL, clipL, holdL, peak);
   paintRail(coverR, holdRel, railR, clipR, holdR, peak);
 }
 function setMeterLR(l, r) {
+  drawScope(l, r);
   if (l < 0.002 && pluginPeak > l) l = pluginPeak;
   if (r < 0.002 && pluginPeak > r) r = pluginPeak;
   paintRail(coverL, holdLel, railL, clipL, holdL, l);

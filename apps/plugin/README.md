@@ -1,6 +1,6 @@
 # RELAY plugin
 
-Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated rings and renders playback. A worker thread owns UDP sockets.
+Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated buffers, publishes atomics, and renders playback; it never allocates, locks, or touches a string. One supervised fan-out thread owns the LAN listen page, the browser P2P peers, and the cloud signalling socket. The editor is a 680×480 white-and-blue editor drawn in egui, with rounded controls, Barlow typography, right-side stereo meters, icon actions, and a bottom send spectrum.
 
 Home-network sharing uses **5 ms uncompressed stereo PCM** on LAN (no Opus, no FEC lookahead). That is the lowest delay this path can do: one 5 ms packet plus your DAW buffer. It is not zero — nothing in a DAW insert can be — but it is the blazing LAN path.
 
@@ -33,7 +33,7 @@ Downloads: [matari-audio.com/relay](https://matari-audio.com/relay). Licensed [M
 3. Instance B: **Join**, Peer = that session name (or `192.168.x.x:17492`).
 4. Monitor defaults to **Mix** (dry plus remote, so an underrun is not silence). **Hear** is the return only. **Dry** is a tap.
 
-Share is always a tap: DAW output is the incoming buffer, unchanged. Send only scales the stream. Hear only exists on Join. LAN and the public listen page stay on; nobody connected means no audio leaves.
+Share is always a tap: DAW output is the incoming buffer, unchanged. Send only scales the stream. Hear only exists on Join. The status lamp in the footer is the **Live** switch: on by default, click it to take the whole session offline. When the listen page has gone to sleep the lamp reads ASLEEP and a click wakes it. Nobody connected means no audio leaves.
 
 ## Browser listen
 

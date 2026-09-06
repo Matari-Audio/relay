@@ -1,8 +1,7 @@
-//! Plugin → browser WebRTC. Cloudflare only sees signaling.
+//! Plugin → browser WebRTC. The cloud only relays signaling.
 //!
-//! Off-LAN listeners get a sendonly Opus audio track (native
-//! `RTCPeerConnection` → `MediaStream` → `<audio>`). The native stack is
-//! libdatachannel behind [`relay_transport`]. STUN-only; juice has no TURN/TLS.
+//! Off-LAN listeners get Opus over a data channel from a libdatachannel
+//! peer per listener. STUN only; libjuice has no TURN/TLS.
 
 use std::collections::HashMap;
 use std::task::{Context, Poll, Waker};
@@ -12,12 +11,17 @@ use relay_opus::{
     PacketLossPercent,
 };
 use relay_transport::{
-    BinaryPayload, ChannelId, Command, Event, IceCandidate, NativeTransportProvider,
-    NegotiationEpoch, OperationId, PeerDriver, PeerState, SessionDescription, TransportError,
+    BinaryPayload, ChannelId, Command, DescriptionKind, Event, IceCandidate,
+    NativeTransportProvider, NegotiationEpoch, OperationId, PeerDriver, PeerState,
+    SessionDescription, TransportError,
 };
 use relay_transport_libdatachannel::{LibdatachannelProvider, drain_ready, listen_offerer_config};
 
+use crate::signal::{Outbound, Signal};
+
 pub const MAX_PEERS: usize = 10;
+/// 10 ms of 48 kHz stereo, interleaved.
+const FRAME_SAMPLES: usize = 960;
 const CHANNEL: ChannelId = ChannelId(0);
 const EPOCH: NegotiationEpoch = NegotiationEpoch(1);
 
@@ -32,9 +36,6 @@ pub struct Hub {
     last_peak: f32,
 }
 
-/// 10 ms of 48 kHz stereo, interleaved.
-const FRAME_SAMPLES: usize = 960;
-
 struct Peer {
     driver: Box<dyn PeerDriver>,
     next_op: u64,
@@ -45,32 +46,29 @@ struct Peer {
     pending_ice: Vec<(String, Option<String>)>,
 }
 
-impl Hub {
-    pub fn new() -> Self {
+impl Default for Hub {
+    fn default() -> Self {
         Self {
             provider: LibdatachannelProvider::new(),
             peers: HashMap::new(),
             encoder: None,
-            bitrate_kbps: 192,
+            bitrate_kbps: 0,
             packet: vec![0; MAX_PACKET_BYTES],
             leftover: Vec::new(),
             frames_sent: 0,
             last_peak: 0.0,
         }
     }
+}
 
+impl Hub {
     pub fn peer_count(&self) -> u32 {
         u32::try_from(self.peers.len()).unwrap_or(u32::MAX)
     }
 
     pub fn ready_count(&self) -> u32 {
-        u32::try_from(
-            self.peers
-                .values()
-                .filter(|peer| peer.ready && !peer.dead)
-                .count(),
-        )
-        .unwrap_or(u32::MAX)
+        let ready = self.peers.values().filter(|p| p.ready && !p.dead).count();
+        u32::try_from(ready).unwrap_or(u32::MAX)
     }
 
     pub fn frames_sent(&self) -> u64 {
@@ -92,61 +90,28 @@ impl Hub {
         self.last_peak = 0.0;
     }
 
-    pub fn apply_signal(&mut self, raw: &str, outgoing: &mut Vec<String>) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
-            return;
-        };
-        let t = value.get("t").and_then(|v| v.as_str()).unwrap_or("");
-        let id = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_owned();
-        if id.is_empty() {
-            return;
+    /// Byes first, so a reconnecting listener's `bye` + `want` for the same
+    /// id yields a fresh peer rather than creating and deleting one.
+    pub fn apply_all(&mut self, signals: &[Signal], outgoing: &mut Vec<String>) {
+        for signal in signals.iter().filter(|s| s.is_bye()) {
+            self.apply(signal, outgoing);
         }
-        match t {
-            "want" => self.want(&id, outgoing),
-            "answer" => {
-                if let Some(sdp) = value.get("sdp").and_then(|v| v.as_str()) {
-                    self.answer(&id, sdp);
-                }
-            }
-            "ice" => {
-                if let Some(cand) = value.get("cand").and_then(|v| v.as_str()) {
-                    let mid = value
-                        .get("mid")
-                        .and_then(|v| v.as_str())
-                        .map(ToOwned::to_owned);
-                    self.remote_ice(&id, cand, mid);
-                }
-            }
-            "bye" => self.drop_peer(&id),
-            _ => {}
+        for signal in signals.iter().filter(|s| !s.is_bye()) {
+            self.apply(signal, outgoing);
         }
     }
 
-    /// Drop byes first so a reconnect `bye` + `want` for the same id
-    /// creates a fresh peer instead of creating then immediately deleting it.
-    pub fn apply_all(&mut self, raws: &[String], outgoing: &mut Vec<String>) {
-        for raw in raws {
-            if raw.contains("\"t\":\"bye\"") {
-                self.apply_signal(raw, outgoing);
-            }
-        }
-        for raw in raws {
-            if !raw.contains("\"t\":\"bye\"") {
-                self.apply_signal(raw, outgoing);
-            }
+    pub fn apply(&mut self, signal: &Signal, outgoing: &mut Vec<String>) {
+        match signal {
+            Signal::Want { id } => self.want(id, outgoing),
+            Signal::Answer { id, sdp } => self.answer(id, sdp),
+            Signal::Ice { id, cand, mid } => self.remote_ice(id, cand, mid.clone()),
+            Signal::Bye { id } => self.drop_peer(id),
         }
     }
 
     pub fn push_pcm(&mut self, pcm: &[f32], bitrate_kbps: u32) {
-        let mut peak = 0.0_f32;
-        for sample in pcm {
-            peak = peak.max(sample.abs());
-        }
-        self.last_peak = peak;
+        self.last_peak = pcm.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()));
         if self.peers.is_empty() {
             self.leftover.clear();
             return;
@@ -159,51 +124,60 @@ impl Hub {
             return;
         }
         self.leftover.extend_from_slice(pcm);
-        while self.leftover.len() >= FRAME_SAMPLES {
-            let frame: Vec<f32> = self.leftover.drain(..FRAME_SAMPLES).collect();
-            self.send_frame(&frame);
+        let whole = self.leftover.len() / FRAME_SAMPLES * FRAME_SAMPLES;
+        let frames = std::mem::take(&mut self.leftover);
+        for frame in frames[..whole].chunks_exact(FRAME_SAMPLES) {
+            self.send_frame(frame);
         }
+        self.leftover = frames;
+        self.leftover.drain(..whole);
     }
 
+    /// Pump every peer's event queue; emits offers / ICE, reaps dead peers.
     pub fn drive(&mut self, outgoing: &mut Vec<String>) {
-        let ids: Vec<String> = self.peers.keys().cloned().collect();
-        for id in ids {
-            let Some(peer) = self.peers.get_mut(&id) else {
-                continue;
-            };
+        for (id, peer) in &mut self.peers {
             for event in drain_ready(peer.driver.as_mut()) {
                 match event {
                     Event::LocalDescription { description } => {
+                        outgoing.push(
+                            Outbound::Offer {
+                                id,
+                                sdp: description.sdp(),
+                            }
+                            .to_json(),
+                        );
                         peer.offer_sdp = Some(description.sdp().to_owned());
-                        outgoing.push(signal_sdp("offer", &id, description.sdp()));
                     }
                     Event::LocalCandidate { candidate } => {
-                        outgoing.push(signal_ice(&id, &candidate));
+                        outgoing.push(
+                            Outbound::Ice {
+                                id,
+                                cand: candidate.candidate(),
+                                mid: candidate.sdp_mid(),
+                            }
+                            .to_json(),
+                        );
                     }
                     Event::DataChannelOpened { .. }
                     | Event::StateChanged {
                         state: PeerState::Connected,
-                    } => {
-                        peer.ready = true;
-                    }
+                    } => peer.ready = true,
                     Event::DataChannelClosed { .. }
                     | Event::FatalError { .. }
-                    | Event::ShutdownComplete => {
-                        peer.dead = true;
-                    }
-                    Event::StateChanged {
+                    | Event::ShutdownComplete
+                    | Event::StateChanged {
                         state: PeerState::Failed | PeerState::Closed,
-                    } => {
-                        peer.dead = true;
-                    }
+                    } => peer.dead = true,
                     _ => {}
                 }
             }
+        }
+        self.peers.retain(|_, peer| {
             if peer.dead {
                 peer.shutdown();
-                self.peers.remove(&id);
             }
-        }
+            !peer.dead
+        });
     }
 
     fn drop_peer(&mut self, id: &str) {
@@ -213,11 +187,9 @@ impl Hub {
     }
 
     fn want(&mut self, id: &str, outgoing: &mut Vec<String>) {
-        if let Some(peer) = self.peers.get(id)
-            && !peer.dead
-        {
+        if let Some(peer) = self.peers.get(id).filter(|peer| !peer.dead) {
             if let Some(sdp) = &peer.offer_sdp {
-                outgoing.push(signal_sdp("offer", id, sdp));
+                outgoing.push(Outbound::Offer { id, sdp }.to_json());
             }
             return;
         }
@@ -228,23 +200,21 @@ impl Hub {
                 .iter()
                 .find(|(_, peer)| !peer.ready || peer.dead)
                 .map(|(key, _)| key.clone());
-            if let Some(old) = spare {
-                self.drop_peer(&old);
-            }
+            let Some(old) = spare else {
+                outgoing.push(Outbound::Bye { id }.to_json());
+                return;
+            };
+            self.drop_peer(&old);
         }
-        if self.peers.len() >= MAX_PEERS {
-            outgoing.push(signal_bye(id));
-            return;
+        if let Some(peer) = self.new_peer() {
+            self.peers.insert(id.to_owned(), peer);
         }
-        let Ok(config) = listen_offerer_config() else {
-            return;
-        };
-        let Ok(validated) = config.validate_for(self.provider.capabilities()) else {
-            return;
-        };
-        let Ok(driver) = self.provider.create_peer(validated) else {
-            return;
-        };
+    }
+
+    fn new_peer(&mut self) -> Option<Peer> {
+        let config = listen_offerer_config().ok()?;
+        let validated = config.validate_for(self.provider.capabilities()).ok()?;
+        let driver = self.provider.create_peer(validated).ok()?;
         let mut peer = Peer {
             driver,
             next_op: 0,
@@ -254,25 +224,17 @@ impl Hub {
             offer_sdp: None,
             pending_ice: Vec::new(),
         };
-        if peer
-            .submit(|operation_id| Command::OpenDataChannel {
-                operation_id,
-                channel_id: CHANNEL,
-            })
-            .is_err()
-        {
-            return;
-        }
-        if peer
-            .submit(|operation_id| Command::CreateOffer {
-                operation_id,
-                epoch: EPOCH,
-            })
-            .is_err()
-        {
-            return;
-        }
-        self.peers.insert(id.to_owned(), peer);
+        peer.submit(|operation_id| Command::OpenDataChannel {
+            operation_id,
+            channel_id: CHANNEL,
+        })
+        .ok()?;
+        peer.submit(|operation_id| Command::CreateOffer {
+            operation_id,
+            epoch: EPOCH,
+        })
+        .ok()?;
+        Some(peer)
     }
 
     fn send_frame(&mut self, frame: &[f32]) {
@@ -282,16 +244,9 @@ impl Hub {
         let Ok(n) = encoder.encode(frame, &mut self.packet) else {
             return;
         };
-        let packet = self.packet[..n].to_vec();
-        let ids: Vec<String> = self.peers.keys().cloned().collect();
-        for id in ids {
-            let Some(peer) = self.peers.get_mut(&id) else {
-                continue;
-            };
-            if peer.dead || !peer.ready {
-                continue;
-            }
-            let Ok(payload) = BinaryPayload::new(packet.clone()) else {
+        let packet = &self.packet[..n];
+        for peer in self.peers.values_mut().filter(|p| p.ready && !p.dead) {
+            let Ok(payload) = BinaryPayload::new(packet.to_vec()) else {
                 continue;
             };
             match peer.submit(|operation_id| Command::Send {
@@ -310,11 +265,9 @@ impl Hub {
         let Some(peer) = self.peers.get_mut(id) else {
             return;
         };
-        let Ok(description) = SessionDescription::new(
-            EPOCH,
-            relay_transport::DescriptionKind::Answer,
-            sdp.to_owned(),
-        ) else {
+        let Ok(description) =
+            SessionDescription::new(EPOCH, DescriptionKind::Answer, sdp.to_owned())
+        else {
             peer.dead = true;
             return;
         };
@@ -329,18 +282,8 @@ impl Hub {
             return;
         }
         peer.answered = true;
-        let queued = std::mem::take(&mut peer.pending_ice);
-        for (cand, mid) in queued {
-            if !usable_ice(&cand) {
-                continue;
-            }
-            let Ok(candidate) = IceCandidate::new(EPOCH, cand, mid, Some(0), None) else {
-                continue;
-            };
-            let _ = peer.submit(|operation_id| Command::AddRemoteCandidate {
-                operation_id,
-                candidate,
-            });
+        for (cand, mid) in std::mem::take(&mut peer.pending_ice) {
+            peer.add_ice(cand, mid);
         }
     }
 
@@ -351,37 +294,34 @@ impl Hub {
         let Some(peer) = self.peers.get_mut(id) else {
             return;
         };
-        if !peer.answered {
+        if peer.answered {
+            peer.add_ice(cand.to_owned(), mid);
+        } else {
             peer.pending_ice.push((cand.to_owned(), mid));
-            return;
         }
-        let Ok(candidate) = IceCandidate::new(EPOCH, cand.to_owned(), mid, Some(0), None) else {
-            return;
-        };
-        let _ = peer.submit(|operation_id| Command::AddRemoteCandidate {
-            operation_id,
-            candidate,
-        });
     }
 }
 
 impl Peer {
     fn submit(&mut self, make: impl FnOnce(OperationId) -> Command) -> Result<(), TransportError> {
         self.next_op = self.next_op.saturating_add(1);
-        let command = make(OperationId(self.next_op));
-        self.driver.submit(command).map_err(|error| error.error())
+        self.driver
+            .submit(make(OperationId(self.next_op)))
+            .map_err(|error| error.error())
+    }
+
+    fn add_ice(&mut self, cand: String, mid: Option<String>) {
+        if let Ok(candidate) = IceCandidate::new(EPOCH, cand, mid, Some(0), None) {
+            let _ = self.submit(|operation_id| Command::AddRemoteCandidate {
+                operation_id,
+                candidate,
+            });
+        }
     }
 
     fn shutdown(&mut self) {
-        if self.dead && self.next_op == u64::MAX {
-            return;
-        }
-        self.next_op = self.next_op.saturating_add(1);
-        let _ = self.driver.submit(Command::Shutdown {
-            operation_id: OperationId(self.next_op),
-        });
-        let waker = Waker::noop();
-        let mut context = Context::from_waker(waker);
+        let _ = self.submit(|operation_id| Command::Shutdown { operation_id });
+        let mut context = Context::from_waker(Waker::noop());
         while let Poll::Ready(Some(event)) = self.driver.poll_event(&mut context) {
             if matches!(event, Event::ShutdownComplete) {
                 break;
@@ -397,24 +337,7 @@ fn make_encoder(bitrate_kbps: u32) -> Option<Encoder> {
     Encoder::new(EncoderConfigV1::stereo_48k(FrameDuration::Ms10, policy)).ok()
 }
 
-fn signal_sdp(kind: &str, id: &str, sdp: &str) -> String {
-    serde_json::json!({ "t": kind, "id": id, "sdp": sdp }).to_string()
-}
-
-fn signal_ice(id: &str, candidate: &IceCandidate) -> String {
-    serde_json::json!({
-        "t": "ice",
-        "id": id,
-        "cand": candidate.candidate(),
-        "mid": candidate.sdp_mid(),
-    })
-    .to_string()
-}
-
-fn signal_bye(id: &str) -> String {
-    serde_json::json!({ "t": "bye", "id": id }).to_string()
-}
-
+/// Browsers send an empty candidate as end-of-candidates; juice rejects it.
 fn usable_ice(cand: &str) -> bool {
     let text = cand.trim();
     !text.is_empty() && text != "candidate:" && text != "a=candidate:"
@@ -424,26 +347,47 @@ fn usable_ice(cand: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn room_caps_at_ten() {
-        assert_eq!(MAX_PEERS, 10);
-        assert_eq!(FRAME_SAMPLES, 960);
+    fn want(id: &str) -> Signal {
+        Signal::Want { id: id.into() }
     }
 
-    #[test]
-    fn signal_json_is_object() {
-        let json = signal_sdp("offer", "ab", "v=0");
-        assert!(json.contains("\"t\":\"offer\""));
-        assert!(json.contains("\"id\":\"ab\""));
-        assert!(json.contains("v=0"));
+    fn bye(id: &str) -> Signal {
+        Signal::Bye { id: id.into() }
     }
 
-    #[test]
-    fn ice_before_answer_is_held() {
-        let mut hub = Hub::new();
+    fn offer_sdp(msgs: &[String]) -> Option<String> {
+        msgs.iter().find_map(|msg| {
+            let value: serde_json::Value = serde_json::from_str(msg).ok()?;
+            if value.get("t")?.as_str()? != "offer" {
+                return None;
+            }
+            value.get("sdp")?.as_str().map(str::to_owned)
+        })
+    }
+
+    fn wait_offer(hub: &mut Hub) -> Vec<String> {
+        let start = std::time::Instant::now();
         let mut outgoing = Vec::new();
-        hub.apply_signal(
-            r#"{"t":"ice","id":"ab","cand":"candidate:1 1 UDP 1 127.0.0.1 9 typ host"}"#,
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            hub.drive(&mut outgoing);
+            if offer_sdp(&outgoing).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        outgoing
+    }
+
+    #[test]
+    fn ice_before_want_is_ignored() {
+        let mut hub = Hub::default();
+        let mut outgoing = Vec::new();
+        hub.apply(
+            &Signal::Ice {
+                id: "ab".into(),
+                cand: "candidate:1 1 UDP 1 127.0.0.1 9 typ host".into(),
+                mid: None,
+            },
             &mut outgoing,
         );
         assert!(outgoing.is_empty());
@@ -458,92 +402,46 @@ mod tests {
         assert!(usable_ice("candidate:1 1 UDP 1 127.0.0.1 9 typ host"));
     }
 
-    fn wait_offer(hub: &mut Hub) -> Vec<String> {
-        let start = std::time::Instant::now();
-        let mut outgoing = Vec::new();
-        while start.elapsed() < std::time::Duration::from_secs(5) {
-            hub.drive(&mut outgoing);
-            if outgoing.iter().any(|msg| msg.contains("\"t\":\"offer\"")) {
-                return outgoing;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        outgoing
-    }
-
-    fn offer_sdp(msgs: &[String]) -> Option<String> {
-        for msg in msgs {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(msg) else {
-                continue;
-            };
-            if value.get("t").and_then(|v| v.as_str()) == Some("offer") {
-                return value.get("sdp").and_then(|v| v.as_str()).map(str::to_owned);
-            }
-        }
-        None
-    }
-
     #[test]
-    fn want_on_existing_id_keeps_peer() {
-        let mut hub = Hub::new();
+    fn want_on_existing_id_resends_the_same_offer() {
+        let mut hub = Hub::default();
         let mut outgoing = Vec::new();
-        hub.apply_signal(r#"{"t":"want","id":"ab"}"#, &mut outgoing);
-        assert_eq!(
-            hub.peer_count(),
-            1,
-            "libdatachannel must create a peer from want"
-        );
-        let first = wait_offer(&mut hub);
-        let sdp = offer_sdp(&first).expect("first want must emit an offer");
-        outgoing.clear();
-        hub.apply_signal(r#"{"t":"want","id":"ab"}"#, &mut outgoing);
+        hub.apply(&want("ab"), &mut outgoing);
         assert_eq!(hub.peer_count(), 1);
-        assert_eq!(
-            offer_sdp(&outgoing).as_deref(),
-            Some(sdp.as_str()),
-            "duplicate want must re-send the same offer, not a new peer: {outgoing:?}"
-        );
+        let sdp = offer_sdp(&wait_offer(&mut hub)).expect("first want emits an offer");
+        outgoing.clear();
+        hub.apply(&want("ab"), &mut outgoing);
+        assert_eq!(hub.peer_count(), 1);
+        assert_eq!(offer_sdp(&outgoing).as_deref(), Some(sdp.as_str()));
     }
 
     #[test]
     fn bye_then_want_creates_a_fresh_peer() {
-        let mut hub = Hub::new();
+        let mut hub = Hub::default();
         let mut outgoing = Vec::new();
-        hub.apply_signal(r#"{"t":"want","id":"ab"}"#, &mut outgoing);
-        let first = wait_offer(&mut hub);
-        let first_sdp = offer_sdp(&first).expect("first offer");
+        hub.apply(&want("ab"), &mut outgoing);
+        let first = offer_sdp(&wait_offer(&mut hub)).expect("first offer");
         outgoing.clear();
-        hub.apply_all(
-            &[
-                r#"{"t":"bye","id":"ab"}"#.to_owned(),
-                r#"{"t":"want","id":"ab"}"#.to_owned(),
-            ],
-            &mut outgoing,
-        );
+        hub.apply_all(&[bye("ab"), want("ab")], &mut outgoing);
         assert_eq!(hub.peer_count(), 1);
-        let second = wait_offer(&mut hub);
-        let second_sdp = offer_sdp(&second).expect("bye+want must emit a new offer");
-        assert_ne!(
-            first_sdp, second_sdp,
-            "bye must drop the old ICE credentials"
-        );
+        let second = offer_sdp(&wait_offer(&mut hub)).expect("second offer");
+        assert_ne!(first, second, "bye must drop the old ICE credentials");
     }
 
     #[test]
     fn apply_all_processes_bye_before_want() {
-        let mut hub = Hub::new();
+        let mut hub = Hub::default();
         let mut outgoing = Vec::new();
-        hub.apply_all(
-            &[
-                r#"{"t":"want","id":"ab"}"#.to_owned(),
-                r#"{"t":"bye","id":"ab"}"#.to_owned(),
-            ],
-            &mut outgoing,
-        );
-        assert_eq!(
-            hub.peer_count(),
-            1,
-            "bye then want on the same id must leave a peer"
-        );
+        hub.apply_all(&[want("ab"), bye("ab")], &mut outgoing);
+        assert_eq!(hub.peer_count(), 1);
+    }
+
+    #[test]
+    fn push_pcm_keeps_partial_frames_for_later() {
+        let mut hub = Hub::default();
+        hub.apply(&want("ab"), &mut Vec::new());
+        hub.push_pcm(&[0.1; FRAME_SAMPLES + 10], 192);
+        assert_eq!(hub.leftover.len(), 10);
+        assert!((hub.last_peak() - 0.1).abs() < 1e-6);
     }
 }
