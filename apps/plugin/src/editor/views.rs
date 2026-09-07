@@ -20,11 +20,10 @@ use crate::{P, RelayParams};
 /// UI refresh cadence. Matches the egui editor's 30 Hz meter fan-out.
 pub const FRAME: Duration = Duration::from_millis(33);
 
-// ponytail: ONE shared 30 Hz timer drives the whole editor, because vizia's
-// `Context::modify_timer` (vizia_core/src/context/mod.rs:857) spins forever on
-// any timer that isn't the head of its heap - so a *second* `start_timer` in a
-// window hangs the editor. `editor::view` owns it; the views below hang their
-// per-frame work off this list. Give each view its own timer once that's fixed.
+// ponytail: ONE shared 30 Hz timer drives the whole editor. Upstream vizia's
+// `Context::modify_timer` hung on any second timer (fixed in the DerpcatMusic
+// fork truce pins, vizia/vizia#777 upstream); one ticker is still the smaller
+// design, so keep it. `editor::view` owns the timer; views register here.
 thread_local! {
     static TICKS: RefCell<Vec<Box<dyn FnMut()>>> = const { RefCell::new(Vec::new()) };
 }
