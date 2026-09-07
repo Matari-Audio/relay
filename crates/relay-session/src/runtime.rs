@@ -730,11 +730,11 @@ fn run_worker(worker: &mut SessionWorker, control: &SessionControl) {
                 let _ = worker.apply(EngineCommand::SetSlug { bytes, len });
             }
         }
-        if let Some(key) = claim_key(control, snapshot) {
-            if last_claim != key {
-                maybe_claim_session(control, snapshot);
-                last_claim = key;
-            }
+        if let Some(key) = claim_key(control, snapshot)
+            && last_claim != key
+        {
+            maybe_claim_session(control, snapshot);
+            last_claim = key;
         }
         thread::sleep(Duration::from_millis(2));
     }
