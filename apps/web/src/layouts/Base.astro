@@ -1,0 +1,187 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  /** Extra <head> content (meta refresh on the hand-off page). */
+}
+const { title, description } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="dark" />
+    <title>{title}</title>
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/Barlow-Medium.woff2"
+      crossorigin
+    />
+    <slot name="head" />
+    <style is:global>
+      @font-face {
+        font-family: Barlow;
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url("/fonts/Barlow-Medium.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: Barlow;
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url("/fonts/Barlow-SemiBold.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: Barlow;
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url("/fonts/Barlow-Bold.woff2") format("woff2");
+      }
+
+      :root {
+        --polar-night: #191919;
+        --chassis: #252525;
+        --surface: #353535;
+        --well: #101010;
+        --hairline: #2e2e2e;
+        --text: #ffffff;
+        --muted: #b8b8b8;
+        --studio-blue: #00aaff;
+        --ink: #041018;
+        --ok: #5be8b3;
+        --warn: #ffc75c;
+        --hot: #ff7088;
+        --r-hardware: 4px;
+        --r-well: 3px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--polar-night);
+        color: var(--text);
+        font-family: Barlow, system-ui, sans-serif;
+        font-weight: 500;
+        font-size: 13px;
+        line-height: 1.35;
+        color-scheme: dark;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
+      }
+
+      ::selection {
+        background: var(--studio-blue);
+        color: var(--ink);
+      }
+
+      a {
+        color: var(--studio-blue);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--studio-blue);
+        outline-offset: 3px;
+        border-radius: 2px;
+      }
+
+      .wrap {
+        width: min(920px, 100%);
+        margin: 0 auto;
+        flex: 1;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 32px;
+        color: var(--text);
+      }
+
+      .nav svg {
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+      }
+
+      .nav .wordmark {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+      }
+
+      .nav a.wordmark {
+        color: var(--text);
+      }
+
+      .foot {
+        width: min(920px, 100%);
+        margin: 40px auto 0;
+        padding-top: 16px;
+        border-top: 1px solid var(--hairline);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 20px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      @media (min-width: 720px) {
+        body {
+          padding: 28px 28px calc(32px + env(safe-area-inset-bottom));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="nav">
+        <svg
+          viewBox="0 0 100 100"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="13"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="24" cy="50" r="9" fill="currentColor" stroke="none" />
+          <path d="M42 26L56 50L42 74" />
+          <path d="M66 26L80 50L66 74" />
+        </svg>
+        <a class="wordmark" href="/">RELAY</a>
+      </header>
+      <slot />
+    </div>
+    <footer class="foot">
+      <span>Matari Audio</span>
+      <a href="https://github.com/DerpcatMusic/relay">Source</a>
+      <a href="https://github.com/DerpcatMusic/relay/blob/main/LICENSE">MPL-2.0</a>
+    </footer>
+  </body>
+</html>

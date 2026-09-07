@@ -1,5 +1,7 @@
 # RELAY
 
+![The RELAY plugin editor in Share, live on a named session](docs/images/relay-editor.png)
+
 Low-latency real-time audio transport with native DAW, browser, and server adapters.
 
 **Open source** under [MPL-2.0](LICENSE). Source: [github.com/DerpcatMusic/relay](https://github.com/DerpcatMusic/relay).
@@ -31,7 +33,7 @@ packages/web-rtc/      framework-independent browser-session shell
 apps/connect/          standalone Connect CLI (`listen` / `join`)
 apps/stream/           unpaid local Stream CLI (`hub` / `publish` / `listen`)
 apps/plugin/           Truce adapter — CLAP, VST3, VST2, LV2, AU v2/v3, standalone (own Cargo workspace)
-apps/web/              minimal Astro shell
+apps/web/              Astro product page and listen hand-off
 docs/adr/              accepted foundation decisions
 docs/research/         per-task sources, corrections, and validation evidence
 ```
