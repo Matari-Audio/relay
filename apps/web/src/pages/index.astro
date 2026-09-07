@@ -1,71 +1,240 @@
 ---
-const origin = "https://relay.matari-audio.com";
+import Base from "../layouts/Base.astro";
+
+const listenOrigin = "https://relay.matari-audio.com";
+const download = "https://matari-audio.com/relay";
+
+const specs = [
+  { label: "Wire", value: "48 kHz stereo. Opus 192 kbps, FLAC 16-bit, or PCM 16-bit." },
+  { label: "LAN", value: "5 ms uncompressed PCM between two RELAY instances." },
+  { label: "Listen", value: "Browser playback over P2P WebRTC, up to 10 listeners." },
+  { label: "Formats", value: "CLAP, VST3, VST2, LV2, AU v2/v3, standalone." },
+];
 ---
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="RELAY listen pages. Open a session from the plugin and share the URL."
-    />
-    <title>RELAY</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <style>
-      :root {
-        --bg: #191919;
-        --lane: #252525;
-        --text: #ffffff;
-        --muted: #b8b8b8;
-        --accent: #00aaff;
-        --ice: #25e7ff;
+
+<Base
+  title="RELAY — send the track you are playing"
+  description="RELAY is a DAW insert that streams the track you are playing to a listener in the browser. Name a session, go live, send the link."
+>
+  <main>
+    <section class="hero">
+      <div class="pitch">
+        <h1>Send the track you are playing.</h1>
+        <p class="lede">
+          RELAY is an insert for your DAW. Name a session, go live, and whoever has the
+          link hears that track in a browser — no account, no upload, no bounce.
+        </p>
+        <div class="actions">
+          <a class="primary" href={download}>Download RELAY</a>
+          <a class="secondary" href={listenOrigin}>Open a listen page</a>
+        </div>
+        <p class="address">
+          A session is a name: <code>{listenOrigin.replace("https://", "")}/&lt;session&gt;</code>
+        </p>
+      </div>
+
+      <figure class="shot">
+        <div class="frame">
+          <picture>
+            <source srcset="/relay-editor.webp" type="image/webp" />
+            <img
+              src="/relay-editor.png"
+              width="1360"
+              height="960"
+              alt="The RELAY plugin editor: session name, password, format, send fader, spectrum, and stereo level meters."
+              fetchpriority="high"
+            />
+          </picture>
+        </div>
+        <figcaption>The editor in Share, live on a named session.</figcaption>
+      </figure>
+    </section>
+
+    <section class="specs" aria-label="Specification">
+      {
+        specs.map((spec) => (
+          <div class="spec">
+            <span class="spec-label">{spec.label}</span>
+            <span class="spec-value">{spec.value}</span>
+          </div>
+        ))
       }
-      * { box-sizing: border-box; }
-      html, body {
-        margin: 0;
-        min-height: 100%;
-        background: var(--bg);
-        color: var(--text);
-        font-family: Barlow, system-ui, sans-serif;
-      }
-      ::selection { background: var(--accent); color: #041018; }
-      body { display: flex; justify-content: center; padding: clamp(24px, 6vw, 72px) 20px; }
-      main { width: min(440px, 100%); }
-      .brand {
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        color: var(--ice);
-        margin: 0 0 28px;
-      }
-      h1 {
-        font-size: clamp(32px, 7vw, 48px);
-        line-height: 1;
-        letter-spacing: -0.03em;
-        margin: 0 0 16px;
-      }
-      p { color: var(--muted); font-size: 16px; line-height: 1.45; }
-      code { color: var(--ice); }
-      a { color: var(--ice); }
-    </style>
-  </head>
-  <body>
-    <main>
-      <p class="brand">RELAY</p>
-      <h1>Listen</h1>
-      <p>
-        A session starts when you open the plugin. Copy the URL and send it.
-        This page converts 48 kHz audio to whatever your speakers actually run.
-      </p>
-      <p>
-        Open <code>{origin}/&lt;session-name&gt;</code>
-      </p>
-    </main>
-  </body>
-</html>
+    </section>
+  </main>
+</Base>
+
+<style>
+  main {
+    padding-top: 44px;
+  }
+
+  .hero {
+    display: grid;
+    gap: 28px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(30px, 6vw, 44px);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+
+  .lede {
+    margin: 14px 0 0;
+    max-width: 46ch;
+    font-size: 16px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin-top: 24px;
+  }
+
+  .primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    padding: 0 22px;
+    border-radius: var(--r-hardware);
+    background: var(--studio-blue);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+
+  .primary:hover {
+    background: #2bbaff;
+    text-decoration: none;
+  }
+
+  .primary:active {
+    transform: translateY(1px);
+  }
+
+  .secondary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 4px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--surface);
+  }
+
+  .secondary:hover {
+    color: var(--studio-blue);
+    border-bottom-color: var(--studio-blue);
+    text-decoration: none;
+  }
+
+  .address {
+    margin: 20px 0 0;
+    color: var(--muted);
+  }
+
+  code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    padding: 3px 6px;
+    border-radius: var(--r-well);
+    background: var(--well);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
+
+  @media (max-width: 520px) {
+    .address code {
+      display: block;
+      margin-top: 6px;
+    }
+  }
+
+  .shot {
+    margin: 0;
+  }
+
+  .frame {
+    padding: 8px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-hardware);
+    background: var(--chassis);
+  }
+
+  .frame img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--r-well);
+  }
+
+  figcaption {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .specs {
+    display: grid;
+    gap: 1px;
+    margin-top: 44px;
+    background: var(--hairline);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-hardware);
+    overflow: hidden;
+  }
+
+  .spec {
+    padding: 14px 16px;
+    background: var(--chassis);
+  }
+
+  .spec-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .spec-value {
+    display: block;
+    max-width: 34ch;
+  }
+
+  @media (min-width: 860px) {
+    main {
+      padding-top: 64px;
+    }
+
+    .hero {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      gap: 44px;
+      align-items: center;
+    }
+
+    .specs {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+</style>

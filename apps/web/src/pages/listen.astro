@@ -1,18 +1,103 @@
 ---
+import Base from "../layouts/Base.astro";
+
 const name = Astro.url.searchParams.get("n") ?? "session";
+const target = `https://relay.matari-audio.com/${name}`;
 ---
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>RELAY · {name}</title>
-    <meta http-equiv="refresh" content={`0;url=https://relay.matari-audio.com/${name}`} />
-  </head>
-  <body>
-    <p>Opening {name}…</p>
-    <p>
-      <a href={`https://relay.matari-audio.com/${name}`}>Continue</a>
-    </p>
-  </body>
-</html>
+
+<Base title={`RELAY · ${name}`} description={`Opening the RELAY listen page for ${name}.`}>
+  <meta slot="head" http-equiv="refresh" content={`0;url=${target}`} />
+
+  <main>
+    <div class="chassis">
+      <p class="nameplate">{name}</p>
+      <p class="status" aria-live="polite">
+        <span class="lamp" aria-hidden="true"></span>
+        Handing you to the listen page
+      </p>
+      <a class="open" href={target}>Open session</a>
+      <p class="hint">If nothing happens, use the button. Playback needs one tap.</p>
+    </div>
+  </main>
+</Base>
+
+<style>
+  main {
+    display: flex;
+    justify-content: center;
+    padding: clamp(48px, 12vh, 120px) 0 0;
+  }
+
+  .chassis {
+    width: min(400px, 100%);
+    padding: 20px 18px 16px;
+    border-radius: var(--r-hardware);
+    background: var(--chassis);
+    box-shadow:
+      inset 0 1px 0 #3f3f3f,
+      0 18px 40px #00000073;
+  }
+
+  .nameplate {
+    margin: 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--surface);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 16px;
+    color: var(--muted);
+  }
+
+  .lamp {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--warn);
+    flex-shrink: 0;
+  }
+
+  .open {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border-radius: var(--r-hardware);
+    background: var(--studio-blue);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+
+  .open:hover {
+    background: #2bbaff;
+    text-decoration: none;
+  }
+
+  .open:active {
+    transform: translateY(1px);
+  }
+
+  .hint {
+    margin: 12px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  @media (max-width: 480px) {
+    .chassis {
+      padding: 16px 14px 14px;
+    }
+  }
+</style>
