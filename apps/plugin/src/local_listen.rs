@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn index_lists_the_room_when_named() {
-        assert!(index_html("", 8787).contains("<ul></ul>"));
+        assert!(index_html("", 8787).contains("<ul class=\"home-list\"></ul>"));
         let html = index_html("late-mix", 8790);
         assert!(html.contains("href=\"/late-mix\""));
         assert!(html.contains("LAN 8790"));
