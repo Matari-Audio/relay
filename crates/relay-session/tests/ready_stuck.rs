@@ -8,8 +8,8 @@ use std::time::Duration;
 use relay_audio::FrameDuration;
 use relay_domain::{ConnectionState, SessionMode};
 use relay_session::{
-    EngineCommand, MonitorMode, SessionConfig, SessionControl, SessionEngine, SessionRole,
-    SessionRuntime,
+    EngineCommand, MonitorMode, SessionConfig, SessionControl, SessionEngine, SessionPill,
+    SessionRole, SessionRuntime,
 };
 
 fn config(ssrc: u32) -> SessionConfig {
@@ -31,7 +31,7 @@ fn pill(
     web_silent: bool,
     bound: bool,
     lan_browsers: u32,
-) -> &'static str {
+) -> SessionPill {
     relay_session::classify_session(relay_session::SessionView {
         linked,
         role: SessionRole::ConnectListen,
@@ -44,7 +44,6 @@ fn pill(
         web_wanted: web_ok,
         bound,
     })
-    .as_str()
 }
 
 /// Symptom: a lone Link host that *is* bound still looks like it never started.
@@ -66,8 +65,8 @@ fn repro_lone_listen_host_looks_ready() {
     assert!(snap.bound);
     assert_eq!(
         pill(true, snap.state, snap.peers, false, false, snap.bound, 0),
-        "hosting",
-        "lone bound host must read as hosting, not ready"
+        SessionPill::Hosting,
+        "lone bound host must classify as hosting, not joining"
     );
 }
 
@@ -90,7 +89,7 @@ fn repro_second_listen_same_port_fails() {
     assert_eq!(b.snapshot().state, ConnectionState::Idle);
     assert_eq!(
         pill(true, ConnectionState::Failed, 0, false, false, false, 0),
-        "failed",
+        SessionPill::Failed,
         "a bind collision must paint Failed"
     );
 }
@@ -125,7 +124,7 @@ fn repro_failed_listen_is_published_as_idle() {
     assert_eq!(snap.state, ConnectionState::Failed);
     assert_eq!(
         pill(true, snap.state, snap.peers, false, false, snap.bound, 0),
-        "failed"
+        SessionPill::Failed
     );
     assert!(
         !control.last_error().expect("error").is_empty(),
