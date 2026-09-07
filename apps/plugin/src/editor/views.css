@@ -1,0 +1,474 @@
+/* Structure only. Every colour lives in theme_dark.css / theme_light.css. */
+
+.root {
+    width: 100%;
+    height: 100%;
+    layout-type: column;
+}
+
+.hairline {
+    width: 100%;
+    height: 1px;
+}
+
+/* ------------------------------------------------------------- header */
+
+.header {
+    width: 100%;
+    height: 56px;
+    layout-type: row;
+    padding-left: 16px;
+    padding-right: 16px;
+    alignment: center;
+}
+
+.header-side {
+    width: 1s;
+    height: 1s;
+    layout-type: row;
+    alignment: left;
+    horizontal-gap: 8px;
+}
+
+.header-side.end {
+    alignment: right;
+}
+
+.logo {
+    width: 24px;
+    height: 24px;
+}
+
+.wordmark {
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 0.16em;
+}
+
+.mode-switch {
+    width: 180px;
+    height: 28px;
+}
+
+/* --------------------------------------------------------------- body */
+
+.body {
+    width: 100%;
+    height: 1s;
+    layout-type: row;
+    padding: 16px;
+    horizontal-gap: 16px;
+}
+
+.form-col {
+    width: 1s;
+    height: 1s;
+    layout-type: column;
+    vertical-gap: 12px;
+}
+
+.rows {
+    width: 100%;
+    height: auto;
+    layout-type: column;
+    vertical-gap: 8px;
+}
+
+.row {
+    width: 100%;
+    height: 32px;
+    layout-type: row;
+    alignment: left;
+    horizontal-gap: 12px;
+}
+
+.row-label {
+    width: 72px;
+    height: 1s;
+    alignment: left;
+    font-size: 12px;
+}
+
+.row-control {
+    width: 1s;
+    height: 1s;
+    layout-type: row;
+    alignment: left;
+    horizontal-gap: 8px;
+}
+
+.meter-col {
+    width: 96px;
+    height: 1s;
+    layout-type: column;
+}
+
+/* --------------------------------------------------------- text fields */
+
+.field {
+    width: 1s;
+    height: 28px;
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 13px;
+    corner-radius: 3px;
+}
+
+.nameplate-wrap {
+    width: 1s;
+    height: 1s;
+    layout-type: column;
+    alignment: bottom;
+}
+
+/* vizia has no per-side border width, so the underline is its own element. */
+.nameplate {
+    width: 100%;
+    height: 1s;
+    padding-left: 0px;
+    font-size: 22px;
+    border-width: 0px;
+    corner-radius: 0px;
+}
+
+.nameplate-rule {
+    width: 100%;
+    height: 1px;
+}
+
+/* ------------------------------------------------------------- buttons */
+
+.icon-button {
+    width: 28px;
+    height: 28px;
+    corner-radius: 3px;
+    alignment: center;
+    padding: 0px;
+    border-width: 1px;
+}
+
+.glyph {
+    width: 20px;
+    height: 20px;
+    position-type: absolute;
+    left: 4px;
+    top: 4px;
+}
+
+.icon-button .tick {
+    display: none;
+}
+
+.icon-button.copied .glyph {
+    display: none;
+}
+
+.icon-button.copied .tick {
+    display: flex;
+}
+
+.primary {
+    width: 112px;
+    height: 28px;
+    corner-radius: 4px;
+    alignment: center;
+    font-size: 13px;
+    border-width: 0px;
+}
+
+.quality {
+    width: 108px;
+    height: 28px;
+    corner-radius: 3px;
+    alignment: center;
+    font-size: 12px;
+    border-width: 1px;
+}
+
+.quality.static {
+    alignment: left;
+    border-width: 0px;
+}
+
+.options {
+    width: 140px;
+    height: auto;
+    padding: 4px;
+    corner-radius: 4px;
+    layout-type: column;
+    vertical-gap: 2px;
+}
+
+.options .option {
+    width: 100%;
+    height: 24px;
+    alignment: left;
+    padding-left: 8px;
+    font-size: 12px;
+    corner-radius: 2px;
+    border-width: 0px;
+}
+
+.hint {
+    width: auto;
+    height: auto;
+    max-width: 240px;
+    padding: 8px;
+    corner-radius: 3px;
+    font-size: 11px;
+}
+
+/* ------------------------------------------------------------ segmented */
+
+.segmented {
+    width: 1s;
+    height: 28px;
+    layout-type: row;
+    corner-radius: 4px;
+    border-width: 1px;
+    border-color: transparent;
+}
+
+.segmented:focus-visible {
+    border-width: 1px;
+}
+
+.segmented-indicator {
+    position-type: absolute;
+    top: 0px;
+    height: 100%;
+    corner-radius: 3px;
+    transition: left 120ms;
+}
+
+.segmented-cell {
+    height: 1s;
+    alignment: center;
+    text-align: center;
+    font-size: 12px;
+}
+
+/* --------------------------------------------------------------- fader */
+
+.fader {
+    width: 1s;
+    height: 1s;
+    layout-type: row;
+    alignment: center;
+    horizontal-gap: 12px;
+    padding: 2px;
+    corner-radius: 4px;
+    border-width: 1px;
+    border-color: transparent;
+}
+
+.fader:focus-visible {
+    border-width: 1px;
+}
+
+/* 4 px slot, per DESIGN.md. */
+.fader-track {
+    width: 1s;
+    height: 4px;
+    corner-radius: 2px;
+}
+
+.fader-fill {
+    position-type: absolute;
+    left: 0px;
+    top: 0px;
+    height: 100%;
+    corner-radius: 2px;
+}
+
+/* Flat cap, not a knob. */
+.fader-cap {
+    position-type: absolute;
+    top: 50%;
+    width: 6px;
+    height: 16px;
+    corner-radius: 2px;
+    translate: -50% -50%;
+}
+
+.fader-readout {
+    width: 56px;
+    height: auto;
+    text-align: right;
+    font-size: 12px;
+}
+
+/* -------------------------------------------------------------- meters */
+
+.meters {
+    width: 100%;
+    height: 1s;
+    layout-type: row;
+    padding: 8px;
+    horizontal-gap: 8px;
+    corner-radius: 3px;
+    alignment: center;
+}
+
+/* One L/R column: label, clip lamp, rail, dB readout. */
+.meters-channel {
+    width: 1s;
+    height: 1s;
+    max-width: 28px;
+    layout-type: column;
+    alignment: top-center;
+    vertical-gap: 5px;
+}
+
+.meters-label {
+    width: 1s;
+    height: auto;
+    text-align: center;
+    font-size: 11px;
+}
+
+/* 8 px clip lamp, hardware corner. */
+.meters-clip {
+    width: 8px;
+    height: 8px;
+    corner-radius: 2px;
+}
+
+/* The rail is the stack: gradient underneath, surface cover on top. */
+.meters-rail {
+    width: 14px;
+    height: 1s;
+    corner-radius: 3px;
+}
+
+.meters-fill {
+    position-type: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    corner-radius: 3px;
+}
+
+/* The unlit part of the rail, painted over the gradient from the top down. */
+.meters-cover {
+    position-type: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    corner-top-left-radius: 3px;
+    corner-top-right-radius: 3px;
+}
+
+/* 1 px peak-hold tick, full rail width. */
+.meters-hold {
+    position-type: absolute;
+    left: 0px;
+    width: 100%;
+    height: 1px;
+}
+
+.meters-db {
+    width: 1s;
+    height: auto;
+    text-align: center;
+    font-size: 11px;
+}
+
+/* ------------------------------------------------------------ spectrum */
+
+.scope-well {
+    width: 100%;
+    height: 1s;
+    min-height: 72px;
+    layout-type: column;
+    padding: 8px;
+    vertical-gap: 4px;
+    corner-radius: 3px;
+}
+
+.caption-row {
+    width: 100%;
+    height: 14px;
+    layout-type: row;
+}
+
+.caption {
+    width: 1s;
+    height: 1s;
+    alignment: left;
+    font-size: 11px;
+}
+
+.caption.end {
+    alignment: right;
+}
+
+.spectrum {
+    width: 100%;
+    height: 1s;
+    layout-type: row;
+    alignment: bottom-center;
+    horizontal-gap: 2px;
+}
+
+.spectrum-bar {
+    width: 1s;
+    corner-radius: 2px;
+}
+
+/* -------------------------------------------------------------- footer */
+
+.footer {
+    width: 100%;
+    height: 40px;
+    layout-type: row;
+    padding-left: 16px;
+    padding-right: 16px;
+    alignment: center;
+}
+
+.status-row {
+    width: 1s;
+    height: 1s;
+    layout-type: row;
+    alignment: left;
+    horizontal-gap: 8px;
+}
+
+.lamp {
+    width: 8px;
+    height: 8px;
+    corner-radius: 4px;
+    transition: background-color 120ms;
+}
+
+.status {
+    width: auto;
+    height: auto;
+    font-size: 12px;
+}
+
+/* ------------------------------------------------------------ settings */
+
+.settings {
+    width: 220px;
+    height: auto;
+    corner-radius: 4px;
+    border-width: 1px;
+    padding: 12px;
+}
+
+.settings-body {
+    width: 100%;
+    height: auto;
+    layout-type: column;
+    vertical-gap: 8px;
+}
+
+/* The form grid stretches its labels; inside the auto-height popover they
+   need an explicit line box or they collapse to nothing. */
+.settings .row-label {
+    width: 100%;
+    height: 16px;
+}

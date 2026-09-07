@@ -12,6 +12,12 @@ description = "RELAY DAW plugin (Truce shell)"
 [workspace]
 resolver = "3"
 
+# vizia_baseview hard-pins `https://github.com/vizia/baseview.git`; truce-vizia's
+# own `[patch]` doesn't reach us across workspace roots, so repeat it here to get
+# the AAX / Pro Tools teardown fix.
+[patch."https://github.com/vizia/baseview.git"]
+baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "baseview-truce-vizia" }
+
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
@@ -49,8 +55,7 @@ truce-au = { path = "../../../truce-derpcat/crates/truce-au", optional = true }
 truce-aax = { path = "../../../truce-derpcat/crates/truce-aax", optional = true }
 clap-sys = { version = "0.5", optional = true }
 truce-standalone = { path = "../../../truce-derpcat/crates/truce-standalone", features = ["gui"], optional = true }
-truce-egui = { path = "../../../truce-derpcat/crates/truce-egui" }
-egui = "0.35"
+truce-vizia = { path = "../../../truce-derpcat/crates/truce-vizia" }
 ureq = "2.12"
 tungstenite = { version = "0.26", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }

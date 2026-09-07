@@ -1,0 +1,326 @@
+/* DESIGN.md Polar Night tokens. Dark is the default surface. */
+
+:root {
+    font-family: "Barlow SemiBold", "Barlow";
+    color: #ffffff;
+    background-color: #191919;
+    caret-color: #00aaff;
+    selection-color: #00aaff;
+}
+
+.root {
+    background-color: #191919;
+    color: #ffffff;
+}
+
+.hairline {
+    background-color: #2e2e2e;
+}
+
+/* ------------------------------------------------------------- header */
+
+.header {
+    background-color: #101010;
+}
+
+.logo {
+    color: #00aaff;
+}
+
+.wordmark {
+    color: #ffffff;
+}
+
+/* --------------------------------------------------------------- text */
+
+.row-label,
+.caption,
+.status,
+.meters-label,
+.meters-db,
+.fader-readout {
+    color: #b8b8b8;
+}
+
+/* --------------------------------------------------------- text fields */
+
+.field,
+.nameplate {
+    background-color: #101010;
+    color: #ffffff;
+    caret-color: #00aaff;
+    selection-color: #00aaff;
+    border-color: #2e2e2e;
+    transition: border-color 100ms, background-color 100ms;
+}
+
+.field:hover {
+    border-color: #3d3d3d;
+}
+
+.field:focus-visible,
+.field:checked {
+    border-color: #00aaff;
+    outline-width: 0px;
+}
+
+.nameplate {
+    background-color: transparent;
+}
+
+.nameplate-rule {
+    background-color: #2e2e2e;
+    transition: background-color 100ms;
+}
+
+.nameplate-wrap:hover .nameplate-rule {
+    background-color: #3d3d3d;
+}
+
+.nameplate-wrap:focus-within .nameplate-rule {
+    background-color: #00aaff;
+}
+
+/* ------------------------------------------------------------- buttons */
+
+.icon-button {
+    background-color: #252525;
+    border-color: #2e2e2e;
+    color: #b8b8b8;
+    transition: background-color 100ms, color 100ms;
+}
+
+.icon-button:hover {
+    background-color: #353535;
+    color: #ffffff;
+}
+
+.icon-button:active {
+    background-color: #101010;
+}
+
+.icon-button:focus-visible {
+    outline-width: 2px;
+    outline-color: #00aaff;
+    outline-offset: 2px;
+}
+
+.icon-button:disabled {
+    color: #3d3d3d;
+    background-color: #252525;
+}
+
+.icon-button.copied {
+    color: #5be8b3;
+}
+
+.primary {
+    background-color: #00aaff;
+    color: #041018;
+    transition: background-color 100ms;
+}
+
+.primary:hover {
+    background-color: #33bcff;
+}
+
+.primary:active {
+    background-color: #0092db;
+}
+
+.primary.armed {
+    background-color: #353535;
+    color: #ffffff;
+}
+
+.primary.armed:hover {
+    background-color: #3d3d3d;
+}
+
+.primary:focus-visible {
+    outline-width: 2px;
+    outline-color: #00aaff;
+    outline-offset: 2px;
+}
+
+.primary:disabled {
+    background-color: #252525;
+    color: #b8b8b8;
+}
+
+.quality {
+    background-color: #252525;
+    border-color: #2e2e2e;
+    color: #ffffff;
+}
+
+.quality:hover {
+    background-color: #353535;
+}
+
+.quality:focus-visible {
+    outline-width: 2px;
+    outline-color: #00aaff;
+}
+
+.quality.static {
+    background-color: transparent;
+    color: #b8b8b8;
+}
+
+.options {
+    background-color: #252525;
+    border-width: 1px;
+    border-color: #2e2e2e;
+    color: #ffffff;
+}
+
+.options .option {
+    background-color: transparent;
+    color: #ffffff;
+}
+
+.options .option:hover {
+    background-color: #353535;
+}
+
+.hint {
+    background-color: #353535;
+    color: #ffffff;
+    border-width: 1px;
+    border-color: #2e2e2e;
+}
+
+/* ------------------------------------------------------------ segmented */
+
+.segmented {
+    background-color: #101010;
+    border-color: #2e2e2e;
+}
+
+.segmented-indicator {
+    background-color: #353535;
+}
+
+.segmented-cell {
+    color: #b8b8b8;
+    transition: color 100ms;
+}
+
+.segmented-cell:hover {
+    color: #ffffff;
+}
+
+.segmented-cell.selected {
+    color: #ffffff;
+}
+
+.segmented:focus-visible {
+    border-color: #00aaff;
+    outline-width: 2px;
+    outline-color: #00aaff;
+}
+
+/* --------------------------------------------------------------- fader */
+
+.fader-track {
+    background-color: #101010;
+}
+
+.fader-track:hover .fader-cap {
+    background-color: #33bcff;
+}
+
+.fader:focus-visible {
+    border-color: #00aaff;
+}
+
+.fader-track:focus-visible {
+    outline-width: 2px;
+    outline-color: #00aaff;
+    outline-offset: 3px;
+}
+
+.fader-fill {
+    background-color: #00aaff;
+}
+
+.fader-cap {
+    background-color: #ffffff;
+}
+
+/* -------------------------------------------------------------- meters */
+
+.meters {
+    background-color: #101010;
+}
+
+.meters-clip {
+    background-color: #2e2e2e;
+}
+
+.meters-clip.lit {
+    background-color: #ff7088;
+}
+
+/* The rail carries the whole GYR scale on `.meters-fill`; `.meters-cover`
+   masks it from the top, so the gradient never compresses with the level. */
+.meters-rail {
+    background-color: #252525;
+    border-width: 1px;
+    border-color: #2e2e2e;
+}
+
+.meters-fill {
+    background-image: linear-gradient(to top, #3d8f6a 0%, #5be8b3 55%, #ffc75c 82%, #ff7088 100%);
+}
+
+.meters-cover {
+    background-color: #252525;
+}
+
+.meters-hold {
+    background-color: #ffffff;
+}
+
+/* ------------------------------------------------------------ spectrum */
+
+.scope-well {
+    background-color: #101010;
+}
+
+.spectrum-bar {
+    background-color: #3d3d3d;
+}
+
+/* -------------------------------------------------------------- footer */
+
+.lamp {
+    background-color: #3d3d3d;
+    transition: background-color 150ms;
+}
+
+.lamp.failed {
+    background-color: #ff7088;
+}
+
+.lamp.asleep {
+    background-color: #ffc75c;
+}
+
+.lamp.ready,
+.lamp.pending {
+    background-color: #3d8f6a;
+}
+
+.lamp.live {
+    background-color: #5be8b3;
+}
+
+/* ------------------------------------------------------------ settings */
+
+.settings {
+    background-color: #252525;
+    border-color: #2e2e2e;
+    color: #ffffff;
+}
