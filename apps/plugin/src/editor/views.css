@@ -224,23 +224,27 @@
     width: 1s;
     height: 28px;
     layout-type: row;
-    corner-radius: 3px;
+    corner-radius: 4px;
     border-width: 1px;
-    padding: 2px;
+    border-color: transparent;
+}
+
+.segmented:focus-visible {
+    border-width: 1px;
 }
 
 .segmented-indicator {
     position-type: absolute;
-    height: 1s;
-    top: 2px;
-    corner-radius: 2px;
+    top: 0px;
+    height: 100%;
+    corner-radius: 3px;
     transition: left 120ms;
 }
 
 .segmented-cell {
-    width: 1s;
     height: 1s;
     alignment: center;
+    text-align: center;
     font-size: 12px;
 }
 
@@ -250,35 +254,47 @@
     width: 1s;
     height: 1s;
     layout-type: row;
-    alignment: left;
-    horizontal-gap: 8px;
+    alignment: center;
+    horizontal-gap: 12px;
+    padding: 2px;
+    corner-radius: 4px;
+    border-width: 1px;
+    border-color: transparent;
 }
 
+.fader:focus-visible {
+    border-width: 1px;
+}
+
+/* 4 px slot, per DESIGN.md. */
 .fader-track {
     width: 1s;
-    height: 6px;
-    top: 11px;
-    corner-radius: 3px;
+    height: 4px;
+    corner-radius: 2px;
 }
 
 .fader-fill {
+    position-type: absolute;
+    left: 0px;
+    top: 0px;
     height: 100%;
-    corner-radius: 3px;
+    corner-radius: 2px;
 }
 
+/* Flat cap, not a knob. */
 .fader-cap {
     position-type: absolute;
-    width: 4px;
+    top: 50%;
+    width: 6px;
     height: 16px;
-    top: -5px;
-    translate: -2px 0px;
     corner-radius: 2px;
+    translate: -50% -50%;
 }
 
 .fader-readout {
     width: 56px;
-    height: 1s;
-    alignment: right;
+    height: auto;
+    text-align: right;
     font-size: 12px;
 }
 
@@ -291,46 +307,71 @@
     padding: 8px;
     horizontal-gap: 8px;
     corner-radius: 3px;
+    alignment: center;
 }
 
+/* One L/R column: label, clip lamp, rail, dB readout. */
 .meters-channel {
     width: 1s;
     height: 1s;
+    max-width: 28px;
     layout-type: column;
-    alignment: center;
-    vertical-gap: 4px;
+    alignment: top-center;
+    vertical-gap: 5px;
 }
 
 .meters-label {
     width: 1s;
-    height: 14px;
-    alignment: center;
+    height: auto;
+    text-align: center;
     font-size: 11px;
 }
 
+/* 8 px clip lamp, hardware corner. */
+.meters-clip {
+    width: 8px;
+    height: 8px;
+    corner-radius: 2px;
+}
+
+/* The rail is the stack: gradient underneath, surface cover on top. */
 .meters-rail {
     width: 14px;
     height: 1s;
-    corner-radius: 2px;
-    layout-type: column;
+    corner-radius: 3px;
 }
 
-.meters-cover {
+.meters-fill {
+    position-type: absolute;
+    left: 0px;
+    top: 0px;
     width: 100%;
-    corner-radius: 2px;
+    height: 100%;
+    corner-radius: 3px;
 }
 
+/* The unlit part of the rail, painted over the gradient from the top down. */
+.meters-cover {
+    position-type: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    corner-top-left-radius: 3px;
+    corner-top-right-radius: 3px;
+}
+
+/* 1 px peak-hold tick, full rail width. */
 .meters-hold {
     position-type: absolute;
+    left: 0px;
     width: 100%;
-    height: 2px;
-    translate: 0px -2px;
+    height: 1px;
 }
 
 .meters-db {
     width: 1s;
-    height: 14px;
-    alignment: center;
+    height: auto;
+    text-align: center;
     font-size: 11px;
 }
 
@@ -399,6 +440,7 @@
     width: 8px;
     height: 8px;
     corner-radius: 4px;
+    transition: background-color 120ms;
 }
 
 .status {

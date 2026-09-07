@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="RELAY" width="96">
+
 # RELAY plugin
 
 Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated buffers, publishes atomics, and renders playback; it never allocates, locks, or touches a string. One supervised fan-out thread owns the LAN listen page, the browser P2P peers, and the cloud signalling socket. The editor is a resizable 680×480 vizia window in the Polar Night palette, with a centred Share|Join switch, Barlow typography, right-side stereo meters, and a send spectrum.

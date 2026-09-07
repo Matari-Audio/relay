@@ -216,6 +216,7 @@
 }
 
 .segmented:focus-visible {
+    border-color: #00aaff;
     outline-width: 2px;
     outline-color: #00aaff;
 }
@@ -228,6 +229,10 @@
 
 .fader-track:hover .fader-cap {
     background-color: #33bcff;
+}
+
+.fader:focus-visible {
+    border-color: #00aaff;
 }
 
 .fader-track:focus-visible {
@@ -250,24 +255,32 @@
     background-color: #101010;
 }
 
-/* The rail carries the whole GYR scale; the cover masks it from the top so
-   the gradient never compresses with the level. */
+.meters-clip {
+    background-color: #2e2e2e;
+}
+
+.meters-clip.lit {
+    background-color: #ff7088;
+}
+
+/* The rail carries the whole GYR scale on `.meters-fill`; `.meters-cover`
+   masks it from the top, so the gradient never compresses with the level. */
 .meters-rail {
+    background-color: #252525;
     border-width: 1px;
     border-color: #2e2e2e;
+}
+
+.meters-fill {
     background-image: linear-gradient(to top, #3d8f6a 0%, #5be8b3 55%, #ffc75c 82%, #ff7088 100%);
 }
 
 .meters-cover {
-    background-color: #101010;
+    background-color: #252525;
 }
 
 .meters-hold {
     background-color: #ffffff;
-}
-
-.meters-hold.meters-clip {
-    background-color: #ff7088;
 }
 
 /* ------------------------------------------------------------ spectrum */
@@ -277,7 +290,7 @@
 }
 
 .spectrum-bar {
-    background-color: #00aaff;
+    background-color: #3d3d3d;
 }
 
 /* -------------------------------------------------------------- footer */

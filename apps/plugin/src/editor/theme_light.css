@@ -106,7 +106,7 @@
 }
 
 .light .primary:hover {
-    background-color: #0866e8hi;
+    background-color: #3a8bf0;
 }
 
 .light .primary:active {
@@ -200,6 +200,7 @@
 }
 
 .light .segmented:focus-visible {
+    border-color: #0866e8;
     outline-width: 2px;
     outline-color: #0866e8;
 }
@@ -210,7 +211,11 @@
 }
 
 .light .fader-track:hover .fader-cap {
-    background-color: #0866e8hi;
+    background-color: #3a8bf0;
+}
+
+.light .fader:focus-visible {
+    border-color: #0866e8;
 }
 
 .light .fader-track:focus-visible {
@@ -228,28 +233,37 @@
 }
 
 /* -------------------------------------------------------------- meters */
+
 .light .meters {
     background-color: #ffffff;
 }
 
-/* The rail carries the whole GYR scale; the cover masks it from the top so
-   the gradient never compresses with the level. */
+.light .meters-clip {
+    background-color: #d9e3ed;
+}
+
+.light .meters-clip.lit {
+    background-color: #c23852;
+}
+
+/* The rail carries the whole GYR scale on `.meters-fill`; `.meters-cover`
+   masks it from the top, so the gradient never compresses with the level. */
 .light .meters-rail {
+    background-color: #dbe6f2;
     border-width: 1px;
     border-color: #d9e3ed;
+}
+
+.light .meters-fill {
     background-image: linear-gradient(to top, #4f9b7f 0%, #15836e 55%, #976000 82%, #c23852 100%);
 }
 
 .light .meters-cover {
-    background-color: #ffffff;
+    background-color: #dbe6f2;
 }
 
 .light .meters-hold {
     background-color: #142b3b;
-}
-
-.light .meters-hold.meters-clip {
-    background-color: #c23852;
 }
 
 /* ------------------------------------------------------------ spectrum */
@@ -258,7 +272,7 @@
 }
 
 .light .spectrum-bar {
-    background-color: #0866e8;
+    background-color: #b9c8d6;
 }
 
 /* -------------------------------------------------------------- footer */

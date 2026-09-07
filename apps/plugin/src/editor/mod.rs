@@ -765,6 +765,51 @@ mod tests {
         assert_eq!(MONITOR_LABELS.len(), Monitor::variant_count());
     }
 
+    /// Renders the whole editor with the meters lit and real audio in the
+    /// spectrum tap - the headless bridge reports 0.0 meters, so this is the
+    /// only way to review a live rail. Writes a PNG when `RELAY_SHOTS` is set.
+    #[test]
+    fn the_lit_editor_renders() {
+        views::set_fake_meters([0.72, 1.0]);
+        let params = Arc::new(RelayParams::default());
+        params.spectrum.audio.clear();
+        #[allow(clippy::cast_precision_loss)]
+        let noise: Vec<f32> = (0..8192)
+            .map(|i| ((i * 2_654_435_761_usize) % 2003) as f32 / 1000.0 - 1.0)
+            .collect();
+        params.spectrum.audio.push_frames(&noise);
+
+        let mut editor = build(
+            Arc::clone(&params),
+            WINDOW,
+            Options {
+                dark: true,
+                settings_open: false,
+            },
+        );
+        let (pixels, w, h) = editor
+            .screenshot(params as Arc<dyn truce_params::Params>)
+            .expect("headless render");
+        if let Ok(dir) = std::env::var("RELAY_SHOTS") {
+            std::fs::create_dir_all(&dir).unwrap();
+            truce_core::screenshot::save_png(
+                std::path::Path::new(&format!("{dir}/share-dark-lit.png")),
+                &pixels,
+                w,
+                h,
+            );
+        }
+        let distinct = pixels
+            .chunks_exact(4)
+            .map(|p| u32::from_be_bytes([p[0], p[1], p[2], p[3]]))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            distinct.len() > 32,
+            "blank render: {} colors",
+            distinct.len()
+        );
+    }
+
     #[test]
     fn theme_defaults_to_dark() {
         // DESIGN.md: Polar Night is the product surface; only an explicit
