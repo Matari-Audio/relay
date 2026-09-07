@@ -23,6 +23,26 @@ const SSRC: u32 = 0x51a7_60c5;
 const PAYLOAD_TYPE: u8 = 111;
 const INITIAL_SEQUENCE: u64 = (7_u64 << 16) | 65_532;
 const INITIAL_TIMESTAMP: u32 = u32::MAX - 700;
+const LEFT_ENERGY: f64 = 6.967_62e4;
+const RIGHT_ENERGY: f64 = 4.159_11e4;
+const STEREO_DIFFERENCE: f64 = 4.661_49e5;
+
+/// libopus picks its SIMD kernels at run time and different builds of the same
+/// release therefore emit slightly different float samples: the CI-built 1.6.1
+/// and the distribution 1.6.1 render the same 60 seconds at 65 dB SNR, peak
+/// deviation 6.5e-3 (-44 dBFS). Freeze the rendered signal's energy within a
+/// relative tolerance instead of hashing raw f32 bits; observed spread between
+/// those builds is 3e-4, so 5e-3 is snug while staying build independent.
+const SIGNAL_TOLERANCE: f64 = 5e-3;
+
+#[track_caller]
+fn assert_signal(actual: f64, golden: f64, what: &str) {
+    let deviation = (actual - golden).abs() / golden.abs();
+    assert!(
+        deviation <= SIGNAL_TOLERANCE,
+        "{what} is {actual:e}, golden {golden:e}, relative deviation {deviation:e}"
+    );
+}
 
 fn pcm_chunk(start_frame: usize) -> Vec<f32> {
     let mut pcm = vec![0.0; CAPTURE_CHUNK_FRAMES * CHANNELS];
@@ -133,7 +153,6 @@ fn clean_real_public_path_runs_for_sixty_virtual_seconds() {
     let mut emitted = 0_usize;
     let mut rendered_frames = 0_usize;
     let mut maximum_ring_samples = 0_usize;
-    let mut checksum = 0_u64;
     let mut left_energy = 0.0_f64;
     let mut right_energy = 0.0_f64;
     let mut stereo_difference = 0.0_f64;
@@ -169,11 +188,6 @@ fn clean_real_public_path_runs_for_sixty_virtual_seconds() {
             left_energy += f64::from(frame[0]).powi(2);
             right_energy += f64::from(frame[1]).powi(2);
             stereo_difference += f64::from(frame[0] - frame[1]).abs();
-            for sample in frame {
-                checksum = checksum
-                    .rotate_left(5)
-                    .wrapping_add(u64::from(sample.to_bits()));
-            }
         }
         rendered_frames += report.output_frames;
         emitted += 1;
@@ -213,8 +227,9 @@ fn clean_real_public_path_runs_for_sixty_virtual_seconds() {
     assert_eq!(rendered_frames, RENDERED_FRAMES);
     assert_eq!(final_sequence, Some(527_283));
     assert_eq!(final_timestamp, Some(2_878_339));
-    assert!(left_energy > 1.0 && right_energy > 1.0);
-    assert!(stereo_difference > 1.0);
+    assert_signal(left_energy, LEFT_ENERGY, "left energy");
+    assert_signal(right_energy, RIGHT_ENERGY, "right energy");
+    assert_signal(stereo_difference, STEREO_DIFFERENCE, "stereo difference");
     assert_eq!(
         renderer.available_samples(),
         0,
@@ -268,8 +283,6 @@ fn clean_real_public_path_runs_for_sixty_virtual_seconds() {
         maximum_ring_samples <= (PACKET_FRAMES + 64) * CHANNELS,
         "playback ring high-water was {maximum_ring_samples} scalar samples"
     );
-
-    assert_eq!(checksum, 0x192d_466e_313f_6f7d);
 }
 
 const CAPTURE_RATE_HZ_5MS: usize = 44_100;
@@ -281,7 +294,9 @@ const MEDIA_FRAMES_5MS: usize = RATE_HZ * 60;
 const PACKET_FRAMES_5MS: usize = 240;
 const PACKETS_5MS: usize = MEDIA_FRAMES_5MS / PACKET_FRAMES_5MS;
 const RENDERED_FRAMES_5MS: usize = 11_520_568;
-const CHECKSUM_5MS: u64 = 0x6fcb_0204_27b1_507b;
+const LEFT_ENERGY_5MS: f64 = 2.790_07e5;
+const RIGHT_ENERGY_5MS: f64 = 1.666_62e5;
+const STEREO_DIFFERENCE_5MS: f64 = 1.865_47e6;
 
 fn pcm_chunk_5ms(start_frame: usize) -> Vec<f32> {
     let mut pcm = vec![0.0; CAPTURE_CHUNK_FRAMES_5MS * CHANNELS];
@@ -395,7 +410,6 @@ fn clean_real_public_path_runs_five_ms_with_cross_rate_srcs() {
     let mut emitted = 0_usize;
     let mut rendered_frames = 0_usize;
     let mut maximum_ring_samples = 0_usize;
-    let mut checksum = 0_u64;
     let mut left_energy = 0.0_f64;
     let mut right_energy = 0.0_f64;
     let mut stereo_difference = 0.0_f64;
@@ -437,11 +451,6 @@ fn clean_real_public_path_runs_five_ms_with_cross_rate_srcs() {
             left_energy += f64::from(frame[0]).powi(2);
             right_energy += f64::from(frame[1]).powi(2);
             stereo_difference += f64::from(frame[0] - frame[1]).abs();
-            for sample in frame {
-                checksum = checksum
-                    .rotate_left(5)
-                    .wrapping_add(u64::from(sample.to_bits()));
-            }
         }
         rendered_frames += report.output_frames;
         emitted += 1;
@@ -485,8 +494,13 @@ fn clean_real_public_path_runs_five_ms_with_cross_rate_srcs() {
     assert_eq!(rendered_frames, RENDERED_FRAMES_5MS);
     assert_eq!(final_sequence, Some(536_283));
     assert_eq!(final_timestamp, Some(2_879_059));
-    assert!(left_energy > 1.0 && right_energy > 1.0);
-    assert!(stereo_difference > 1.0);
+    assert_signal(left_energy, LEFT_ENERGY_5MS, "left energy");
+    assert_signal(right_energy, RIGHT_ENERGY_5MS, "right energy");
+    assert_signal(
+        stereo_difference,
+        STEREO_DIFFERENCE_5MS,
+        "stereo difference",
+    );
     assert_eq!(
         renderer.available_samples(),
         0,
@@ -543,8 +557,6 @@ fn clean_real_public_path_runs_five_ms_with_cross_rate_srcs() {
         maximum_ring_samples <= (PACKET_FRAMES_5MS * 4 + 64) * CHANNELS,
         "playback ring high-water was {maximum_ring_samples} samples"
     );
-
-    assert_eq!(checksum, CHECKSUM_5MS);
 }
 
 const CAPTURE_RATE_HZ_10MS: usize = 96_000;
@@ -556,7 +568,9 @@ const MEDIA_FRAMES_10MS: usize = RATE_HZ * 60;
 const PACKET_FRAMES_10MS: usize = 480;
 const PACKETS_10MS: usize = MEDIA_FRAMES_10MS / PACKET_FRAMES_10MS;
 const RENDERED_FRAMES_10MS: usize = 2_646_023;
-const CHECKSUM_10MS: u64 = 0xe356_f3d9_2461_8601;
+const LEFT_ENERGY_10MS: f64 = 6.411_06e4;
+const RIGHT_ENERGY_10MS: f64 = 3.832_27e4;
+const STEREO_DIFFERENCE_10MS: f64 = 4.286_66e5;
 
 fn pcm_chunk_10ms(start_frame: usize) -> Vec<f32> {
     let mut pcm = vec![0.0; CAPTURE_CHUNK_FRAMES_10MS * CHANNELS];
@@ -670,7 +684,6 @@ fn media_60s_10ms_96k_capture_48k_media_44k1_playback() {
     let mut emitted = 0_usize;
     let mut rendered_frames = 0_usize;
     let mut maximum_ring_samples = 0_usize;
-    let mut checksum = 0_u64;
     let mut left_energy = 0.0_f64;
     let mut right_energy = 0.0_f64;
     let mut stereo_difference = 0.0_f64;
@@ -712,11 +725,6 @@ fn media_60s_10ms_96k_capture_48k_media_44k1_playback() {
             left_energy += f64::from(frame[0]).powi(2);
             right_energy += f64::from(frame[1]).powi(2);
             stereo_difference += f64::from(frame[0] - frame[1]).abs();
-            for sample in frame {
-                checksum = checksum
-                    .rotate_left(5)
-                    .wrapping_add(u64::from(sample.to_bits()));
-            }
         }
         rendered_frames += report.output_frames;
         emitted += 1;
@@ -760,8 +768,13 @@ fn media_60s_10ms_96k_capture_48k_media_44k1_playback() {
     assert_eq!(rendered_frames, RENDERED_FRAMES_10MS);
     assert_eq!(final_sequence, Some(530_283));
     assert_eq!(final_timestamp, Some(2_878_819));
-    assert!(left_energy > 1.0 && right_energy > 1.0);
-    assert!(stereo_difference > 1.0);
+    assert_signal(left_energy, LEFT_ENERGY_10MS, "left energy");
+    assert_signal(right_energy, RIGHT_ENERGY_10MS, "right energy");
+    assert_signal(
+        stereo_difference,
+        STEREO_DIFFERENCE_10MS,
+        "stereo difference",
+    );
     assert_eq!(
         renderer.available_samples(),
         0,
@@ -816,6 +829,4 @@ fn media_60s_10ms_96k_capture_48k_media_44k1_playback() {
             <= (PACKET_FRAMES_10MS * PLAYBACK_RATE_HZ_10MS / RATE_HZ + 64) * CHANNELS,
         "playback ring high-water was {maximum_ring_samples} samples"
     );
-
-    assert_eq!(checksum, CHECKSUM_10MS);
 }
