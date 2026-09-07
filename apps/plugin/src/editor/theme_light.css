@@ -1,0 +1,291 @@
+/* Paper palette, carried over from the egui editor.
+
+   truce-vizia can add stylesheets but never remove or replace one, so a live
+   theme swap is not possible: light mode is the same class vocabulary scoped
+   under a `.light` class toggled on the root. */
+
+.light {
+    background-color: #f4f6f8;
+    color: #142b3b;
+}
+
+.light .hairline {
+    background-color: #d9e3ed;
+}
+
+/* ------------------------------------------------------------- header */
+.light .header {
+    background-color: #ffffff;
+}
+
+.light .logo {
+    color: #0866e8;
+}
+
+.light .wordmark {
+    color: #142b3b;
+}
+
+/* --------------------------------------------------------------- text */
+.light .row-label, .light .caption, .light .status, .light .meters-label, .light .meters-db, .light .fader-readout {
+    color: #526a7b;
+}
+
+/* --------------------------------------------------------- text fields */
+.light .field, .light .nameplate {
+    background-color: #ffffff;
+    color: #142b3b;
+    caret-color: #0866e8;
+    selection-color: #0866e8;
+    border-color: #d9e3ed;
+    transition: border-color 100ms, background-color 100ms;
+}
+
+.light .field:hover {
+    border-color: #b9c8d6;
+}
+
+.light .field:focus-visible, .light .field:checked {
+    border-color: #0866e8;
+    outline-width: 0px;
+}
+
+.light .nameplate {
+    background-color: transparent;
+}
+
+.light .nameplate-rule {
+    background-color: #d9e3ed;
+    transition: background-color 100ms;
+}
+
+.light .nameplate-wrap:hover .nameplate-rule {
+    background-color: #b9c8d6;
+}
+
+.light .nameplate-wrap:focus-within .nameplate-rule {
+    background-color: #0866e8;
+}
+
+/* ------------------------------------------------------------- buttons */
+.light .icon-button {
+    background-color: #e7eef7;
+    border-color: #d9e3ed;
+    color: #526a7b;
+    transition: background-color 100ms, color 100ms;
+}
+
+.light .icon-button:hover {
+    background-color: #dbe6f2;
+    color: #142b3b;
+}
+
+.light .icon-button:active {
+    background-color: #ffffff;
+}
+
+.light .icon-button:focus-visible {
+    outline-width: 2px;
+    outline-color: #0866e8;
+    outline-offset: 2px;
+}
+
+.light .icon-button:disabled {
+    color: #b9c8d6;
+    background-color: #e7eef7;
+}
+
+.light .icon-button.copied {
+    color: #15836e;
+}
+
+.light .primary {
+    background-color: #0866e8;
+    color: #ffffff;
+    transition: background-color 100ms;
+}
+
+.light .primary:hover {
+    background-color: #0866e8hi;
+}
+
+.light .primary:active {
+    background-color: #0866e8lo;
+}
+
+.light .primary.armed {
+    background-color: #dbe6f2;
+    color: #142b3b;
+}
+
+.light .primary.armed:hover {
+    background-color: #b9c8d6;
+}
+
+.light .primary:focus-visible {
+    outline-width: 2px;
+    outline-color: #0866e8;
+    outline-offset: 2px;
+}
+
+.light .primary:disabled {
+    background-color: #e7eef7;
+    color: #526a7b;
+}
+
+.light .quality {
+    background-color: #e7eef7;
+    border-color: #d9e3ed;
+    color: #142b3b;
+}
+
+.light .quality:hover {
+    background-color: #dbe6f2;
+}
+
+.light .quality:focus-visible {
+    outline-width: 2px;
+    outline-color: #0866e8;
+}
+
+.light .quality.static {
+    background-color: transparent;
+    color: #526a7b;
+}
+
+.light .options {
+    background-color: #e7eef7;
+    border-width: 1px;
+    border-color: #d9e3ed;
+    color: #142b3b;
+}
+
+.light .options .option {
+    background-color: transparent;
+    color: #142b3b;
+}
+
+.light .options .option:hover {
+    background-color: #dbe6f2;
+}
+
+.light .hint {
+    background-color: #dbe6f2;
+    color: #142b3b;
+    border-width: 1px;
+    border-color: #d9e3ed;
+}
+
+/* ------------------------------------------------------------ segmented */
+.light .segmented {
+    background-color: #ffffff;
+    border-color: #d9e3ed;
+}
+
+.light .segmented-indicator {
+    background-color: #dbe6f2;
+}
+
+.light .segmented-cell {
+    color: #526a7b;
+    transition: color 100ms;
+}
+
+.light .segmented-cell:hover {
+    color: #142b3b;
+}
+
+.light .segmented-cell.selected {
+    color: #142b3b;
+}
+
+.light .segmented:focus-visible {
+    outline-width: 2px;
+    outline-color: #0866e8;
+}
+
+/* --------------------------------------------------------------- fader */
+.light .fader-track {
+    background-color: #ffffff;
+}
+
+.light .fader-track:hover .fader-cap {
+    background-color: #0866e8hi;
+}
+
+.light .fader-track:focus-visible {
+    outline-width: 2px;
+    outline-color: #0866e8;
+    outline-offset: 3px;
+}
+
+.light .fader-fill {
+    background-color: #0866e8;
+}
+
+.light .fader-cap {
+    background-color: #142b3b;
+}
+
+/* -------------------------------------------------------------- meters */
+.light .meters {
+    background-color: #ffffff;
+}
+
+/* The rail carries the whole GYR scale; the cover masks it from the top so
+   the gradient never compresses with the level. */
+.light .meters-rail {
+    border-width: 1px;
+    border-color: #d9e3ed;
+    background-image: linear-gradient(to top, #4f9b7f 0%, #15836e 55%, #976000 82%, #c23852 100%);
+}
+
+.light .meters-cover {
+    background-color: #ffffff;
+}
+
+.light .meters-hold {
+    background-color: #142b3b;
+}
+
+.light .meters-hold.meters-clip {
+    background-color: #c23852;
+}
+
+/* ------------------------------------------------------------ spectrum */
+.light .scope-well {
+    background-color: #ffffff;
+}
+
+.light .spectrum-bar {
+    background-color: #0866e8;
+}
+
+/* -------------------------------------------------------------- footer */
+.light .lamp {
+    background-color: #b9c8d6;
+    transition: background-color 150ms;
+}
+
+.light .lamp.failed {
+    background-color: #c23852;
+}
+
+.light .lamp.asleep {
+    background-color: #976000;
+}
+
+.light .lamp.ready, .light .lamp.pending {
+    background-color: #4f9b7f;
+}
+
+.light .lamp.live {
+    background-color: #15836e;
+}
+
+/* ------------------------------------------------------------ settings */
+.light .settings {
+    background-color: #e7eef7;
+    border-color: #d9e3ed;
+    color: #142b3b;
+}

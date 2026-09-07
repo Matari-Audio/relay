@@ -1,6 +1,6 @@
 # RELAY plugin
 
-Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated buffers, publishes atomics, and renders playback; it never allocates, locks, or touches a string. One supervised fan-out thread owns the LAN listen page, the browser P2P peers, and the cloud signalling socket. The editor is a 680×480 white-and-blue editor drawn in egui, with rounded controls, Barlow typography, right-side stereo meters, icon actions, and a bottom send spectrum.
+Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated buffers, publishes atomics, and renders playback; it never allocates, locks, or touches a string. One supervised fan-out thread owns the LAN listen page, the browser P2P peers, and the cloud signalling socket. The editor is a resizable 680×480 vizia window in the Polar Night palette, with a centred Share|Join switch, Barlow typography, right-side stereo meters, and a send spectrum.
 
 Home-network sharing uses **5 ms uncompressed stereo PCM** on LAN (no Opus, no FEC lookahead). That is the lowest delay this path can do: one 5 ms packet plus your DAW buffer. It is not zero — nothing in a DAW insert can be — but it is the blazing LAN path.
 

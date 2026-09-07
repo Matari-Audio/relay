@@ -6,14 +6,14 @@
 
 mod clipboard;
 mod dsp;
-mod editor;
+pub mod editor;
 mod fanout;
 mod local_listen;
 mod meter;
 mod p2p;
 mod signal;
-mod spectrum;
 mod slug;
+mod spectrum;
 mod status;
 mod ws;
 
@@ -26,7 +26,6 @@ use relay_session::{
 };
 use truce::prelude::*;
 use truce_core::custom_state::{PersistField, StateCursor};
-use truce_egui::EguiEditor;
 
 use fanout::Fanout;
 
@@ -375,12 +374,7 @@ impl PluginLogic for RelayPlugin {
     }
 
     fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
-        Box::new(
-            EguiEditor::with_ui(params, editor::WINDOW, editor::RelayUi::default())
-                .resizable(false)
-                .with_context_setup(editor::setup_context)
-                .with_visuals(editor::visuals()),
-        )
+        editor::build(params, editor::WINDOW, editor::Options::default())
     }
 }
 
