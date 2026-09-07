@@ -974,7 +974,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1298,7 +1298,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.20",
- "windows 0.62.2",
+ "windows 0.56.0",
 ]
 
 [[package]]
@@ -1435,7 +1435,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.56.0",
 ]
 
 [[package]]
@@ -2411,7 +2411,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -3042,7 +3042,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3457,7 +3457,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4110,7 +4110,7 @@ dependencies = [
 [[package]]
 name = "vizia"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "skia-safe",
  "vizia_baseview",
@@ -4120,7 +4120,7 @@ dependencies = [
 [[package]]
 name = "vizia_baseview"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "baseview",
  "gl",
@@ -4134,7 +4134,7 @@ dependencies = [
 [[package]]
 name = "vizia_core"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "accesskit",
  "bitflags 2.13.1",
@@ -4164,12 +4164,12 @@ dependencies = [
 [[package]]
 name = "vizia_id"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 
 [[package]]
 name = "vizia_input"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "bitflags 2.13.1",
  "keyboard-types",
@@ -4179,7 +4179,7 @@ dependencies = [
 [[package]]
 name = "vizia_reactive"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "parking_lot",
  "smallvec",
@@ -4188,7 +4188,7 @@ dependencies = [
 [[package]]
 name = "vizia_storage"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "vizia_id",
 ]
@@ -4196,7 +4196,7 @@ dependencies = [
 [[package]]
 name = "vizia_style"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "bitflags 2.13.1",
  "cssparser",
@@ -4211,7 +4211,7 @@ dependencies = [
 [[package]]
 name = "vizia_window"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
 dependencies = [
  "bitflags 2.13.1",
  "vizia_input",
@@ -4566,7 +4566,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
