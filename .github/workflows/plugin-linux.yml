@@ -1,0 +1,56 @@
+name: RELAY Linux binaries
+on:
+  workflow_dispatch:
+  push:
+    branches: [t3code/redesign-website-like-audiomovers]
+    paths: [.github/workflows/plugin-linux.yml]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: relay
+      - uses: actions/checkout@v4
+        with:
+          repository: DerpcatMusic/truce
+          ref: 58d88945de1e0f1fac003c2f78d8843d3a678f77
+          path: truce-derpcat
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay/apps/plugin
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev libegl1-mesa-dev libfontconfig1-dev patchelf
+          bash relay/.github/gate-setup.sh
+      - name: Build and package
+        working-directory: relay/apps/plugin
+        run: |
+          set -euo pipefail
+          package="$GITHUB_WORKSPACE/package"
+          cargo build --release --no-default-features --features clap
+          mkdir -p "$package/CLAP/RELAY/lib"
+          cp target/release/librelay_plugin.so "$package/CLAP/RELAY/RELAY.clap"
+          cargo build --release --no-default-features --features vst3
+          mkdir -p "$package/VST3/RELAY.vst3/Contents/x86_64-linux/lib"
+          cp target/release/librelay_plugin.so "$package/VST3/RELAY.vst3/Contents/x86_64-linux/RELAY.so"
+          for dest in "$package/CLAP/RELAY" "$package/VST3/RELAY.vst3/Contents/x86_64-linux"; do
+            for lib in /usr/local/lib/libdatachannel.so* /usr/local/lib/libjuice.so* /usr/local/lib/libopus.so*; do
+              [ ! -f "$lib" ] || cp -L "$lib" "$dest/lib/"
+            done
+            for binary in "$dest"/*.so "$dest"/*.clap "$dest"/lib/*; do
+              [ ! -f "$binary" ] || patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$binary"
+            done
+          done
+          cp ../../../relay/LICENSE "$package/LICENSE.txt"
+          printf '%s\n' 'RELAY 0.1.2 for Linux x86_64 (Ubuntu 24.04 or newer).' 'Copy CLAP/RELAY into ~/.clap/ and VST3/RELAY.vst3 into ~/.vst3/.' 'Keep the bundled lib directories. Requires system OpenSSL 3, fontconfig, freetype, OpenGL/EGL and standard desktop libraries.' > "$package/INSTALL.txt"
+          tar -czf "$GITHUB_WORKSPACE/RELAY-linux-x86_64.tar.gz" -C "$package" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RELAY-linux-x86_64
+          path: RELAY-linux-x86_64.tar.gz
