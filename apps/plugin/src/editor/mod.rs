@@ -1,9 +1,9 @@
 //! The plugin window, in vizia.
 //!
 //! Three bands stacked in stretch units so the whole editor scales with the
-//! window: a 56px header (logo, centred Share|Join switch, settings gear), a
+//! window: a 64px header (logo, centred Share|Join switch, settings gear), a
 //! stretching body (label/control form on the left, stereo meters on the
-//! right), and a 40px footer (status line, primary action).
+//! right), and a 56px footer (status line, primary action).
 //!
 //! Every colour lives in `theme_dark.css` / `theme_light.css`; `views.css`
 //! carries structure only. Light mode is the same class vocabulary scoped
@@ -26,11 +26,11 @@ use crate::{Codec, P, RelayParams, clipboard, slug};
 use views::{FRAME, fader, lamp, logo_mark, segmented, segmented_signal, spectrum, stereo_meters};
 
 /// Default editor size in logical pixels.
-pub const WINDOW: (u32, u32) = (680, 480);
+pub const WINDOW: (u32, u32) = (680, 440);
 /// Smallest size the layout still reads at.
-pub const MIN_WINDOW: (u32, u32) = (510, 360);
+pub const MIN_WINDOW: (u32, u32) = (600, 389);
 /// Largest size the host may request (3x the base).
-pub const MAX_WINDOW: (u32, u32) = (2040, 1440);
+pub const MAX_WINDOW: (u32, u32) = (2040, 1320);
 
 /// How long the Copy button reads "Copied".
 const COPIED_FOR: Duration = Duration::from_millis(1200);
@@ -94,8 +94,7 @@ pub fn build(params: Arc<RelayParams>, size: (u32, u32), options: Options) -> Bo
     .with_stylesheet(include_str!("theme_dark.css"))
     .with_stylesheet(include_str!("theme_light.css"))
     .with_font(include_bytes!("../../assets/fonts/Barlow-SemiBold.ttf"))
-    // No-op in truce-vizia today; kept so the editor follows the host the
-    // moment vizia_baseview grows a resize entry point.
+    // The adapter preserves the base aspect ratio and scales the entire UI.
     .resizable(true)
     .min_size(MIN_WINDOW)
     .max_size(MAX_WINDOW)
