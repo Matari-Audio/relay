@@ -9,9 +9,9 @@ Home-network sharing uses **5 ms uncompressed stereo PCM** on LAN (no Opus, no F
 ## Framework revision
 
 This release uses `DerpcatMusic/truce` revision
-`58d88945de1e0f1fac003c2f78d8843d3a678f77`, checked out as the sibling
+`90d9e5e409d73ea947a409e1d83f2c6126455d9a`, checked out as the sibling
 `truce-derpcat` directory required by Cargo.toml. It fixes CLAP host notifications
-after state/preset loads and VST3 process-context interface discovery. The Windows
+after state/preset loads VST3 process-context interface discovery, and black/clipped GPU surfaces after resizing. The Windows
 build workflow pins the same revision and packages the native dependency DLLs.
 
 ## You can test now

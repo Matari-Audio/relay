@@ -4110,7 +4110,7 @@ dependencies = [
 [[package]]
 name = "vizia"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "skia-safe",
  "vizia_baseview",
@@ -4120,7 +4120,7 @@ dependencies = [
 [[package]]
 name = "vizia_baseview"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "baseview",
  "gl",
@@ -4134,7 +4134,7 @@ dependencies = [
 [[package]]
 name = "vizia_core"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "accesskit",
  "bitflags 2.13.1",
@@ -4164,12 +4164,12 @@ dependencies = [
 [[package]]
 name = "vizia_id"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 
 [[package]]
 name = "vizia_input"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "bitflags 2.13.1",
  "keyboard-types",
@@ -4179,7 +4179,7 @@ dependencies = [
 [[package]]
 name = "vizia_reactive"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "parking_lot",
  "smallvec",
@@ -4188,7 +4188,7 @@ dependencies = [
 [[package]]
 name = "vizia_storage"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "vizia_id",
 ]
@@ -4196,7 +4196,7 @@ dependencies = [
 [[package]]
 name = "vizia_style"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "bitflags 2.13.1",
  "cssparser",
@@ -4211,7 +4211,7 @@ dependencies = [
 [[package]]
 name = "vizia_window"
 version = "0.4.0"
-source = "git+https://github.com/DerpcatMusic/vizia.git?rev=a38493e5f590ffdbdca97cd76f77a80642968f93#a38493e5f590ffdbdca97cd76f77a80642968f93"
+source = "git+https://github.com/DerpcatMusic/vizia.git?rev=f60fe2a7c03b5f21ac8f11f519a329c001293461#f60fe2a7c03b5f21ac8f11f519a329c001293461"
 dependencies = [
  "bitflags 2.13.1",
  "vizia_input",
