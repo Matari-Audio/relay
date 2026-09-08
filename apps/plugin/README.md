@@ -6,6 +6,14 @@ Truce 7.0 shell around `relay-session`. The host audio callback only copies into
 
 Home-network sharing uses **5 ms uncompressed stereo PCM** on LAN (no Opus, no FEC lookahead). That is the lowest delay this path can do: one 5 ms packet plus your DAW buffer. It is not zero — nothing in a DAW insert can be — but it is the blazing LAN path.
 
+## Framework revision
+
+This release uses `DerpcatMusic/truce` revision
+`58d88945de1e0f1fac003c2f78d8843d3a678f77`, checked out as the sibling
+`truce-derpcat` directory required by Cargo.toml. It fixes CLAP host notifications
+after state/preset loads and VST3 process-context interface discovery. The Windows
+build workflow pins the same revision and packages the native dependency DLLs.
+
 ## You can test now
 
 ```bash
