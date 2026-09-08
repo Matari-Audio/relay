@@ -1,0 +1,78 @@
+name: RELAY Windows binaries
+on:
+  workflow_dispatch:
+  push:
+    branches: [t3code/redesign-website-like-audiomovers]
+    paths: [apps/plugin/src/**, apps/plugin/Cargo.toml, apps/plugin/Cargo.lock, .github/workflows/plugin-windows.yml]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: relay
+      - uses: actions/checkout@v4
+        with:
+          repository: DerpcatMusic/truce
+          ref: 90d9e5e409d73ea947a409e1d83f2c6126455d9a
+          path: truce-derpcat
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay/apps/plugin
+      - name: Install native libraries
+        shell: pwsh
+        run: |
+          git -C $env:VCPKG_INSTALLATION_ROOT fetch origin 04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4 --depth 1
+          git -C $env:VCPKG_INSTALLATION_ROOT checkout 04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4
+          & "$env:VCPKG_INSTALLATION_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install "opus:x64-windows" "libdatachannel[srtp]:x64-windows"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $native = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          "RUSTFLAGS=-L native=$native/lib" >> $env:GITHUB_ENV
+          "$native/bin" >> $env:GITHUB_PATH
+      - name: Build CLAP and VST3
+        working-directory: relay/apps/plugin
+        shell: pwsh
+        run: |
+          cargo build --release --no-default-features --features clap
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/package/CLAP/RELAY"
+          Copy-Item target/release/relay_plugin.dll "$env:GITHUB_WORKSPACE/package/CLAP/RELAY/RELAY.clap"
+          cargo build --release --no-default-features --features vst3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/package/VST3/RELAY.vst3/Contents/x86_64-win"
+          Copy-Item target/release/relay_plugin.dll "$env:GITHUB_WORKSPACE/package/VST3/RELAY.vst3/Contents/x86_64-win/RELAY.vst3"
+          $native = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          Copy-Item "$native/bin/*.dll" "$env:GITHUB_WORKSPACE/package/CLAP/RELAY/"
+          Copy-Item "$native/bin/*.dll" "$env:GITHUB_WORKSPACE/package/VST3/RELAY.vst3/Contents/x86_64-win/"
+          Copy-Item -Recurse "$native/share" "$env:GITHUB_WORKSPACE/package/dependency-licenses"
+      - name: Validate VST3 on Windows
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip validator
+          $validation = Start-Process ./validator/pluginval.exe -ArgumentList '--headless', '--strictness-level', '5', '--validate', "`"$env:GITHUB_WORKSPACE/package/VST3/RELAY.vst3`"" -Wait -PassThru -NoNewWindow
+          if ($validation.ExitCode -ne 0) { exit $validation.ExitCode }
+      - name: Package
+        shell: pwsh
+        run: |
+          @'
+          RELAY 0.1.2 for Windows x64 — CLAP and VST3
+          Open PowerShell as administrator in this extracted folder and run:
+          powershell -ExecutionPolicy Bypass -File .\Install.ps1
+          The installer copies CLAP/VST3 plugins and registers bundled DLLs on the system PATH.
+          Restart Windows, then rescan plugins in your DAW.
+          Requires Microsoft Visual C++ 2015-2022 x64 runtime: https://aka.ms/vs/17/release/vc_redist.x64.exe
+          Unsigned build. See the release notes for validation and host coverage.
+          '@ | Set-Content package/INSTALL.txt
+          Copy-Item relay/LICENSE package/LICENSE.txt
+          Copy-Item relay/apps/plugin/packaging/Install.ps1 package/Install.ps1
+          Compress-Archive package/* RELAY-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RELAY-windows-x86_64
+          path: RELAY-windows-x86_64.zip

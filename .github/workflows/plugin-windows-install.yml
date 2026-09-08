@@ -1,0 +1,30 @@
+name: RELAY Windows installation validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [t3code/redesign-website-like-audiomovers]
+    paths: [apps/plugin/packaging/Install.ps1, .github/workflows/plugin-windows-install.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and validate released binaries
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 34267457141 -n RELAY-windows-x86_64 -D download
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive download/RELAY-windows-x86_64.zip package
+          Copy-Item apps/plugin/packaging/Install.ps1 package/Install.ps1
+          & ./package/Install.ps1
+          $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip validator
+          $validation = Start-Process ./validator/pluginval.exe -ArgumentList '--headless', '--strictness-level', '5', '--validate', "`"$env:CommonProgramFiles/VST3/RELAY.vst3`"" -Wait -PassThru -NoNewWindow
+          if ($validation.ExitCode -ne 0) { exit $validation.ExitCode }

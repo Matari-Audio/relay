@@ -3,24 +3,24 @@
 :root {
     font-family: "Barlow SemiBold", "Barlow";
     color: #ffffff;
-    background-color: #191919;
+    background-color: #202022;
     caret-color: #00aaff;
     selection-color: #00aaff;
 }
 
 .root {
-    background-color: #191919;
+    background-color: #202022;
     color: #ffffff;
 }
 
 .hairline {
-    background-color: #2e2e2e;
+    background-color: #39393e;
 }
 
 /* ------------------------------------------------------------- header */
 
 .header {
-    background-color: #101010;
+    background-color: #18181a;
 }
 
 .logo {
@@ -46,11 +46,11 @@
 
 .field,
 .nameplate {
-    background-color: #101010;
+    background-color: #18181a;
     color: #ffffff;
     caret-color: #00aaff;
     selection-color: #00aaff;
-    border-color: #2e2e2e;
+    border-color: #39393e;
     transition: border-color 100ms, background-color 100ms;
 }
 
@@ -69,7 +69,7 @@
 }
 
 .nameplate-rule {
-    background-color: #2e2e2e;
+    background-color: #39393e;
     transition: background-color 100ms;
 }
 
@@ -84,19 +84,19 @@
 /* ------------------------------------------------------------- buttons */
 
 .icon-button {
-    background-color: #252525;
-    border-color: #2e2e2e;
+    background-color: #29292c;
+    border-color: #39393e;
     color: #b8b8b8;
     transition: background-color 100ms, color 100ms;
 }
 
 .icon-button:hover {
-    background-color: #353535;
+    background-color: #3b3b40;
     color: #ffffff;
 }
 
 .icon-button:active {
-    background-color: #101010;
+    background-color: #18181a;
 }
 
 .icon-button:focus-visible {
@@ -107,7 +107,7 @@
 
 .icon-button:disabled {
     color: #3d3d3d;
-    background-color: #252525;
+    background-color: #29292c;
 }
 
 .icon-button.copied {
@@ -129,7 +129,7 @@
 }
 
 .primary.armed {
-    background-color: #353535;
+    background-color: #3b3b40;
     color: #ffffff;
 }
 
@@ -144,18 +144,18 @@
 }
 
 .primary:disabled {
-    background-color: #252525;
+    background-color: #29292c;
     color: #b8b8b8;
 }
 
 .quality {
-    background-color: #252525;
-    border-color: #2e2e2e;
+    background-color: #29292c;
+    border-color: #39393e;
     color: #ffffff;
 }
 
 .quality:hover {
-    background-color: #353535;
+    background-color: #3b3b40;
 }
 
 .quality:focus-visible {
@@ -169,9 +169,9 @@
 }
 
 .options {
-    background-color: #252525;
+    background-color: #29292c;
     border-width: 1px;
-    border-color: #2e2e2e;
+    border-color: #39393e;
     color: #ffffff;
 }
 
@@ -181,25 +181,25 @@
 }
 
 .options .option:hover {
-    background-color: #353535;
+    background-color: #3b3b40;
 }
 
 .hint {
-    background-color: #353535;
+    background-color: #3b3b40;
     color: #ffffff;
     border-width: 1px;
-    border-color: #2e2e2e;
+    border-color: #39393e;
 }
 
 /* ------------------------------------------------------------ segmented */
 
 .segmented {
-    background-color: #101010;
-    border-color: #2e2e2e;
+    background-color: #18181a;
+    border-color: #39393e;
 }
 
 .segmented-indicator {
-    background-color: #353535;
+    background-color: #00aaff;
 }
 
 .segmented-cell {
@@ -212,7 +212,7 @@
 }
 
 .segmented-cell.selected {
-    color: #ffffff;
+    color: #041018;
 }
 
 .segmented:focus-visible {
@@ -224,7 +224,7 @@
 /* --------------------------------------------------------------- fader */
 
 .fader-track {
-    background-color: #101010;
+    background-color: #18181a;
 }
 
 .fader-track:hover .fader-cap {
@@ -252,11 +252,11 @@
 /* -------------------------------------------------------------- meters */
 
 .meters {
-    background-color: #101010;
+    background-color: #18181a;
 }
 
 .meters-clip {
-    background-color: #2e2e2e;
+    background-color: #39393e;
 }
 
 .meters-clip.lit {
@@ -266,9 +266,9 @@
 /* The rail carries the whole GYR scale on `.meters-fill`; `.meters-cover`
    masks it from the top, so the gradient never compresses with the level. */
 .meters-rail {
-    background-color: #252525;
+    background-color: #29292c;
     border-width: 1px;
-    border-color: #2e2e2e;
+    border-color: #39393e;
 }
 
 .meters-fill {
@@ -276,7 +276,7 @@
 }
 
 .meters-cover {
-    background-color: #252525;
+    background-color: #29292c;
 }
 
 .meters-hold {
@@ -286,7 +286,7 @@
 /* ------------------------------------------------------------ spectrum */
 
 .scope-well {
-    background-color: #101010;
+    background-color: #18181a;
 }
 
 .spectrum-bar {
@@ -320,7 +320,7 @@
 /* ------------------------------------------------------------ settings */
 
 .settings {
-    background-color: #252525;
-    border-color: #2e2e2e;
+    background-color: #29292c;
+    border-color: #39393e;
     color: #ffffff;
 }

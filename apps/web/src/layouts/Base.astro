@@ -46,11 +46,11 @@ const { title, description } = Astro.props;
       }
 
       :root {
-        --polar-night: #191919;
-        --chassis: #252525;
+        --polar-night: #18181a;
+        --chassis: #202022;
         --surface: #353535;
         --well: #101010;
-        --hairline: #2e2e2e;
+        --hairline: #39393e;
         --text: #ffffff;
         --muted: #b8b8b8;
         --studio-blue: #00aaff;
@@ -107,7 +107,7 @@ const { title, description } = Astro.props;
       }
 
       .wrap {
-        width: min(920px, 100%);
+        width: min(1200px, 100%);
         margin: 0 auto;
         flex: 1;
       }
@@ -116,9 +116,12 @@ const { title, description } = Astro.props;
         display: flex;
         align-items: center;
         gap: 10px;
-        height: 32px;
+        min-height: 56px;
         color: var(--text);
       }
+
+      .nav { border-bottom: 1px solid var(--hairline); padding-bottom: 16px; }
+      .nav .listen-link { margin-left: auto; color: var(--text); min-height: 44px; display: inline-flex; align-items: center; }
 
       .nav svg {
         width: 22px;
@@ -137,7 +140,7 @@ const { title, description } = Astro.props;
       }
 
       .foot {
-        width: min(920px, 100%);
+        width: min(1200px, 100%);
         margin: 40px auto 0;
         padding-top: 16px;
         border-top: 1px solid var(--hairline);
@@ -175,6 +178,7 @@ const { title, description } = Astro.props;
           <path d="M66 26L80 50L66 74" />
         </svg>
         <a class="wordmark" href="/">RELAY</a>
+        <a class="listen-link" href="https://relay.matari-audio.com">Join a session ↗</a>
       </header>
       <slot />
     </div>

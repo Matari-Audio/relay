@@ -2,9 +2,17 @@
 
 # RELAY plugin
 
-Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated buffers, publishes atomics, and renders playback; it never allocates, locks, or touches a string. One supervised fan-out thread owns the LAN listen page, the browser P2P peers, and the cloud signalling socket. The editor is a resizable 680×480 vizia window in the Polar Night palette, with a centred Share|Join switch, Barlow typography, right-side stereo meters, and a send spectrum.
+Truce 7.0 shell around `relay-session`. The host audio callback only copies into preallocated buffers, publishes atomics, and renders playback; it never allocates, locks, or touches a string. One supervised fan-out thread owns the LAN listen page, the browser P2P peers, and the cloud signalling socket. The editor is a resizable 680×440 vizia window in the Polar Night palette, with a centred Share|Join switch, Barlow typography, right-side stereo meters, and a send spectrum.
 
 Home-network sharing uses **5 ms uncompressed stereo PCM** on LAN (no Opus, no FEC lookahead). That is the lowest delay this path can do: one 5 ms packet plus your DAW buffer. It is not zero — nothing in a DAW insert can be — but it is the blazing LAN path.
+
+## Framework revision
+
+This release uses `DerpcatMusic/truce` revision
+`90d9e5e409d73ea947a409e1d83f2c6126455d9a`, checked out as the sibling
+`truce-derpcat` directory required by Cargo.toml. It fixes CLAP host notifications
+after state/preset loads VST3 process-context interface discovery, and black/clipped GPU surfaces after resizing. The Windows
+build workflow pins the same revision and packages the native dependency DLLs.
 
 ## You can test now
 
