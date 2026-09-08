@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "bun run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.2.3"
