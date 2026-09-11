@@ -3,6 +3,47 @@ import { forceOpusStereo } from "./opus-stereo.mjs";
 
 export interface Env {
   ROOM: DurableObjectNamespace<SessionRoom>;
+  /// Cloudflare Realtime TURN key. Unset means STUN only, which strands
+  /// listeners behind symmetric NAT. `wrangler secret put TURN_KEY_ID`.
+  TURN_KEY_ID?: string;
+  TURN_KEY_TOKEN?: string;
+}
+
+const STUN_ONLY = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
+/// Short enough that a leaked credential is worth little, long enough to
+/// outlast a listening session without a refetch.
+const TURN_TTL_SECONDS = 7200;
+
+/// Mints per-listener TURN credentials. Deliberately uncached: the whole
+/// point of short-lived credentials is that two listeners do not share one.
+async function iceServers(env: Env): Promise<unknown[]> {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_TOKEN) {
+    return STUN_ONLY;
+  }
+  try {
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.TURN_KEY_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+    if (!response.ok) {
+      return STUN_ONLY;
+    }
+    const body = (await response.json()) as { iceServers?: unknown };
+    const list = Array.isArray(body.iceServers) ? body.iceServers : [body.iceServers];
+    const servers = list.filter((entry) => entry && typeof entry === "object");
+    // A relay that never arrives is worse than admitting we only have STUN.
+    return servers.length ? servers : STUN_ONLY;
+  } catch {
+    return STUN_ONLY;
+  }
 }
 
 type Claim = {
@@ -429,6 +470,12 @@ export default {
     }
     if (url.pathname === "/" || url.pathname === "/health") {
       return html(indexHtml());
+    }
+    if (url.pathname === "/api/ice") {
+      return Response.json(
+        { iceServers: await iceServers(env) },
+        { headers: { ...CORS, "cache-control": "no-store" } },
+      );
     }
     if (url.pathname === "/api/claim" && request.method === "POST") {
       const body = (await request.json()) as { name?: string; port?: number; lan?: string[]; mode?: string };
@@ -1334,9 +1381,24 @@ function tickMeter() {
   if (!analyserL || !analyserR) return;
   setMeterLR(peakOf(analyserL), peakOf(analyserR));
 }
-function ensurePc() {
+// STUN alone strands anyone behind symmetric NAT, so ask the room for
+// relay credentials. Started at load so the first offer rarely waits.
+const iceReady = fetch('/api/ice', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((body) => {
+    const servers = body && Array.isArray(body.iceServers) ? body.iceServers : null;
+    if (servers && servers.length) {
+      log(servers.some((s) => String(s.urls).indexOf('turn') >= 0) ? 'ice: stun + turn' : 'ice: stun only');
+      return servers;
+    }
+    return null;
+  })
+  .catch(() => null);
+async function ensurePc() {
   if (pc) return pc;
-  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+  const servers = (await iceReady) || [{ urls: 'stun:stun.cloudflare.com:3478' }];
+  if (pc) return pc;
+  pc = new RTCPeerConnection({ iceServers: servers, iceCandidatePoolSize: 1 });
   pc.ontrack = (ev) => {
     if (ev.track.kind !== 'audio') return;
     ev.track.enabled = true;
@@ -1419,7 +1481,7 @@ async function acceptOffer(sdp) {
   if (takingOffer) return;
   takingOffer = true;
   try {
-    const peer = ensurePc();
+    const peer = await ensurePc();
     if (peer.remoteDescription) return;
     await peer.setRemoteDescription({ type: 'offer', sdp: forceOpusStereo(sdp) });
     pendingOffer = null;

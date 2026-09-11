@@ -436,6 +436,59 @@ impl IceServer {
             tls,
         })
     }
+
+    /// Parses one RFC 7064 / RFC 7065 ICE URL as a signaling server hands it
+    /// over: `stun:host:port`, `turn:host:port?transport=udp`,
+    /// `turns:host:port?transport=tcp`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::InvalidIceServer`] for an unknown scheme, a
+    /// malformed authority, or TURN without credentials.
+    pub fn parse_url(
+        url: &str,
+        credentials: Option<TurnCredentials>,
+    ) -> Result<Self, TransportError> {
+        let url = url.trim();
+        let (scheme, rest) = url.split_once(':').ok_or(TransportError::InvalidIceServer)?;
+        let (authority, query) = rest.split_once('?').unwrap_or((rest, ""));
+        let transport = match query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix("transport="))
+        {
+            None => None,
+            Some("udp") => Some(IceTransport::Udp),
+            Some("tcp") => Some(IceTransport::Tcp),
+            Some(_) => return Err(TransportError::InvalidIceServer),
+        };
+        let (host, port) = match authority.rsplit_once(':') {
+            // A bare IPv6 literal has colons but no port; RFC 7064 has no
+            // bracket form, so treat anything unparseable as the whole host.
+            Some((head, tail)) => match tail.parse::<u16>() {
+                Ok(port) => (head, Some(port)),
+                Err(_) => (authority, None),
+            },
+            None => (authority, None),
+        };
+        match scheme.to_ascii_lowercase().as_str() {
+            "stun" => Self::stun(host, port.unwrap_or(3478), transport.unwrap_or(IceTransport::Udp)),
+            "turn" => Self::turn(
+                host,
+                port.unwrap_or(3478),
+                transport.unwrap_or(IceTransport::Udp),
+                credentials.ok_or(TransportError::InvalidIceServer)?,
+                None,
+            ),
+            "turns" => Self::turn(
+                host,
+                port.unwrap_or(5349),
+                IceTransport::Tls,
+                credentials.ok_or(TransportError::InvalidIceServer)?,
+                Some(TurnTlsConfig::new(host, TlsTrust::Platform)?),
+            ),
+            _ => Err(TransportError::InvalidIceServer),
+        }
+    }
 }
 
 fn valid_ice_host(value: &str) -> bool {
@@ -2940,5 +2993,72 @@ mod x509_name_tests {
 
         assert!(valid_name_attribute_value(COMMON_NAME, 0x0c, &[b'a'; 64]));
         assert!(!valid_name_attribute_value(COMMON_NAME, 0x0c, &[b'a'; 65]));
+    }
+}
+
+#[cfg(test)]
+mod ice_url_tests {
+    use super::*;
+
+    fn creds() -> TurnCredentials {
+        TurnCredentials::new("user", "secret").expect("credentials")
+    }
+
+    #[test]
+    fn parses_the_urls_cloudflare_hands_out() {
+        let servers = [
+            "stun:stun.cloudflare.com:3478",
+            "turn:turn.cloudflare.com:3478?transport=udp",
+            "turn:turn.cloudflare.com:80?transport=tcp",
+            "turns:turn.cloudflare.com:443?transport=tcp",
+        ];
+        let parsed: Vec<_> = servers
+            .iter()
+            .map(|url| IceServer::parse_url(url, Some(creds())).expect(url))
+            .collect();
+        assert_eq!(
+            parsed[0],
+            IceServer::stun("stun.cloudflare.com", 3478, IceTransport::Udp).expect("stun")
+        );
+        let IceServer::Turn {
+            port, transport, ..
+        } = &parsed[2]
+        else {
+            panic!("expected turn, got {:?}", parsed[2]);
+        };
+        assert_eq!((*port, *transport), (80, IceTransport::Tcp));
+        let IceServer::Turn {
+            transport, tls, ..
+        } = &parsed[3]
+        else {
+            panic!("expected turns");
+        };
+        assert_eq!(*transport, IceTransport::Tls);
+        assert_eq!(
+            tls.as_ref().map(TurnTlsConfig::server_name),
+            Some("turn.cloudflare.com"),
+            "turns must verify the hostname it dialed"
+        );
+    }
+
+    #[test]
+    fn schemes_default_their_port() {
+        let stun = IceServer::parse_url("stun:stun.example.com", None).expect("stun");
+        assert!(matches!(stun, IceServer::Stun { port: 3478, .. }));
+        let turns = IceServer::parse_url("turns:t.example.com", Some(creds())).expect("turns");
+        assert!(matches!(turns, IceServer::Turn { port: 5349, .. }));
+    }
+
+    #[test]
+    fn junk_is_rejected_rather_than_guessed() {
+        assert!(IceServer::parse_url("turn:t.example.com:3478", None).is_err());
+        assert!(IceServer::parse_url("https://t.example.com", Some(creds())).is_err());
+        assert!(IceServer::parse_url("turn:t.example.com:3478?transport=sctp", Some(creds())).is_err());
+        assert!(IceServer::parse_url("stun:", None).is_err());
+        assert!(IceServer::parse_url("stun:host:0", None).is_err());
+        assert!(
+            IceServer::parse_url("stun:stun.example.com:3478?transport=tcp", None).is_ok(),
+            "stun over tcp is legal; only stuns is not"
+        );
     }
 }

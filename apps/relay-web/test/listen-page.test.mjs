@@ -191,3 +191,19 @@ test("the LAN hand-off is a link, not a probe an https page cannot make", () => 
 test("peer count changes reach the tape", () => {
   assert.match(src, /const key = String\(msg\.ready\) \+ ':' \+ \(msg\.peers\|0\)/);
 });
+
+test("the room hands out relay credentials, and degrades to STUN if it cannot", () => {
+  const mint = src.slice(src.indexOf("async function iceServers"), src.indexOf("type Claim"));
+  assert.match(mint, /credentials\/generate-ice-servers/);
+  assert.match(mint, /authorization: `Bearer \$\{env\.TURN_KEY_TOKEN\}`/);
+  // Every failure path must still return something dialable.
+  assert.equal((mint.match(/return STUN_ONLY/g) || []).length, 3, "no key, bad status, throw");
+  assert.match(mint, /servers\.length \? servers : STUN_ONLY/, "an empty list is not a config");
+  assert.match(src, /url\.pathname === "\/api\/ice"/);
+});
+
+test("the listener asks for relay servers before building the peer", () => {
+  assert.match(src, /const iceReady = fetch\('\/api\/ice'/);
+  assert.match(src, /const peer = await ensurePc\(\)/);
+  assert.equal(src.includes("iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] }"), false);
+});

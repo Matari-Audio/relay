@@ -13,6 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use relay_session::{PUBLIC_LINK_ORIGIN, SessionControl, SessionRole, normalize_slug};
+use relay_transport::{IceServer, TurnCredentials};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
@@ -191,6 +192,9 @@ impl Worker {
 
         if self.control.web_wanted() {
             let signals = self.cloud.maintain(&self.control, &slug, self.lan.port());
+            if let Some(servers) = self.cloud.poll_ice() {
+                self.p2p.set_ice_servers(servers);
+            }
             self.pump_p2p(&signals, lan_n);
         } else {
             self.cloud.reset(&self.control);
@@ -351,6 +355,8 @@ struct DialOutcome {
 struct Cloud {
     agent: ureq::Agent,
     socket: Option<CloudSocket>,
+    ice: Option<Receiver<Vec<IceServer>>>,
+    next_ice_try: Instant,
     claimed: String,
     sent_cfg: String,
     sent_stat: String,
@@ -364,6 +370,10 @@ struct Cloud {
 
 impl Cloud {
     const WS_BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(30));
+    /// The room mints two-hour TURN credentials; refresh well inside that so a
+    /// listener arriving late still gets a relay that will authenticate.
+    const ICE_GOOD_FOR: Duration = Duration::from_secs(45 * 60);
+    const ICE_RETRY: Duration = Duration::from_secs(60);
     const CLAIM_BACKOFF: (Duration, Duration) = (Duration::from_secs(2), Duration::from_secs(60));
 
     fn new() -> Self {
@@ -373,6 +383,8 @@ impl Cloud {
                 .user_agent(USER_AGENT)
                 .build(),
             socket: None,
+            ice: None,
+            next_ice_try: Instant::now(),
             claimed: String::new(),
             sent_cfg: String::new(),
             sent_stat: String::new(),
@@ -493,6 +505,47 @@ impl Cloud {
         }
     }
 
+    /// Relay credentials, refreshed on a slow timer off the worker thread.
+    /// `None` until one lands; the caller keeps whatever it already had.
+    fn poll_ice(&mut self) -> Option<Vec<IceServer>> {
+        if let Some(rx) = self.ice.as_ref() {
+            match rx.try_recv() {
+                Ok(servers) => {
+                    self.ice = None;
+                    self.next_ice_try = Instant::now()
+                        + if servers.is_empty() {
+                            Self::ICE_RETRY
+                        } else {
+                            Self::ICE_GOOD_FOR
+                        };
+                    return (!servers.is_empty()).then_some(servers);
+                }
+                Err(TryRecvError::Empty) => return None,
+                Err(TryRecvError::Disconnected) => {
+                    self.ice = None;
+                    self.next_ice_try = Instant::now() + Self::ICE_RETRY;
+                    return None;
+                }
+            }
+        }
+        if Instant::now() < self.next_ice_try {
+            return None;
+        }
+        let (tx, rx) = mpsc::channel();
+        let agent = self.agent.clone();
+        let spawned = thread::Builder::new()
+            .name("relay-ice".into())
+            .spawn(move || {
+                let _ = tx.send(fetch_ice(&agent));
+            });
+        if spawned.is_ok() {
+            self.ice = Some(rx);
+        } else {
+            self.next_ice_try = Instant::now() + Self::ICE_RETRY;
+        }
+        None
+    }
+
     fn poll_dial(&mut self) {
         let Some(rx) = self.dial.as_ref() else {
             return;
@@ -553,6 +606,43 @@ impl Cloud {
             }
         }
     }
+}
+
+/// Blocking: `GET /api/ice`. An empty result means STUN only — the peer
+/// falls back on its own, so a failure here costs a retry, not a session.
+fn fetch_ice(agent: &ureq::Agent) -> Vec<IceServer> {
+    let Some(body) = agent
+        .get(&format!("{PUBLIC_LINK_ORIGIN}/api/ice"))
+        .call()
+        .ok()
+        .and_then(|response| response.into_string().ok())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    else {
+        return Vec::new();
+    };
+    parse_ice(&body)
+}
+
+/// `{"iceServers":[{"urls":[...],"username":..,"credential":..}]}`, where
+/// `urls` is a string or an array. Unusable entries are dropped, not fatal.
+fn parse_ice(body: &serde_json::Value) -> Vec<IceServer> {
+    let mut servers = Vec::new();
+    for entry in body["iceServers"].as_array().into_iter().flatten() {
+        let credentials = match (entry["username"].as_str(), entry["credential"].as_str()) {
+            (Some(user), Some(pass)) => TurnCredentials::new(user, pass).ok(),
+            _ => None,
+        };
+        let urls = match &entry["urls"] {
+            serde_json::Value::String(one) => vec![one.as_str()],
+            serde_json::Value::Array(many) => many.iter().filter_map(|u| u.as_str()).collect(),
+            _ => continue,
+        };
+        servers.extend(
+            urls.into_iter()
+                .filter_map(|url| IceServer::parse_url(url, credentials.clone()).ok()),
+        );
+    }
+    servers
 }
 
 fn claim(agent: &ureq::Agent, body: &str) -> Result<(), Box<ureq::Error>> {
@@ -639,6 +729,49 @@ fn fade_from_last(last_l: f32, last_r: f32) -> Vec<f32> {
 mod tests {
     use super::*;
     use relay_session::CodecSettings;
+
+    #[test]
+    fn parse_ice_reads_a_cloudflare_response() {
+        let body = serde_json::json!({
+            "iceServers": [
+                { "urls": ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:53"] },
+                {
+                    "urls": [
+                        "turn:turn.cloudflare.com:3478?transport=udp",
+                        "turns:turn.cloudflare.com:443?transport=tcp"
+                    ],
+                    "username": "u",
+                    "credential": "c"
+                }
+            ]
+        });
+        let servers = parse_ice(&body);
+        assert_eq!(servers.len(), 4, "{servers:?}");
+        assert_eq!(
+            servers
+                .iter()
+                .filter(|s| matches!(s, IceServer::Turn { .. }))
+                .count(),
+            2,
+            "both relay urls survive: {servers:?}"
+        );
+    }
+
+    #[test]
+    fn parse_ice_drops_what_it_cannot_use_instead_of_giving_up() {
+        // A turn url with no credentials and a junk scheme sit beside a good one.
+        let body = serde_json::json!({
+            "iceServers": [
+                { "urls": "turn:turn.example.com:3478?transport=udp" },
+                { "urls": ["nonsense", "stun:stun.example.com:3478"] },
+                { "urls": 7 }
+            ]
+        });
+        let servers = parse_ice(&body);
+        assert_eq!(servers.len(), 1, "{servers:?}");
+        assert!(matches!(servers[0], IceServer::Stun { .. }));
+        assert!(parse_ice(&serde_json::json!({})).is_empty());
+    }
 
     #[test]
     fn media_edge_resume_is_an_event() {

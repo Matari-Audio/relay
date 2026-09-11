@@ -12,7 +12,7 @@ use relay_opus::{
     PacketLossPercent,
 };
 use relay_transport::{
-    BinaryPayload, ChannelId, Command, DescriptionKind, Event, IceCandidate,
+    BinaryPayload, ChannelId, Command, DescriptionKind, Event, IceCandidate, IceServer,
     NativeTransportProvider, NegotiationEpoch, OperationId, PeerDriver, PeerState,
     SessionDescription, TransportError,
 };
@@ -38,6 +38,7 @@ pub struct Hub {
     leftover: Vec<f32>,
     frames_sent: u64,
     last_peak: f32,
+    ice: Vec<IceServer>,
 }
 
 struct Peer {
@@ -62,11 +63,18 @@ impl Default for Hub {
             leftover: Vec::new(),
             frames_sent: 0,
             last_peak: 0.0,
+            ice: Vec::new(),
         }
     }
 }
 
 impl Hub {
+    /// Relay credentials from the room. Peers already up keep the servers
+    /// they negotiated with; only new peers pick these up.
+    pub fn set_ice_servers(&mut self, servers: Vec<IceServer>) {
+        self.ice = servers;
+    }
+
     pub fn peer_count(&self) -> u32 {
         u32::try_from(self.peers.len()).unwrap_or(u32::MAX)
     }
@@ -225,7 +233,7 @@ impl Hub {
     }
 
     fn new_peer(&mut self) -> Option<Peer> {
-        let config = listen_offerer_config().ok()?;
+        let config = listen_offerer_config(&self.ice).ok()?;
         let validated = config.validate_for(self.provider.capabilities()).ok()?;
         let driver = self.provider.create_peer(validated).ok()?;
         let mut peer = Peer {
