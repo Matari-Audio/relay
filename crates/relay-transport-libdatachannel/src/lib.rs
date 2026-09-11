@@ -1058,16 +1058,10 @@ mod tests {
     #[test]
     fn unsupported_relays_are_dropped_not_fatal() {
         let creds = relay_transport::TurnCredentials::new("u", "p").expect("creds");
-        let udp = IceServer::turn(
-            "turn.example",
-            3478,
-            IceTransport::Udp,
-            creds.clone(),
-            None,
-        )
-        .expect("turn udp");
-        let tcp = IceServer::turn("turn.example", 80, IceTransport::Tcp, creds, None)
-            .expect("turn tcp");
+        let udp = IceServer::turn("turn.example", 3478, IceTransport::Udp, creds.clone(), None)
+            .expect("turn udp");
+        let tcp =
+            IceServer::turn("turn.example", 80, IceTransport::Tcp, creds, None).expect("turn tcp");
         let juice = capabilities_for(sys::IceBackend::Juice);
         assert!(ice_server_supported(&udp, &juice));
         assert!(

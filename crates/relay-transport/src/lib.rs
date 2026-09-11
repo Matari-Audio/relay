@@ -450,7 +450,9 @@ impl IceServer {
         credentials: Option<TurnCredentials>,
     ) -> Result<Self, TransportError> {
         let url = url.trim();
-        let (scheme, rest) = url.split_once(':').ok_or(TransportError::InvalidIceServer)?;
+        let (scheme, rest) = url
+            .split_once(':')
+            .ok_or(TransportError::InvalidIceServer)?;
         let (authority, query) = rest.split_once('?').unwrap_or((rest, ""));
         let transport = match query
             .split('&')
@@ -471,7 +473,11 @@ impl IceServer {
             None => (authority, None),
         };
         match scheme.to_ascii_lowercase().as_str() {
-            "stun" => Self::stun(host, port.unwrap_or(3478), transport.unwrap_or(IceTransport::Udp)),
+            "stun" => Self::stun(
+                host,
+                port.unwrap_or(3478),
+                transport.unwrap_or(IceTransport::Udp),
+            ),
             "turn" => Self::turn(
                 host,
                 port.unwrap_or(3478),
@@ -3027,10 +3033,7 @@ mod ice_url_tests {
             panic!("expected turn, got {:?}", parsed[2]);
         };
         assert_eq!((*port, *transport), (80, IceTransport::Tcp));
-        let IceServer::Turn {
-            transport, tls, ..
-        } = &parsed[3]
-        else {
+        let IceServer::Turn { transport, tls, .. } = &parsed[3] else {
             panic!("expected turns");
         };
         assert_eq!(*transport, IceTransport::Tls);
@@ -3053,7 +3056,9 @@ mod ice_url_tests {
     fn junk_is_rejected_rather_than_guessed() {
         assert!(IceServer::parse_url("turn:t.example.com:3478", None).is_err());
         assert!(IceServer::parse_url("https://t.example.com", Some(creds())).is_err());
-        assert!(IceServer::parse_url("turn:t.example.com:3478?transport=sctp", Some(creds())).is_err());
+        assert!(
+            IceServer::parse_url("turn:t.example.com:3478?transport=sctp", Some(creds())).is_err()
+        );
         assert!(IceServer::parse_url("stun:", None).is_err());
         assert!(IceServer::parse_url("stun:host:0", None).is_err());
         assert!(
