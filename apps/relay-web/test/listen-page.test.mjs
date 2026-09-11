@@ -26,8 +26,8 @@ test("offer is answered without waiting for Listen", () => {
   assert.doesNotMatch(src, /if \(ctx\) acceptOffer/);
 });
 
-test("page advertises listen revision 12", () => {
-  assert.match(src, /name="relay-listen" content="13"/);
+test("page advertises listen revision 14", () => {
+  assert.match(src, /name="relay-listen" content="14"/);
 });
 
 test("root is the listen join box, not a product landing", () => {
@@ -203,7 +203,54 @@ test("the room hands out relay credentials, and degrades to STUN if it cannot", 
 });
 
 test("the listener asks for relay servers before building the peer", () => {
-  assert.match(src, /const iceReady = fetch\('\/api\/ice'/);
+  assert.match(src, /const servers = \(await iceServers\(\)\)/);
   assert.match(src, /const peer = await ensurePc\(\)/);
   assert.equal(src.includes("iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] }"), false);
+});
+
+test("a relay grant is never handed to an anonymous or hostless caller", () => {
+  // The whole free-forever claim rests on this: no room name, no host, or no
+  // budget left all fall through to STUN rather than minting a credential.
+  assert.match(src, /if \(!slug \|\| !env\.TURN_KEY_ID \|\| !env\.TURN_KEY_TOKEN\)/);
+  assert.match(src, /const ok = this\.hasHost\(\) && \(await this\.spendIceGrant\(\)\);/);
+  assert.match(src, /return granted \? await iceServers\(env\) : STUN_ONLY;/);
+  assert.match(
+    src,
+    /slugify\(url\.searchParams\.get\("room"\)/,
+    "the route must slugify the room so it cannot address the budget instance",
+  );
+});
+
+test("the monthly grant cap keeps the worst case inside Cloudflare's free tier", () => {
+  const cap = Number(/const ICE_GRANTS_PER_MONTH = ([\d_]+);/.exec(src)[1].replace(/_/g, ""));
+  const ttl = Number(/const TURN_TTL_SECONDS = (\d+);/.exec(src)[1]);
+  // 256 kbps is RELAY's ceiling (OPUS_BITRATE_MAX_KBPS); a grant cannot relay
+  // longer than its own TTL, so this product is the most a month can egress.
+  const worstGb = (cap * ttl * 256_000) / 8 / 1e9;
+  assert.ok(worstGb < 1000, `worst case ${worstGb.toFixed(0)} GB must stay under the 1000 GB free tier`);
+});
+
+test("the budget resets by calendar month and is shared across rooms", () => {
+  assert.match(src, /const BUDGET_ROOM = "~ice~";/);
+  const slugify = new Function(
+    "raw",
+    /return raw\.toLowerCase\(\)[^;]+;/.exec(src)[0],
+  );
+  assert.equal(
+    slugify("~ice~"),
+    "ice",
+    "a listener asking for the budget room must not reach the counter",
+  );
+  assert.match(src, /new Date\(\)\.toISOString\(\)\.slice\(0, 7\)/);
+  assert.match(src, /if \(spent >= limit\) \{\s*return false;/);
+});
+
+test("the page spends a grant only when it builds a connection", () => {
+  assert.ok(
+    !/const iceReady = fetch\('\/api\/ice'/.test(src),
+    "minting at page load spends a grant on every idle tab",
+  );
+  assert.match(src, /iceReady = fetch\('\/api\/ice\?room=' \+ encodeURIComponent\(name\)/);
+  assert.match(src, /if \(iceReady\) return iceReady;/, "one grant per page, not one per offer");
+  assert.match(src, /const servers = \(await iceServers\(\)\)/);
 });

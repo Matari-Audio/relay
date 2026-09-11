@@ -192,7 +192,7 @@ impl Worker {
 
         if self.control.web_wanted() {
             let signals = self.cloud.maintain(&self.control, &slug, self.lan.port());
-            if let Some(servers) = self.cloud.poll_ice() {
+            if let Some(servers) = self.cloud.poll_ice(&slug) {
                 self.p2p.set_ice_servers(servers);
             }
             self.pump_p2p(&signals, lan_n);
@@ -507,7 +507,7 @@ impl Cloud {
 
     /// Relay credentials, refreshed on a slow timer off the worker thread.
     /// `None` until one lands; the caller keeps whatever it already had.
-    fn poll_ice(&mut self) -> Option<Vec<IceServer>> {
+    fn poll_ice(&mut self, slug: &str) -> Option<Vec<IceServer>> {
         if let Some(rx) = self.ice.as_ref() {
             match rx.try_recv() {
                 Ok(servers) => {
@@ -533,10 +533,11 @@ impl Cloud {
         }
         let (tx, rx) = mpsc::channel();
         let agent = self.agent.clone();
+        let room = slug.to_owned();
         let spawned = thread::Builder::new()
             .name("relay-ice".into())
             .spawn(move || {
-                let _ = tx.send(fetch_ice(&agent));
+                let _ = tx.send(fetch_ice(&agent, &room));
             });
         if spawned.is_ok() {
             self.ice = Some(rx);
@@ -610,9 +611,11 @@ impl Cloud {
 
 /// Blocking: `GET /api/ice`. An empty result means STUN only — the peer
 /// falls back on its own, so a failure here costs a retry, not a session.
-fn fetch_ice(agent: &ureq::Agent) -> Vec<IceServer> {
+/// The room is named because the server only grants a relay to a room whose
+/// host is connected; before the `/in` socket is up this returns STUN.
+fn fetch_ice(agent: &ureq::Agent, slug: &str) -> Vec<IceServer> {
     let Some(body) = agent
-        .get(&format!("{PUBLIC_LINK_ORIGIN}/api/ice"))
+        .get(&format!("{PUBLIC_LINK_ORIGIN}/api/ice?room={slug}"))
         .call()
         .ok()
         .and_then(|response| response.into_string().ok())

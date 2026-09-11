@@ -7,12 +7,36 @@ export interface Env {
   /// listeners behind symmetric NAT. `wrangler secret put TURN_KEY_ID`.
   TURN_KEY_ID?: string;
   TURN_KEY_TOKEN?: string;
+  /// Grants allowed per calendar month. Raise it once real usage says the
+  /// default is leaving free capacity on the table.
+  ICE_GRANTS_PER_MONTH?: string;
 }
 
 const STUN_ONLY = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
 /// Short enough that a leaked credential is worth little, long enough to
 /// outlast a listening session without a refetch.
 const TURN_TTL_SECONDS = 7200;
+/// Cloudflare gives 1,000 GB of TURN egress a month before it bills. One
+/// grant can relay at most TURN_TTL_SECONDS at RELAY's ceiling bitrate
+/// (256 kbps) = 0.23 GB, so 4,000 grants is 921 GB: past this cap the
+/// service degrades to STUN rather than costing the operator a cent.
+const ICE_GRANTS_PER_MONTH = 4_000;
+/// `slugify` strips `~`, so no real room can ever land on this instance.
+const BUDGET_ROOM = "~ice~";
+
+/// Relay credentials are metered, so spend one only on someone who could
+/// plausibly use it: a named room with its host actually connected, and
+/// only while this month's budget holds.
+async function grantIce(env: Env, slug: string): Promise<unknown[]> {
+  if (!slug || !env.TURN_KEY_ID || !env.TURN_KEY_TOKEN) {
+    return STUN_ONLY;
+  }
+  const granted = await env.ROOM.getByName(slug)
+    .fetch("https://room/ice-grant", { method: "POST" })
+    .then((response) => response.ok)
+    .catch(() => false);
+  return granted ? await iceServers(env) : STUN_ONLY;
+}
 
 /// Mints per-listener TURN credentials. Deliberately uncached: the whole
 /// point of short-lived credentials is that two listeners do not share one.
@@ -71,18 +95,20 @@ const CORS = {
   "access-control-allow-headers": "content-type",
 };
 
-export class SessionRoom extends DurableObject {
+export class SessionRoom extends DurableObject<Env> {
   seq = 0;
   lastAt = 0;
   lastBytes = 0;
   locked = false;
   silent = false;
   claim: Claim | null = null;
+  grants: { month: string; n: number } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.blockConcurrencyWhile(async () => {
       this.claim = (await this.ctx.storage.get<Claim>("claim")) ?? null;
+      this.grants = (await this.ctx.storage.get<{ month: string; n: number }>("grants")) ?? null;
       this.locked = Boolean(this.claim?.pass);
       this.silent = this.restoreSilent();
     });
@@ -101,6 +127,16 @@ export class SessionRoom extends DurableObject {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS });
+    }
+    if (url.pathname === "/ice-grant") {
+      const ok = this.hasHost() && (await this.spendIceGrant());
+      return new Response(ok ? "ok" : "no", { status: ok ? 200 : 403, headers: CORS });
+    }
+    if (url.pathname === "/ice-budget") {
+      return new Response(this.takeGrant() ? "ok" : "no", {
+        status: 200,
+        headers: CORS,
+      });
     }
     if (request.headers.get("Upgrade") === "websocket") {
       const pair = new WebSocketPair();
@@ -190,6 +226,31 @@ export class SessionRoom extends DurableObject {
 
   private hasHost(): boolean {
     return this.ctx.getWebSockets("in").length > 0;
+  }
+
+  /// The budget is global, or one busy room could spend the whole month on
+  /// its own. ponytail: one counter instance serialises every grant; shard
+  /// it by hashing the slug if grant latency ever shows up in a trace.
+  private async spendIceGrant(): Promise<boolean> {
+    const budget = this.env.ROOM.getByName(BUDGET_ROOM);
+    const reply = await budget.fetch("https://room/ice-budget", { method: "POST" });
+    return (await reply.text()) === "ok";
+  }
+
+  /// Counts grants for the calendar month, reusing this class purely as a
+  /// counter so the deployment needs no second binding or migration.
+  private takeGrant(): boolean {
+    const limit = Number(this.env.ICE_GRANTS_PER_MONTH) || ICE_GRANTS_PER_MONTH;
+    const month = new Date().toISOString().slice(0, 7);
+    const spent = this.grants?.month === month ? this.grants.n : 0;
+    if (spent >= limit) {
+      return false;
+    }
+    this.grants = { month, n: spent + 1 };
+    // Fire and forget: losing a few counts to an eviction is cheaper than
+    // awaiting a disk write on the path every listener takes.
+    void this.ctx.storage.put("grants", this.grants);
+    return true;
   }
 
   private restoreSilent(): boolean {
@@ -473,7 +534,7 @@ export default {
     }
     if (url.pathname === "/api/ice") {
       return Response.json(
-        { iceServers: await iceServers(env) },
+        { iceServers: await grantIce(env, slugify(url.searchParams.get("room") ?? "")) },
         { headers: { ...CORS, "cache-control": "no-store" } },
       );
     }
@@ -588,7 +649,7 @@ function listenPage(name: string, landing: boolean): string {
 <head>
 <meta charset="utf-8"><script>try{document.documentElement.dataset.relayTheme=localStorage.getItem('relay-theme')||'dark'}catch{}</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="relay-listen" content="13">
+<meta name="relay-listen" content="14">
 <meta name="theme-color" content="#191919">
 <title>${landing ? "RELAY" : `RELAY · ${name}`}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1381,22 +1442,28 @@ function tickMeter() {
   if (!analyserL || !analyserR) return;
   setMeterLR(peakOf(analyserL), peakOf(analyserR));
 }
-// STUN alone strands anyone behind symmetric NAT, so ask the room for
-// relay credentials. Started at load so the first offer rarely waits.
-const iceReady = fetch('/api/ice', { cache: 'no-store' })
-  .then((r) => (r.ok ? r.json() : null))
-  .then((body) => {
-    const servers = body && Array.isArray(body.iceServers) ? body.iceServers : null;
-    if (servers && servers.length) {
-      log(servers.some((s) => String(s.urls).indexOf('turn') >= 0) ? 'ice: stun + turn' : 'ice: stun only');
-      return servers;
-    }
-    return null;
-  })
-  .catch(() => null);
+// STUN alone strands anyone behind symmetric NAT, so ask the room for relay
+// credentials. Asked for lazily and once: a relay grant is metered, and a
+// page that is only watching the tape should never spend one.
+let iceReady = null;
+function iceServers() {
+  if (iceReady) return iceReady;
+  iceReady = fetch('/api/ice?room=' + encodeURIComponent(name), { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((body) => {
+      const servers = body && Array.isArray(body.iceServers) ? body.iceServers : null;
+      if (servers && servers.length) {
+        log(servers.some((s) => String(s.urls).indexOf('turn') >= 0) ? 'ice: stun + turn' : 'ice: stun only');
+        return servers;
+      }
+      return null;
+    })
+    .catch(() => null);
+  return iceReady;
+}
 async function ensurePc() {
   if (pc) return pc;
-  const servers = (await iceReady) || [{ urls: 'stun:stun.cloudflare.com:3478' }];
+  const servers = (await iceServers()) || [{ urls: 'stun:stun.cloudflare.com:3478' }];
   if (pc) return pc;
   pc = new RTCPeerConnection({ iceServers: servers, iceCandidatePoolSize: 1 });
   pc.ontrack = (ev) => {
