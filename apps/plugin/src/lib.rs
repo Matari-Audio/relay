@@ -15,6 +15,7 @@ mod signal;
 mod slug;
 mod spectrum;
 mod status;
+mod tap;
 mod ws;
 
 use std::sync::atomic::{AtomicU32, Ordering};

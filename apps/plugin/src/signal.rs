@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 pub enum Signal {
     Want {
         id: String,
+        /// A listener that wants Opus on a data channel rather than an RTP
+        /// track. Browsers leave this off; a joining plugin sets it.
+        #[serde(default)]
+        dc: bool,
     },
     Answer {
         id: String,
@@ -28,7 +32,7 @@ pub enum Signal {
 impl Signal {
     pub fn id(&self) -> &str {
         match self {
-            Self::Want { id }
+            Self::Want { id, .. }
             | Self::Answer { id, .. }
             | Self::Ice { id, .. }
             | Self::Bye { id } => id,
@@ -47,6 +51,52 @@ impl Signal {
         serde_json::from_str::<Self>(text)
             .ok()
             .filter(|signal| !signal.id().is_empty())
+    }
+}
+
+/// Room → listener, on the `/out` leg. The room owns listener ids, so
+/// nothing here carries one; tags the listener ignores (`stat`, `cfg`,
+/// `go`, `dtx`) fail to parse and are dropped.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "t", rename_all = "lowercase")]
+pub enum Incoming {
+    Offer {
+        sdp: String,
+    },
+    Ice {
+        cand: String,
+        #[serde(default)]
+        mid: Option<String>,
+    },
+    Bye,
+    Room {
+        #[serde(default)]
+        host: bool,
+    },
+    Auth {
+        #[serde(default)]
+        ok: bool,
+    },
+}
+
+impl Incoming {
+    pub fn parse(text: &str) -> Option<Self> {
+        serde_json::from_str::<Self>(text).ok()
+    }
+}
+
+/// Listener → room, on the `/out` leg. The room fills in the id.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "t", rename_all = "lowercase")]
+pub enum Ask<'a> {
+    Want { dc: bool },
+    Answer { sdp: &'a str },
+    Ice { cand: &'a str, mid: Option<&'a str> },
+}
+
+impl Ask<'_> {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
     }
 }
 
@@ -194,6 +244,14 @@ mod tests {
             Signal::parse(r#"{"t":"bye","id":"ab","extra":1}"#),
             Some(Signal::Bye { id: "ab".into() })
         );
+        // The room's own `want` has no `dc`: browsers get the RTP track.
+        assert_eq!(
+            Signal::parse(r#"{"t":"want","id":"ab"}"#),
+            Some(Signal::Want {
+                id: "ab".into(),
+                dc: false
+            })
+        );
     }
 
     #[test]
@@ -219,6 +277,52 @@ mod tests {
         assert_eq!(
             Outbound::Bye { id: "x" }.to_json(),
             r#"{"t":"bye","id":"x"}"#
+        );
+    }
+
+    #[test]
+    fn incoming_reads_the_listener_leg_and_ignores_the_rest() {
+        assert_eq!(
+            Incoming::parse(r#"{"t":"offer","sdp":"v=0"}"#),
+            Some(Incoming::Offer { sdp: "v=0".into() })
+        );
+        assert_eq!(
+            Incoming::parse(r#"{"t":"ice","cand":"candidate:1","mid":"0"}"#),
+            Some(Incoming::Ice {
+                cand: "candidate:1".into(),
+                mid: Some("0".into())
+            })
+        );
+        assert_eq!(
+            Incoming::parse(r#"{"t":"room","host":true,"listeners":2}"#),
+            Some(Incoming::Room { host: true })
+        );
+        assert_eq!(
+            Incoming::parse(r#"{"t":"auth","ok":true}"#),
+            Some(Incoming::Auth { ok: true })
+        );
+        // Host-facing chatter on the same socket is not ours.
+        assert!(Incoming::parse(r#"{"t":"stat","peers":1}"#).is_none());
+        assert!(Incoming::parse("not json").is_none());
+    }
+
+    #[test]
+    fn ask_leaves_the_id_to_the_room() {
+        assert_eq!(
+            Ask::Want { dc: true }.to_json(),
+            r#"{"t":"want","dc":true}"#
+        );
+        assert_eq!(
+            Ask::Answer { sdp: "v=0" }.to_json(),
+            r#"{"t":"answer","sdp":"v=0"}"#
+        );
+        assert_eq!(
+            Ask::Ice {
+                cand: "candidate:1",
+                mid: Some("0")
+            }
+            .to_json(),
+            r#"{"t":"ice","cand":"candidate:1","mid":"0"}"#
         );
     }
 

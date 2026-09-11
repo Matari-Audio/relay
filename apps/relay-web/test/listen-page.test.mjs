@@ -26,8 +26,8 @@ test("offer is answered without waiting for Listen", () => {
   assert.doesNotMatch(src, /if \(ctx\) acceptOffer/);
 });
 
-test("page advertises listen revision 12", () => {
-  assert.match(src, /name="relay-listen" content="12"/);
+test("page advertises listen revision 14", () => {
+  assert.match(src, /name="relay-listen" content="14"/);
 });
 
 test("root is the listen join box, not a product landing", () => {
@@ -169,4 +169,88 @@ test("Chrome Opus answers are munged to stereo=1 before setLocalDescription", ()
 test("Chromium and mobile skip the Web Audio tap that steals the element", () => {
   assert.match(src, /function tapIsUnsafe/);
   assert.match(src, /if \(tapIsUnsafe\(\)\) return/);
+});
+
+test("a password attempt is always answered, right or wrong", () => {
+  const handler = src.slice(src.indexOf("async webSocketMessage"), src.indexOf("// Binary PCM is LAN-only"));
+  assert.match(handler, /const ok = await this\.checkPassword\(message\)/);
+  assert.match(handler, /ws\.send\(JSON\.stringify\(\{ t: "auth", ok \}\)\)/);
+  assert.match(src, /if \(msg\.t === 'auth'\)/);
+  assert.match(src, /pwerr\.textContent = 'Wrong password'/);
+  assert.match(src, /lock\.classList\.remove\('show'\)/);
+});
+
+test("the LAN hand-off is a link, not a probe an https page cannot make", () => {
+  assert.equal(src.includes("gatherHostIps"), false);
+  assert.equal(src.includes("location.replace('http://'"), false);
+  const lan = src.slice(src.indexOf("function maybeLan"), src.indexOf("function flush"));
+  assert.match(lan, /a\.href = 'http:\/\/' \+ ip/);
+  assert.match(lan, /hint\.hidden = false/);
+});
+
+test("peer count changes reach the tape", () => {
+  assert.match(src, /const key = String\(msg\.ready\) \+ ':' \+ \(msg\.peers\|0\)/);
+});
+
+test("the room hands out relay credentials, and degrades to STUN if it cannot", () => {
+  const mint = src.slice(src.indexOf("async function iceServers"), src.indexOf("type Claim"));
+  assert.match(mint, /credentials\/generate-ice-servers/);
+  assert.match(mint, /authorization: `Bearer \$\{env\.TURN_KEY_TOKEN\}`/);
+  // Every failure path must still return something dialable.
+  assert.equal((mint.match(/return STUN_ONLY/g) || []).length, 3, "no key, bad status, throw");
+  assert.match(mint, /servers\.length \? servers : STUN_ONLY/, "an empty list is not a config");
+  assert.match(src, /url\.pathname === "\/api\/ice"/);
+});
+
+test("the listener asks for relay servers before building the peer", () => {
+  assert.match(src, /const servers = \(await iceServers\(\)\)/);
+  assert.match(src, /const peer = await ensurePc\(\)/);
+  assert.equal(src.includes("iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] }"), false);
+});
+
+test("a relay grant is never handed to an anonymous or hostless caller", () => {
+  // The whole free-forever claim rests on this: no room name, no host, or no
+  // budget left all fall through to STUN rather than minting a credential.
+  assert.match(src, /if \(!slug \|\| !env\.TURN_KEY_ID \|\| !env\.TURN_KEY_TOKEN\)/);
+  assert.match(src, /const ok = this\.hasHost\(\) && \(await this\.spendIceGrant\(\)\);/);
+  assert.match(src, /return granted \? await iceServers\(env\) : STUN_ONLY;/);
+  assert.match(
+    src,
+    /slugify\(url\.searchParams\.get\("room"\)/,
+    "the route must slugify the room so it cannot address the budget instance",
+  );
+});
+
+test("the monthly grant cap keeps the worst case inside Cloudflare's free tier", () => {
+  const cap = Number(/const ICE_GRANTS_PER_MONTH = ([\d_]+);/.exec(src)[1].replace(/_/g, ""));
+  const ttl = Number(/const TURN_TTL_SECONDS = (\d+);/.exec(src)[1]);
+  // 256 kbps is RELAY's ceiling (OPUS_BITRATE_MAX_KBPS); a grant cannot relay
+  // longer than its own TTL, so this product is the most a month can egress.
+  const worstGb = (cap * ttl * 256_000) / 8 / 1e9;
+  assert.ok(worstGb < 1000, `worst case ${worstGb.toFixed(0)} GB must stay under the 1000 GB free tier`);
+});
+
+test("the budget resets by calendar month and is shared across rooms", () => {
+  assert.match(src, /const BUDGET_ROOM = "~ice~";/);
+  const slugify = new Function(
+    "raw",
+    /return raw\.toLowerCase\(\)[^;]+;/.exec(src)[0],
+  );
+  assert.equal(
+    slugify("~ice~"),
+    "ice",
+    "a listener asking for the budget room must not reach the counter",
+  );
+  assert.match(src, /new Date\(\)\.toISOString\(\)\.slice\(0, 7\)/);
+  assert.match(src, /if \(spent >= limit\) \{\s*return false;/);
+});
+
+test("the page spends a grant only when it builds a connection", () => {
+  assert.ok(
+    !/const iceReady = fetch\('\/api\/ice'/.test(src),
+    "minting at page load spends a grant on every idle tab",
+  );
+  assert.match(src, /iceReady = fetch\('\/api\/ice\?room=' \+ encodeURIComponent\(name\)/);
+  assert.match(src, /if \(iceReady\) return iceReady;/, "one grant per page, not one per offer");
+  assert.match(src, /const servers = \(await iceServers\(\)\)/);
 });

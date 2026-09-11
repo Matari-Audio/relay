@@ -89,17 +89,22 @@ connect-build:
 # Build and install the CLAP and VST3 next to other user plugins.
 plugin-install:
     cd apps/plugin && cargo truce build --clap --vst3
+    # Bundles land in the cargo target dir, which CARGO_TARGET_DIR may move.
+    bundles="$(cargo metadata --no-deps --format-version 1 \
+      --manifest-path apps/plugin/Cargo.toml | jq -r .target_directory)/bundles"
     mkdir -p "${HOME}/.clap" "${HOME}/.vst3"
-    if [ -f apps/plugin/target/bundles/RELAY.clap ]; then
-      cp -f apps/plugin/target/bundles/RELAY.clap "${HOME}/.clap/RELAY.clap"
-    fi
-    if [ -d apps/plugin/target/bundles/RELAY.vst3 ]; then
-      rm -rf "${HOME}/.vst3/RELAY.vst3"
-      cp -a apps/plugin/target/bundles/RELAY.vst3 "${HOME}/.vst3/RELAY.vst3"
-    elif [ -f apps/plugin/target/bundles/RELAY.vst3 ]; then
-      cp -f apps/plugin/target/bundles/RELAY.vst3 "${HOME}/.vst3/RELAY.vst3"
-    fi
+    cp -f "${bundles}/RELAY.clap" "${HOME}/.clap/RELAY.clap"
+    rm -rf "${HOME}/.vst3/RELAY.vst3"
+    cp -a "${bundles}/RELAY.vst3" "${HOME}/.vst3/RELAY.vst3"
     ls -lah "${HOME}/.clap/RELAY.clap" "${HOME}/.vst3/RELAY.vst3"
+
+# Gate, then package this host's installers into dist/. See scripts/release.sh.
+release *ARGS:
+    ./scripts/release.sh {{ ARGS }}
+
+# Publish everything staged in dist/ as a GitHub release.
+release-publish TAG:
+    ./scripts/release.sh publish {{ TAG }}
 
 # Deploy the named-session Worker to relay.matari-audio.com.
 link-deploy:

@@ -1,17 +1,21 @@
 //! Plugin → browser WebRTC. The cloud only relays signaling.
 //!
-//! Off-LAN listeners get Opus over a data channel from a libdatachannel
-//! peer per listener. STUN only; libjuice has no TURN/TLS.
+//! Off-LAN listeners get Opus from a libdatachannel peer per listener: a
+//! browser takes it as an RTP audio track, a joining plugin asks for a data
+//! channel instead (`want` with `dc`) because it has no `<audio>` element to
+//! hand a track to. ICE does the NAT work; the room hands out TURN
+//! credentials when hole punching fails. See `tap` for the joining side.
 
 use std::collections::HashMap;
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 use relay_opus::{
     Bitrate, Encoder, EncoderConfigV1, EncoderPolicyV1, FrameDuration, InbandFec, MAX_PACKET_BYTES,
     PacketLossPercent,
 };
 use relay_transport::{
-    BinaryPayload, ChannelId, Command, DescriptionKind, Event, IceCandidate,
+    BinaryPayload, ChannelId, Command, DescriptionKind, Event, IceCandidate, IceServer,
     NativeTransportProvider, NegotiationEpoch, OperationId, PeerDriver, PeerState,
     SessionDescription, TransportError,
 };
@@ -24,6 +28,9 @@ pub const MAX_PEERS: usize = 10;
 const FRAME_SAMPLES: usize = 960;
 const CHANNEL: ChannelId = ChannelId(0);
 const EPOCH: NegotiationEpoch = NegotiationEpoch(1);
+/// A peer that has not produced its offer by now never will. Reap it so the
+/// listener's next `want` builds a fresh one instead of waiting forever.
+const OFFER_GRACE: Duration = Duration::from_secs(2);
 
 pub struct Hub {
     provider: LibdatachannelProvider,
@@ -34,6 +41,7 @@ pub struct Hub {
     leftover: Vec<f32>,
     frames_sent: u64,
     last_peak: f32,
+    ice: Vec<IceServer>,
 }
 
 struct Peer {
@@ -42,8 +50,12 @@ struct Peer {
     ready: bool,
     dead: bool,
     answered: bool,
+    /// Opus on a data channel rather than an RTP track. Set by the listener's
+    /// `want`, so a rebuild is needed if a later `want` disagrees.
+    dc: bool,
     offer_sdp: Option<String>,
     pending_ice: Vec<(String, Option<String>)>,
+    born: Instant,
 }
 
 impl Default for Hub {
@@ -57,11 +69,18 @@ impl Default for Hub {
             leftover: Vec::new(),
             frames_sent: 0,
             last_peak: 0.0,
+            ice: Vec::new(),
         }
     }
 }
 
 impl Hub {
+    /// Relay credentials from the room. Peers already up keep the servers
+    /// they negotiated with; only new peers pick these up.
+    pub fn set_ice_servers(&mut self, servers: Vec<IceServer>) {
+        self.ice = servers;
+    }
+
     pub fn peer_count(&self) -> u32 {
         u32::try_from(self.peers.len()).unwrap_or(u32::MAX)
     }
@@ -103,7 +122,7 @@ impl Hub {
 
     pub fn apply(&mut self, signal: &Signal, outgoing: &mut Vec<String>) {
         match signal {
-            Signal::Want { id } => self.want(id, outgoing),
+            Signal::Want { id, dc } => self.want(id, *dc, outgoing),
             Signal::Answer { id, sdp } => self.answer(id, sdp),
             Signal::Ice { id, cand, mid } => self.remote_ice(id, cand, mid.clone()),
             Signal::Bye { id } => self.drop_peer(id),
@@ -172,11 +191,14 @@ impl Hub {
                 }
             }
         }
-        self.peers.retain(|_, peer| {
-            if peer.dead {
+        self.peers.retain(|id, peer| {
+            let stalled = peer.offer_sdp.is_none() && peer.born.elapsed() > OFFER_GRACE;
+            if peer.dead || stalled {
+                outgoing.push(Outbound::Bye { id }.to_json());
                 peer.shutdown();
+                return false;
             }
-            !peer.dead
+            true
         });
     }
 
@@ -186,8 +208,12 @@ impl Hub {
         }
     }
 
-    fn want(&mut self, id: &str, outgoing: &mut Vec<String>) {
-        if let Some(peer) = self.peers.get(id).filter(|peer| !peer.dead) {
+    fn want(&mut self, id: &str, dc: bool, outgoing: &mut Vec<String>) {
+        if let Some(peer) = self
+            .peers
+            .get(id)
+            .filter(|peer| !peer.dead && peer.dc == dc)
+        {
             if let Some(sdp) = &peer.offer_sdp {
                 outgoing.push(Outbound::Offer { id, sdp }.to_json());
             }
@@ -206,13 +232,21 @@ impl Hub {
             };
             self.drop_peer(&old);
         }
-        if let Some(peer) = self.new_peer() {
-            self.peers.insert(id.to_owned(), peer);
+        match self.new_peer(dc) {
+            Some(peer) => {
+                self.peers.insert(id.to_owned(), peer);
+            }
+            // No transport means no offer is ever coming. Say so, or the
+            // listener retries `want` every four seconds forever.
+            None => outgoing.push(Outbound::Bye { id }.to_json()),
         }
     }
 
-    fn new_peer(&mut self) -> Option<Peer> {
-        let config = listen_offerer_config().ok()?;
+    fn new_peer(&mut self, dc: bool) -> Option<Peer> {
+        let mut config = listen_offerer_config(&self.ice).ok()?;
+        // The sendonly-Opus track is what a browser can play; it turns the
+        // data channel below into an RTP track. A plugin wants the bytes.
+        config.sendonly_opus = !dc;
         let validated = config.validate_for(self.provider.capabilities()).ok()?;
         let driver = self.provider.create_peer(validated).ok()?;
         let mut peer = Peer {
@@ -221,8 +255,10 @@ impl Hub {
             ready: false,
             dead: false,
             answered: false,
+            dc,
             offer_sdp: None,
             pending_ice: Vec::new(),
+            born: Instant::now(),
         };
         peer.submit(|operation_id| Command::OpenDataChannel {
             operation_id,
@@ -348,7 +384,10 @@ mod tests {
     use super::*;
 
     fn want(id: &str) -> Signal {
-        Signal::Want { id: id.into() }
+        Signal::Want {
+            id: id.into(),
+            dc: false,
+        }
     }
 
     fn bye(id: &str) -> Signal {
@@ -426,6 +465,28 @@ mod tests {
         assert_eq!(hub.peer_count(), 1);
         let second = offer_sdp(&wait_offer(&mut hub)).expect("second offer");
         assert_ne!(first, second, "bye must drop the old ICE credentials");
+    }
+
+    #[test]
+    fn an_offerless_peer_is_reaped_so_the_next_want_rebuilds() {
+        let mut hub = Hub::default();
+        let mut outgoing = Vec::new();
+        hub.apply(&want("ab"), &mut outgoing);
+        wait_offer(&mut hub);
+        // Pretend offer generation never delivered.
+        let peer = hub.peers.get_mut("ab").expect("peer");
+        peer.offer_sdp = None;
+        peer.born = Instant::now() - OFFER_GRACE - Duration::from_millis(1);
+        outgoing.clear();
+        hub.drive(&mut outgoing);
+        assert_eq!(hub.peer_count(), 0, "a peer with no offer must not linger");
+        assert!(
+            outgoing.iter().any(|msg| msg.contains("\"t\":\"bye\"")),
+            "the listener is told to stop waiting: {outgoing:?}"
+        );
+        outgoing.clear();
+        hub.apply(&want("ab"), &mut outgoing);
+        assert!(offer_sdp(&wait_offer(&mut hub)).is_some(), "want rebuilds");
     }
 
     #[test]

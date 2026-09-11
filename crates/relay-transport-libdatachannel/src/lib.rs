@@ -75,15 +75,63 @@ pub fn default_stun_server() -> Result<IceServer, TransportError> {
 
 /// Offerer configuration for one plugin → browser listen peer.
 ///
+/// `ice_servers` comes from the room; entries this build's ICE backend cannot
+/// dial are dropped rather than failing the whole peer. An empty list — no
+/// relay configured, or the fetch failed — falls back to STUN alone, which
+/// strands listeners behind symmetric NAT.
+///
 /// # Errors
 ///
 /// Returns a construction error when the STUN server or capacities are invalid.
-pub fn listen_offerer_config() -> Result<PeerConfig, TransportError> {
-    let mut config = PeerConfig::offerer();
-    config.ice_servers = vec![default_stun_server()?];
+pub fn listen_offerer_config(ice_servers: &[IceServer]) -> Result<PeerConfig, TransportError> {
+    let mut config = with_usable_ice(PeerConfig::offerer(), ice_servers)?;
     config.sendonly_opus = true;
+    Ok(config)
+}
+
+/// Answerer configuration for one listener peer — a joining plugin taking the
+/// same offer a browser would. Data channel only: the host's Opus arrives
+/// there, so the answerer never negotiates a media track.
+///
+/// # Errors
+///
+/// Returns a construction error when the STUN server or capacities are invalid.
+pub fn listen_answerer_config(ice_servers: &[IceServer]) -> Result<PeerConfig, TransportError> {
+    with_usable_ice(PeerConfig::answerer(), ice_servers)
+}
+
+fn with_usable_ice(
+    mut config: PeerConfig,
+    ice_servers: &[IceServer],
+) -> Result<PeerConfig, TransportError> {
+    let capabilities = capabilities_for(sys::ice_backend());
+    let usable: Vec<IceServer> = ice_servers
+        .iter()
+        .filter(|server| ice_server_supported(server, &capabilities))
+        .cloned()
+        .collect();
+    config.ice_servers = if usable.is_empty() {
+        vec![default_stun_server()?]
+    } else {
+        usable
+    };
     config.required_capabilities = RequiredCapabilities::default();
     Ok(config)
+}
+
+fn ice_server_supported(server: &IceServer, capabilities: &ProviderCapabilities) -> bool {
+    match server {
+        IceServer::Stun { transport, .. } => match transport {
+            IceTransport::Udp => capabilities.stun_udp,
+            IceTransport::Tcp => capabilities.stun_tcp,
+            IceTransport::Tls => false,
+        },
+        IceServer::Turn { transport, .. } => match transport {
+            IceTransport::Udp => capabilities.turn_udp,
+            IceTransport::Tcp => capabilities.turn_tcp,
+            IceTransport::Tls => capabilities.turn_tls,
+        },
+    }
 }
 
 /// 10 ms of 48 kHz Opus in RTP timestamp units.
@@ -1026,9 +1074,31 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_relays_are_dropped_not_fatal() {
+        let creds = relay_transport::TurnCredentials::new("u", "p").expect("creds");
+        let udp = IceServer::turn("turn.example", 3478, IceTransport::Udp, creds.clone(), None)
+            .expect("turn udp");
+        let tcp =
+            IceServer::turn("turn.example", 80, IceTransport::Tcp, creds, None).expect("turn tcp");
+        let juice = capabilities_for(sys::IceBackend::Juice);
+        assert!(ice_server_supported(&udp, &juice));
+        assert!(
+            !ice_server_supported(&tcp, &juice),
+            "juice has no turn/tcp, so this entry must not reach validation"
+        );
+        // An all-unusable list still yields a dialable peer.
+        let config = listen_offerer_config(&[tcp]).expect("config");
+        assert_eq!(
+            config.ice_servers,
+            vec![default_stun_server().expect("stun")],
+            "falls back to stun rather than shipping an empty ice list"
+        );
+    }
+
+    #[test]
     fn listen_offer_sdp_contains_opus() {
         let provider = LibdatachannelProvider::new();
-        let mut config = listen_offerer_config().expect("offerer config");
+        let mut config = listen_offerer_config(&[]).expect("offerer config");
         config.ice_servers.clear();
         let validated = config.validate_for(provider.capabilities()).expect("cfg");
         let mut offerer = provider.create_peer(validated).expect("offerer");
@@ -1074,7 +1144,7 @@ mod tests {
     #[test]
     fn listen_offerer_can_send_opus_after_ice() {
         let provider = LibdatachannelProvider::new();
-        let mut offer_cfg = listen_offerer_config().expect("offerer config");
+        let mut offer_cfg = listen_offerer_config(&[]).expect("offerer config");
         offer_cfg.ice_servers.clear();
         let mut answer_cfg = PeerConfig::answerer();
         answer_cfg.sendonly_opus = true;

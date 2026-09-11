@@ -3,6 +3,71 @@ import { forceOpusStereo } from "./opus-stereo.mjs";
 
 export interface Env {
   ROOM: DurableObjectNamespace<SessionRoom>;
+  /// Cloudflare Realtime TURN key. Unset means STUN only, which strands
+  /// listeners behind symmetric NAT. `wrangler secret put TURN_KEY_ID`.
+  TURN_KEY_ID?: string;
+  TURN_KEY_TOKEN?: string;
+  /// Grants allowed per calendar month. Raise it once real usage says the
+  /// default is leaving free capacity on the table.
+  ICE_GRANTS_PER_MONTH?: string;
+}
+
+const STUN_ONLY = [{ urls: ["stun:stun.cloudflare.com:3478"] }];
+/// Short enough that a leaked credential is worth little, long enough to
+/// outlast a listening session without a refetch.
+const TURN_TTL_SECONDS = 7200;
+/// Cloudflare gives 1,000 GB of TURN egress a month before it bills. One
+/// grant can relay at most TURN_TTL_SECONDS at RELAY's ceiling bitrate
+/// (256 kbps) = 0.23 GB, so 4,000 grants is 921 GB: past this cap the
+/// service degrades to STUN rather than costing the operator a cent.
+const ICE_GRANTS_PER_MONTH = 4_000;
+/// `slugify` strips `~`, so no real room can ever land on this instance.
+const BUDGET_ROOM = "~ice~";
+
+/// Relay credentials are metered, so spend one only on someone who could
+/// plausibly use it: a named room with its host actually connected, and
+/// only while this month's budget holds.
+async function grantIce(env: Env, slug: string): Promise<unknown[]> {
+  if (!slug || !env.TURN_KEY_ID || !env.TURN_KEY_TOKEN) {
+    return STUN_ONLY;
+  }
+  const granted = await env.ROOM.getByName(slug)
+    .fetch("https://room/ice-grant", { method: "POST" })
+    .then((response) => response.ok)
+    .catch(() => false);
+  return granted ? await iceServers(env) : STUN_ONLY;
+}
+
+/// Mints per-listener TURN credentials. Deliberately uncached: the whole
+/// point of short-lived credentials is that two listeners do not share one.
+async function iceServers(env: Env): Promise<unknown[]> {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_TOKEN) {
+    return STUN_ONLY;
+  }
+  try {
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.TURN_KEY_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+    if (!response.ok) {
+      return STUN_ONLY;
+    }
+    const body = (await response.json()) as { iceServers?: unknown };
+    const list = Array.isArray(body.iceServers) ? body.iceServers : [body.iceServers];
+    const servers = list.filter((entry) => entry && typeof entry === "object");
+    // A relay that never arrives is worse than admitting we only have STUN.
+    return servers.length ? servers : STUN_ONLY;
+  } catch {
+    return STUN_ONLY;
+  }
 }
 
 type Claim = {
@@ -30,18 +95,17 @@ const CORS = {
   "access-control-allow-headers": "content-type",
 };
 
-export class SessionRoom extends DurableObject {
-  seq = 0;
-  lastAt = 0;
-  lastBytes = 0;
+export class SessionRoom extends DurableObject<Env> {
   locked = false;
   silent = false;
   claim: Claim | null = null;
+  grants: { month: string; n: number } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.blockConcurrencyWhile(async () => {
       this.claim = (await this.ctx.storage.get<Claim>("claim")) ?? null;
+      this.grants = (await this.ctx.storage.get<{ month: string; n: number }>("grants")) ?? null;
       this.locked = Boolean(this.claim?.pass);
       this.silent = this.restoreSilent();
     });
@@ -60,6 +124,16 @@ export class SessionRoom extends DurableObject {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS });
+    }
+    if (url.pathname === "/ice-grant") {
+      const ok = this.hasHost() && (await this.spendIceGrant());
+      return new Response(ok ? "ok" : "no", { status: ok ? 200 : 403, headers: CORS });
+    }
+    if (url.pathname === "/ice-budget") {
+      return new Response(this.takeGrant() ? "ok" : "no", {
+        status: 200,
+        headers: CORS,
+      });
     }
     if (request.headers.get("Upgrade") === "websocket") {
       const pair = new WebSocketPair();
@@ -122,13 +196,21 @@ export class SessionRoom extends DurableObject {
       if (tags.includes("out") && this.forwardRtc("out", ws, message)) {
         return;
       }
-      if (tags.includes("out") && (await this.checkPassword(message))) {
-        const att = (ws.deserializeAttachment() as { id?: string; ok?: boolean } | null) ?? {};
-        ws.serializeAttachment({ ...att, ok: true });
-        if (att.id) {
-          this.tellHost(JSON.stringify({ t: "want", id: att.id }));
+      if (tags.includes("out")) {
+        const ok = await this.checkPassword(message);
+        try {
+          ws.send(JSON.stringify({ t: "auth", ok }));
+        } catch {
+          /* peer gone */
         }
-        this.broadcastText(await this.roomEvent());
+        if (ok) {
+          const att = (ws.deserializeAttachment() as { id?: string; ok?: boolean } | null) ?? {};
+          ws.serializeAttachment({ ...att, ok: true });
+          if (att.id) {
+            this.tellHost(JSON.stringify({ t: "want", id: att.id }));
+          }
+          this.broadcastText(await this.roomEvent());
+        }
       }
       return;
     }
@@ -141,6 +223,31 @@ export class SessionRoom extends DurableObject {
 
   private hasHost(): boolean {
     return this.ctx.getWebSockets("in").length > 0;
+  }
+
+  /// The budget is global, or one busy room could spend the whole month on
+  /// its own. ponytail: one counter instance serialises every grant; shard
+  /// it by hashing the slug if grant latency ever shows up in a trace.
+  private async spendIceGrant(): Promise<boolean> {
+    const budget = this.env.ROOM.getByName(BUDGET_ROOM);
+    const reply = await budget.fetch("https://room/ice-budget", { method: "POST" });
+    return (await reply.text()) === "ok";
+  }
+
+  /// Counts grants for the calendar month, reusing this class purely as a
+  /// counter so the deployment needs no second binding or migration.
+  private takeGrant(): boolean {
+    const limit = Number(this.env.ICE_GRANTS_PER_MONTH) || ICE_GRANTS_PER_MONTH;
+    const month = new Date().toISOString().slice(0, 7);
+    const spent = this.grants?.month === month ? this.grants.n : 0;
+    if (spent >= limit) {
+      return false;
+    }
+    this.grants = { month, n: spent + 1 };
+    // Fire and forget: losing a few counts to an eviction is cheaper than
+    // awaiting a disk write on the path every listener takes.
+    void this.ctx.storage.put("grants", this.grants);
+    return true;
   }
 
   private restoreSilent(): boolean {
@@ -293,7 +400,9 @@ export class SessionRoom extends DurableObject {
   }
 
   private forwardRtc(from: "in" | "out", ws: WebSocket, raw: string): boolean {
-    let msg: { t?: string; id?: string; sdp?: string; cand?: string };
+    // `dc` is a plugin listener asking for a data channel instead of an RTP
+    // track. It is relayed untouched — the room does not care which it is.
+    let msg: { t?: string; id?: string; sdp?: string; cand?: string; dc?: boolean };
     try {
       msg = JSON.parse(raw) as typeof msg;
     } catch {
@@ -377,23 +486,6 @@ export class SessionRoom extends DurableObject {
     return { listeners, waiting };
   }
 
-  private fanout(message: ArrayBuffer): void {
-    const framed = wrapFrame(message, this.seq + 1);
-    this.seq = framed.seq;
-    this.lastBytes = framed.pcmBytes;
-    this.lastAt = Date.now();
-    for (const peer of this.ctx.getWebSockets("out")) {
-      if (!this.outOk(peer)) {
-        continue;
-      }
-      try {
-        peer.send(framed.bytes);
-      } catch {
-        /* listener gone */
-      }
-    }
-  }
-
   private outOk(peer: WebSocket): boolean {
     const att = peer.deserializeAttachment() as { ok?: boolean } | null;
     if (att?.ok) {
@@ -421,6 +513,12 @@ export default {
     }
     if (url.pathname === "/" || url.pathname === "/health") {
       return html(indexHtml());
+    }
+    if (url.pathname === "/api/ice") {
+      return Response.json(
+        { iceServers: await grantIce(env, slugify(url.searchParams.get("room") ?? "")) },
+        { headers: { ...CORS, "cache-control": "no-store" } },
+      );
     }
     if (url.pathname === "/api/claim" && request.method === "POST") {
       const body = (await request.json()) as { name?: string; port?: number; lan?: string[]; mode?: string };
@@ -492,31 +590,6 @@ async function sha256hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function isFramed(bytes: Uint8Array): boolean {
-  return bytes.byteLength >= 5
-    && bytes[0] === 0x52
-    && bytes[1] === 0x4c
-    && bytes[2] === 0x59
-    && (bytes[3] === 0x31 || bytes[3] === 0x42 || bytes[3] === 0x4f);
-}
-
-function wrapFrame(message: ArrayBuffer, nextSeq: number): { bytes: ArrayBuffer; seq: number; pcmBytes: number } {
-  const src = new Uint8Array(message);
-  if (isFramed(src)) {
-    const seq = new DataView(src.buffer, src.byteOffset, src.byteLength).getUint32(4, true);
-    return { bytes: src.slice().buffer, seq, pcmBytes: src.byteLength - 8 };
-  }
-  const seq = nextSeq >>> 0;
-  const out = new Uint8Array(8 + src.byteLength);
-  out[0] = 0x52;
-  out[1] = 0x4c;
-  out[2] = 0x59;
-  out[3] = 0x31;
-  new DataView(out.buffer).setUint32(4, seq, true);
-  out.set(src, 8);
-  return { bytes: out.buffer, seq, pcmBytes: src.byteLength };
-}
-
 const RELAY_MARK = '<svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="50" r="9" fill="currentColor" stroke="none"/><path d="M42 26L56 50L42 74"/><path d="M66 26L80 50L66 74"/></svg>';
 
 function indexHtml(): string {
@@ -533,7 +606,7 @@ function listenPage(name: string, landing: boolean): string {
 <head>
 <meta charset="utf-8"><script>try{document.documentElement.dataset.relayTheme=localStorage.getItem('relay-theme')||'dark'}catch{}</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="relay-listen" content="12">
+<meta name="relay-listen" content="14">
 <meta name="theme-color" content="#191919">
 <title>${landing ? "RELAY" : `RELAY · ${name}`}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -582,7 +655,8 @@ html[data-relay-theme=light]{color-scheme:light;--bg:#f4f6f8;--chassis:#ffffff;-
   </section>` : `<div class="session-heading"><label class="sr-only" for="title">Session name</label>
   <input id="title" class="title" value="${name}" spellcheck="false" autocomplete="off" enterkeyhint="go" aria-describedby="titleHint">
   <p class="hint" id="titleHint">Type another name and press Enter to jump.</p>
-  <p class="who" id="who" role="status" aria-live="polite">Waiting for the host</p></div>
+  <p class="who" id="who" role="status" aria-live="polite">Waiting for the host</p>
+  <p class="hint" id="lanHint" hidden></p></div>
   <form class="lock" id="lock">
     <label for="pw">Password</label>
     <input id="pw" type="password" autocomplete="current-password" />
@@ -940,27 +1014,7 @@ function enqueue(buf, srcRate, resume) {
     pushSamples(samples, srcRate);
   }
 }
-function same24(a, b) {
-  const pa = String(a).split('.');
-  const pb = String(b).split('.');
-  return pa.length === 4 && pb.length === 4 && pa[0] === pb[0] && pa[1] === pb[1] && pa[2] === pb[2];
-}
-function gatherHostIps() {
-  return new Promise((resolve) => {
-    const ips = [];
-    const pc = new RTCPeerConnection({ iceServers: [] });
-    try { pc.createDataChannel('lan'); } catch (e) {}
-    const finish = () => { try { pc.close(); } catch (e) {} resolve(ips); };
-    const t = setTimeout(finish, 450);
-    pc.onicecandidate = (e) => {
-      if (!e || !e.candidate) { clearTimeout(t); finish(); return; }
-      const m = String(e.candidate.candidate || '').match(/(\d+\.\d+\.\d+\.\d+)/);
-      if (m && m[1].indexOf('127.') !== 0) ips.push(m[1]);
-    };
-    pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(finish);
-  });
-}
-let lanTried = false;
+let lanShown = false;
 let gotPcm = false;
 let browserDrops = 0;
 let lastRoom = { host: false, live: false, silent: false, asleep: false, listeners: 0, dropouts: 0, peers: 0, claimLocked: false };
@@ -993,30 +1047,24 @@ function renderWho() {
   if (who) who.textContent = extra.length ? line + ' · ' + extra.join(' · ') : line;
   if (lamp) lamp.setAttribute('data-state', state);
 }
-async function maybeLan(claim) {
-  if (lanTried || !claim || !claim.lan || !claim.lan.length) return;
-  if (gotPcm) return;
-  lanTried = true;
-  const mine = await gatherHostIps();
+function maybeLan(claim) {
+  const hint = document.getElementById('lanHint');
+  if (!hint || lanShown || !claim || !claim.lan || !claim.lan.length) return;
+  lanShown = true;
   const port = Number(claim.lanHttp) || 8787;
-  for (let i = 0; i < claim.lan.length; i++) {
-    const ip = claim.lan[i];
-    for (let j = 0; j < mine.length; j++) {
-      if (same24(ip, mine[j])) {
-        try {
-          const probe = await fetch('http://' + ip + ':' + port + '/health', { signal: AbortSignal.timeout(400) });
-          if (!probe.ok) return;
-        } catch (e) {
-          return;
-        }
-        if (gotPcm) return;
-        log('same network — local listen');
-        if (socket) try { socket.close(); } catch (e) {}
-        location.replace('http://' + ip + ':' + port + '/' + name);
-        return;
-      }
-    }
-  }
+  // ponytail: an https page cannot probe a plain-http LAN address — mixed
+  // content blocks every subresource — so offer the link and let the
+  // listener pick. Auto-redirect again if the LAN server ever serves https.
+  hint.textContent = 'Same network as the host? Listen direct: ';
+  claim.lan.slice(0, 4).forEach((ip, i) => {
+    if (i) hint.appendChild(document.createTextNode(' · '));
+    const a = document.createElement('a');
+    a.href = 'http://' + ip + ':' + port + '/' + encodeURIComponent(name);
+    a.rel = 'noopener';
+    a.textContent = ip;
+    hint.appendChild(a);
+  });
+  hint.hidden = false;
 }
 function flush(srcRate) {
   if (!ctx || !node) return;
@@ -1056,10 +1104,10 @@ function onCtrl(raw) {
         kickPlayback();
       }
     }
-    const key = String(msg.ready) + ':' + Math.floor(Number(msg.sent) / 50) + ':' + (msg.peak > 0.002 ? 'hot' : 'quiet');
+    const key = String(msg.ready) + ':' + (msg.peers|0) + ':' + Math.floor(Number(msg.sent) / 50) + ':' + (msg.peak > 0.002 ? 'hot' : 'quiet');
     if (key !== lastStatLog) {
       lastStatLog = key;
-      log('host ready=' + (msg.ready|0) + ' sent=' + (msg.sent|0) + ' peak=' + Number(msg.peak || 0).toFixed(3));
+      log('host ready=' + (msg.ready|0) + ' peers=' + (msg.peers|0) + ' sent=' + (msg.sent|0) + ' peak=' + Number(msg.peak || 0).toFixed(3));
     }
     renderWho();
     return;
@@ -1093,6 +1141,23 @@ function onCtrl(raw) {
       log('password required');
       renderWho();
     }
+    return;
+  }
+  if (msg.t === 'auth') {
+    const lock = document.getElementById('lock');
+    const pwerr = document.getElementById('pwerr');
+    if (msg.ok) {
+      if (lock) lock.classList.remove('show');
+      if (pwerr) pwerr.textContent = '';
+      log('unlocked');
+      requestOffer('unlocked');
+    } else {
+      secret = '';
+      if (lock) lock.classList.add('show');
+      if (pwerr) pwerr.textContent = 'Wrong password';
+      log('wrong password');
+    }
+    renderWho();
     return;
   }
   if (msg.t === 'dtx') {
@@ -1334,9 +1399,30 @@ function tickMeter() {
   if (!analyserL || !analyserR) return;
   setMeterLR(peakOf(analyserL), peakOf(analyserR));
 }
-function ensurePc() {
+// STUN alone strands anyone behind symmetric NAT, so ask the room for relay
+// credentials. Asked for lazily and once: a relay grant is metered, and a
+// page that is only watching the tape should never spend one.
+let iceReady = null;
+function iceServers() {
+  if (iceReady) return iceReady;
+  iceReady = fetch('/api/ice?room=' + encodeURIComponent(name), { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((body) => {
+      const servers = body && Array.isArray(body.iceServers) ? body.iceServers : null;
+      if (servers && servers.length) {
+        log(servers.some((s) => String(s.urls).indexOf('turn') >= 0) ? 'ice: stun + turn' : 'ice: stun only');
+        return servers;
+      }
+      return null;
+    })
+    .catch(() => null);
+  return iceReady;
+}
+async function ensurePc() {
   if (pc) return pc;
-  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+  const servers = (await iceServers()) || [{ urls: 'stun:stun.cloudflare.com:3478' }];
+  if (pc) return pc;
+  pc = new RTCPeerConnection({ iceServers: servers, iceCandidatePoolSize: 1 });
   pc.ontrack = (ev) => {
     if (ev.track.kind !== 'audio') return;
     ev.track.enabled = true;
@@ -1419,7 +1505,7 @@ async function acceptOffer(sdp) {
   if (takingOffer) return;
   takingOffer = true;
   try {
-    const peer = ensurePc();
+    const peer = await ensurePc();
     if (peer.remoteDescription) return;
     await peer.setRemoteDescription({ type: 'offer', sdp: forceOpusStereo(sdp) });
     pendingOffer = null;
