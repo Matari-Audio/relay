@@ -96,9 +96,6 @@ const CORS = {
 };
 
 export class SessionRoom extends DurableObject<Env> {
-  seq = 0;
-  lastAt = 0;
-  lastBytes = 0;
   locked = false;
   silent = false;
   claim: Claim | null = null;
@@ -487,23 +484,6 @@ export class SessionRoom extends DurableObject<Env> {
     return { listeners, waiting };
   }
 
-  private fanout(message: ArrayBuffer): void {
-    const framed = wrapFrame(message, this.seq + 1);
-    this.seq = framed.seq;
-    this.lastBytes = framed.pcmBytes;
-    this.lastAt = Date.now();
-    for (const peer of this.ctx.getWebSockets("out")) {
-      if (!this.outOk(peer)) {
-        continue;
-      }
-      try {
-        peer.send(framed.bytes);
-      } catch {
-        /* listener gone */
-      }
-    }
-  }
-
   private outOk(peer: WebSocket): boolean {
     const att = peer.deserializeAttachment() as { ok?: boolean } | null;
     if (att?.ok) {
@@ -606,31 +586,6 @@ async function sha256hex(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function isFramed(bytes: Uint8Array): boolean {
-  return bytes.byteLength >= 5
-    && bytes[0] === 0x52
-    && bytes[1] === 0x4c
-    && bytes[2] === 0x59
-    && (bytes[3] === 0x31 || bytes[3] === 0x42 || bytes[3] === 0x4f);
-}
-
-function wrapFrame(message: ArrayBuffer, nextSeq: number): { bytes: ArrayBuffer; seq: number; pcmBytes: number } {
-  const src = new Uint8Array(message);
-  if (isFramed(src)) {
-    const seq = new DataView(src.buffer, src.byteOffset, src.byteLength).getUint32(4, true);
-    return { bytes: src.slice().buffer, seq, pcmBytes: src.byteLength - 8 };
-  }
-  const seq = nextSeq >>> 0;
-  const out = new Uint8Array(8 + src.byteLength);
-  out[0] = 0x52;
-  out[1] = 0x4c;
-  out[2] = 0x59;
-  out[3] = 0x31;
-  new DataView(out.buffer).setUint32(4, seq, true);
-  out.set(src, 8);
-  return { bytes: out.buffer, seq, pcmBytes: src.byteLength };
 }
 
 const RELAY_MARK = '<svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="50" r="9" fill="currentColor" stroke="none"/><path d="M42 26L56 50L42 74"/><path d="M66 26L80 50L66 74"/></svg>';
