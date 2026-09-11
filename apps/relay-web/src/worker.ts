@@ -122,13 +122,21 @@ export class SessionRoom extends DurableObject {
       if (tags.includes("out") && this.forwardRtc("out", ws, message)) {
         return;
       }
-      if (tags.includes("out") && (await this.checkPassword(message))) {
-        const att = (ws.deserializeAttachment() as { id?: string; ok?: boolean } | null) ?? {};
-        ws.serializeAttachment({ ...att, ok: true });
-        if (att.id) {
-          this.tellHost(JSON.stringify({ t: "want", id: att.id }));
+      if (tags.includes("out")) {
+        const ok = await this.checkPassword(message);
+        try {
+          ws.send(JSON.stringify({ t: "auth", ok }));
+        } catch {
+          /* peer gone */
         }
-        this.broadcastText(await this.roomEvent());
+        if (ok) {
+          const att = (ws.deserializeAttachment() as { id?: string; ok?: boolean } | null) ?? {};
+          ws.serializeAttachment({ ...att, ok: true });
+          if (att.id) {
+            this.tellHost(JSON.stringify({ t: "want", id: att.id }));
+          }
+          this.broadcastText(await this.roomEvent());
+        }
       }
       return;
     }
@@ -533,7 +541,7 @@ function listenPage(name: string, landing: boolean): string {
 <head>
 <meta charset="utf-8"><script>try{document.documentElement.dataset.relayTheme=localStorage.getItem('relay-theme')||'dark'}catch{}</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="relay-listen" content="12">
+<meta name="relay-listen" content="13">
 <meta name="theme-color" content="#191919">
 <title>${landing ? "RELAY" : `RELAY · ${name}`}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -582,7 +590,8 @@ html[data-relay-theme=light]{color-scheme:light;--bg:#f4f6f8;--chassis:#ffffff;-
   </section>` : `<div class="session-heading"><label class="sr-only" for="title">Session name</label>
   <input id="title" class="title" value="${name}" spellcheck="false" autocomplete="off" enterkeyhint="go" aria-describedby="titleHint">
   <p class="hint" id="titleHint">Type another name and press Enter to jump.</p>
-  <p class="who" id="who" role="status" aria-live="polite">Waiting for the host</p></div>
+  <p class="who" id="who" role="status" aria-live="polite">Waiting for the host</p>
+  <p class="hint" id="lanHint" hidden></p></div>
   <form class="lock" id="lock">
     <label for="pw">Password</label>
     <input id="pw" type="password" autocomplete="current-password" />
@@ -940,27 +949,7 @@ function enqueue(buf, srcRate, resume) {
     pushSamples(samples, srcRate);
   }
 }
-function same24(a, b) {
-  const pa = String(a).split('.');
-  const pb = String(b).split('.');
-  return pa.length === 4 && pb.length === 4 && pa[0] === pb[0] && pa[1] === pb[1] && pa[2] === pb[2];
-}
-function gatherHostIps() {
-  return new Promise((resolve) => {
-    const ips = [];
-    const pc = new RTCPeerConnection({ iceServers: [] });
-    try { pc.createDataChannel('lan'); } catch (e) {}
-    const finish = () => { try { pc.close(); } catch (e) {} resolve(ips); };
-    const t = setTimeout(finish, 450);
-    pc.onicecandidate = (e) => {
-      if (!e || !e.candidate) { clearTimeout(t); finish(); return; }
-      const m = String(e.candidate.candidate || '').match(/(\d+\.\d+\.\d+\.\d+)/);
-      if (m && m[1].indexOf('127.') !== 0) ips.push(m[1]);
-    };
-    pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(finish);
-  });
-}
-let lanTried = false;
+let lanShown = false;
 let gotPcm = false;
 let browserDrops = 0;
 let lastRoom = { host: false, live: false, silent: false, asleep: false, listeners: 0, dropouts: 0, peers: 0, claimLocked: false };
@@ -993,30 +982,24 @@ function renderWho() {
   if (who) who.textContent = extra.length ? line + ' · ' + extra.join(' · ') : line;
   if (lamp) lamp.setAttribute('data-state', state);
 }
-async function maybeLan(claim) {
-  if (lanTried || !claim || !claim.lan || !claim.lan.length) return;
-  if (gotPcm) return;
-  lanTried = true;
-  const mine = await gatherHostIps();
+function maybeLan(claim) {
+  const hint = document.getElementById('lanHint');
+  if (!hint || lanShown || !claim || !claim.lan || !claim.lan.length) return;
+  lanShown = true;
   const port = Number(claim.lanHttp) || 8787;
-  for (let i = 0; i < claim.lan.length; i++) {
-    const ip = claim.lan[i];
-    for (let j = 0; j < mine.length; j++) {
-      if (same24(ip, mine[j])) {
-        try {
-          const probe = await fetch('http://' + ip + ':' + port + '/health', { signal: AbortSignal.timeout(400) });
-          if (!probe.ok) return;
-        } catch (e) {
-          return;
-        }
-        if (gotPcm) return;
-        log('same network — local listen');
-        if (socket) try { socket.close(); } catch (e) {}
-        location.replace('http://' + ip + ':' + port + '/' + name);
-        return;
-      }
-    }
-  }
+  // ponytail: an https page cannot probe a plain-http LAN address — mixed
+  // content blocks every subresource — so offer the link and let the
+  // listener pick. Auto-redirect again if the LAN server ever serves https.
+  hint.textContent = 'Same network as the host? Listen direct: ';
+  claim.lan.slice(0, 4).forEach((ip, i) => {
+    if (i) hint.appendChild(document.createTextNode(' · '));
+    const a = document.createElement('a');
+    a.href = 'http://' + ip + ':' + port + '/' + encodeURIComponent(name);
+    a.rel = 'noopener';
+    a.textContent = ip;
+    hint.appendChild(a);
+  });
+  hint.hidden = false;
 }
 function flush(srcRate) {
   if (!ctx || !node) return;
@@ -1056,10 +1039,10 @@ function onCtrl(raw) {
         kickPlayback();
       }
     }
-    const key = String(msg.ready) + ':' + Math.floor(Number(msg.sent) / 50) + ':' + (msg.peak > 0.002 ? 'hot' : 'quiet');
+    const key = String(msg.ready) + ':' + (msg.peers|0) + ':' + Math.floor(Number(msg.sent) / 50) + ':' + (msg.peak > 0.002 ? 'hot' : 'quiet');
     if (key !== lastStatLog) {
       lastStatLog = key;
-      log('host ready=' + (msg.ready|0) + ' sent=' + (msg.sent|0) + ' peak=' + Number(msg.peak || 0).toFixed(3));
+      log('host ready=' + (msg.ready|0) + ' peers=' + (msg.peers|0) + ' sent=' + (msg.sent|0) + ' peak=' + Number(msg.peak || 0).toFixed(3));
     }
     renderWho();
     return;
@@ -1093,6 +1076,23 @@ function onCtrl(raw) {
       log('password required');
       renderWho();
     }
+    return;
+  }
+  if (msg.t === 'auth') {
+    const lock = document.getElementById('lock');
+    const pwerr = document.getElementById('pwerr');
+    if (msg.ok) {
+      if (lock) lock.classList.remove('show');
+      if (pwerr) pwerr.textContent = '';
+      log('unlocked');
+      requestOffer('unlocked');
+    } else {
+      secret = '';
+      if (lock) lock.classList.add('show');
+      if (pwerr) pwerr.textContent = 'Wrong password';
+      log('wrong password');
+    }
+    renderWho();
     return;
   }
   if (msg.t === 'dtx') {

@@ -77,7 +77,82 @@ function fadeIn(samples) {
     samples[i * 2 + 1] *= g;
   }
 }
-document.getElementById('go').onclick = async () => {
+// The LAN page is plain HTTP, so it is not a secure context and
+// AudioWorklet is undefined. One pump feeds whichever sink exists.
+function relayPump(rate, onDrops) {
+  const q = [];
+  let i = 0, lastL = 0, lastR = 0, xfade = 0, drops = 0, empty = false;
+  const rel = Math.exp(-1 / (0.012 * rate));
+  const xfadeN = Math.max(32, Math.round(0.008 * rate));
+  return {
+    push(chunk) {
+      if (chunk.clear) { q.length = 0; i = 0; xfade = 0; return; }
+      const wasEmpty = !q.length;
+      q.push(chunk);
+      if (wasEmpty) xfade = xfadeN;
+    },
+    fill(L, R) {
+      for (let n = 0; n < L.length; n++) {
+        while (q.length && i >= q[0].l.length) { q.shift(); i = 0; }
+        if (!q.length) {
+          if (!empty) { empty = true; drops++; onDrops(drops); }
+          lastL *= rel; lastR *= rel;
+          L[n] = lastL; R[n] = lastR;
+          continue;
+        }
+        empty = false;
+        let sL = q[0].l[i], sR = q[0].r[i];
+        if (xfade > 0) {
+          const g = 1 - xfade / xfadeN;
+          sL = lastL * (1 - g) + sL * g;
+          sR = lastR * (1 - g) + sR * g;
+          xfade--;
+        }
+        L[n] = sL; R[n] = sR; lastL = sL; lastR = sR; i++;
+      }
+    },
+  };
+}
+async function makeSink(ctx, onDrops) {
+  if (ctx.audioWorklet) {
+    const source = relayPump + `
+      class P extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.pump = relayPump(sampleRate, (n) => this.port.postMessage({drops: n}));
+          this.port.onmessage = (e) => this.pump.push(e.data);
+        }
+        process(_, outputs) {
+          this.pump.fill(outputs[0][0], outputs[0][1] || outputs[0][0]);
+          return true;
+        }
+      }
+      registerProcessor('p', P);`;
+    const url = URL.createObjectURL(new Blob([source], {type: 'text/javascript'}));
+    try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+    const node = new AudioWorkletNode(ctx, 'p', {numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2]});
+    node.port.onmessage = (e) => { if (e.data && e.data.drops !== undefined) onDrops(e.data.drops); };
+    return { node, push: (chunk) => node.port.postMessage(chunk) };
+  }
+  // ponytail: ScriptProcessorNode is deprecated but is the only PCM sink that
+  // works outside a secure context. Drop it if the LAN server learns HTTPS.
+  const pump = relayPump(ctx.sampleRate, onDrops);
+  const node = ctx.createScriptProcessor(2048, 1, 2);
+  node.onaudioprocess = (e) => pump.fill(e.outputBuffer.getChannelData(0), e.outputBuffer.getChannelData(1));
+  return { node, push: (chunk) => pump.push(chunk) };
+}
+const goBtn = document.getElementById('go');
+goBtn.onclick = async () => {
+  goBtn.disabled = true;
+  who.textContent = 'Starting audio';
+  try {
+    await listen();
+  } catch (err) {
+    goBtn.disabled = false;
+    who.textContent = 'Audio failed — ' + ((err && err.message) || err);
+  }
+};
+async function listen() {
   const ctx = new AudioContext();
   await ctx.resume();
   const gain = ctx.createGain();
@@ -91,46 +166,6 @@ document.getElementById('go').onclick = async () => {
   };
   vol.oninput = applyVol;
   applyVol();
-  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-    class P extends AudioWorkletProcessor {
-      constructor() {
-        super();
-        this.q = []; this.i = 0; this.lastL = 0; this.lastR = 0;
-        this.rel = Math.exp(-1 / (0.012 * sampleRate));
-        this.xfade = 0; this.xfadeN = Math.max(32, Math.round(0.008 * sampleRate));
-        this.drops = 0; this.empty = false;
-        this.port.onmessage = (e) => {
-          if (e.data.clear) { this.q = []; this.i = 0; this.xfade = 0; return; }
-          const empty = !this.q.length;
-          this.q.push(e.data);
-          if (empty) this.xfade = this.xfadeN;
-        };
-      }
-      process(_, outputs) {
-        const L = outputs[0][0], R = outputs[0][1] || outputs[0][0];
-        for (let i = 0; i < L.length; i++) {
-          while (this.q.length && this.i >= this.q[0].l.length) { this.q.shift(); this.i = 0; }
-          if (!this.q.length) {
-            if (!this.empty) { this.empty = true; this.drops++; this.port.postMessage({drops: this.drops}); }
-            this.lastL *= this.rel; this.lastR *= this.rel;
-            L[i] = this.lastL; R[i] = this.lastR; continue;
-          }
-          this.empty = false;
-          let sL = this.q[0].l[this.i], sR = this.q[0].r[this.i];
-          if (this.xfade > 0) {
-            const g = 1 - this.xfade / this.xfadeN;
-            sL = this.lastL * (1 - g) + sL * g;
-            sR = this.lastR * (1 - g) + sR * g;
-            this.xfade--;
-          }
-          L[i] = sL; R[i] = sR; this.lastL = sL; this.lastR = sR; this.i++;
-        }
-        return true;
-      }
-    }
-    registerProcessor('p', P);
-  `], {type:'text/javascript'})));
-  const node = new AudioWorkletNode(ctx, 'p', {numberOfInputs:0, numberOfOutputs:1, outputChannelCount:[2]});
   let drops = 0;
   let room = { host: true, live: false, listeners: 0, dropouts: 0 };
   const show = () => {
@@ -143,8 +178,8 @@ document.getElementById('go').onclick = async () => {
     if (n) bits.push(n + ' dropouts');
     who.textContent = bits.join(' · ');
   };
-  node.port.onmessage = (e) => { if (e.data && e.data.drops !== undefined) { drops = e.data.drops; show(); } };
-  node.connect(gain);
+  const sink = await makeSink(ctx, (n) => { drops = n; show(); });
+  sink.node.connect(gain);
   document.getElementById('gate').style.display = 'none';
   who.textContent = 'Waiting';
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -198,7 +233,7 @@ document.getElementById('go').onclick = async () => {
       const l = new Float32Array(frames), r = new Float32Array(frames);
       for (let i = 0; i < frames; i++) { l[i] = pcm[i*2]; r[i] = pcm[i*2+1]; }
       const src = 48000, dst = ctx.sampleRate;
-      if (src === dst) { node.port.postMessage({l, r}); return; }
+      if (src === dst) { sink.push({l, r}); return; }
       const outN = Math.max(1, Math.round(frames * dst / src));
       const ol = new Float32Array(outN), or = new Float32Array(outN);
       for (let i = 0; i < outN; i++) {
@@ -206,11 +241,11 @@ document.getElementById('go').onclick = async () => {
         ol[i] = l[j] * (1 - f) + l[j2] * f;
         or[i] = r[j] * (1 - f) + r[j2] * f;
       }
-      node.port.postMessage({l: ol, r: or});
+      sink.push({l: ol, r: or});
     };
   };
   openOut();
-};
+}
 </script>
 <script>(()=>{const b=document.querySelector('.theme-toggle');if(!b)return;function sync(){const dark=document.documentElement.dataset.relayTheme==='dark';b.setAttribute('aria-pressed',String(dark));b.setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode')}sync();b.addEventListener('click',()=>{const next=document.documentElement.dataset.relayTheme==='dark'?'light':'dark';document.documentElement.dataset.relayTheme=next;try{localStorage.setItem('relay-theme',next)}catch{}sync()})})();</script></body>
 </html>

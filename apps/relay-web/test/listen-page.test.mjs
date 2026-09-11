@@ -27,7 +27,7 @@ test("offer is answered without waiting for Listen", () => {
 });
 
 test("page advertises listen revision 12", () => {
-  assert.match(src, /name="relay-listen" content="12"/);
+  assert.match(src, /name="relay-listen" content="13"/);
 });
 
 test("root is the listen join box, not a product landing", () => {
@@ -169,4 +169,25 @@ test("Chrome Opus answers are munged to stereo=1 before setLocalDescription", ()
 test("Chromium and mobile skip the Web Audio tap that steals the element", () => {
   assert.match(src, /function tapIsUnsafe/);
   assert.match(src, /if \(tapIsUnsafe\(\)\) return/);
+});
+
+test("a password attempt is always answered, right or wrong", () => {
+  const handler = src.slice(src.indexOf("async webSocketMessage"), src.indexOf("// Binary PCM is LAN-only"));
+  assert.match(handler, /const ok = await this\.checkPassword\(message\)/);
+  assert.match(handler, /ws\.send\(JSON\.stringify\(\{ t: "auth", ok \}\)\)/);
+  assert.match(src, /if \(msg\.t === 'auth'\)/);
+  assert.match(src, /pwerr\.textContent = 'Wrong password'/);
+  assert.match(src, /lock\.classList\.remove\('show'\)/);
+});
+
+test("the LAN hand-off is a link, not a probe an https page cannot make", () => {
+  assert.equal(src.includes("gatherHostIps"), false);
+  assert.equal(src.includes("location.replace('http://'"), false);
+  const lan = src.slice(src.indexOf("function maybeLan"), src.indexOf("function flush"));
+  assert.match(lan, /a\.href = 'http:\/\/' \+ ip/);
+  assert.match(lan, /hint\.hidden = false/);
+});
+
+test("peer count changes reach the tape", () => {
+  assert.match(src, /const key = String\(msg\.ready\) \+ ':' \+ \(msg\.peers\|0\)/);
 });
