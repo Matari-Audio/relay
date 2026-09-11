@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 pub enum Signal {
     Want {
         id: String,
+        /// A listener that wants Opus on a data channel rather than an RTP
+        /// track. Browsers leave this off; a joining plugin sets it.
+        #[serde(default)]
+        dc: bool,
     },
     Answer {
         id: String,
@@ -28,7 +32,7 @@ pub enum Signal {
 impl Signal {
     pub fn id(&self) -> &str {
         match self {
-            Self::Want { id }
+            Self::Want { id, .. }
             | Self::Answer { id, .. }
             | Self::Ice { id, .. }
             | Self::Bye { id } => id,
@@ -85,7 +89,7 @@ impl Incoming {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "t", rename_all = "lowercase")]
 pub enum Ask<'a> {
-    Want,
+    Want { dc: bool },
     Answer { sdp: &'a str },
     Ice { cand: &'a str, mid: Option<&'a str> },
 }
@@ -240,6 +244,14 @@ mod tests {
             Signal::parse(r#"{"t":"bye","id":"ab","extra":1}"#),
             Some(Signal::Bye { id: "ab".into() })
         );
+        // The room's own `want` has no `dc`: browsers get the RTP track.
+        assert_eq!(
+            Signal::parse(r#"{"t":"want","id":"ab"}"#),
+            Some(Signal::Want {
+                id: "ab".into(),
+                dc: false
+            })
+        );
     }
 
     #[test]
@@ -296,7 +308,10 @@ mod tests {
 
     #[test]
     fn ask_leaves_the_id_to_the_room() {
-        assert_eq!(Ask::Want.to_json(), r#"{"t":"want"}"#);
+        assert_eq!(
+            Ask::Want { dc: true }.to_json(),
+            r#"{"t":"want","dc":true}"#
+        );
         assert_eq!(
             Ask::Answer { sdp: "v=0" }.to_json(),
             r#"{"t":"answer","sdp":"v=0"}"#

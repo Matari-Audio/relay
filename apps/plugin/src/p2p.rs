@@ -1,9 +1,10 @@
 //! Plugin → browser WebRTC. The cloud only relays signaling.
 //!
-//! Off-LAN listeners get Opus over a data channel from a libdatachannel
-//! peer per listener. ICE does the NAT work; the room hands out TURN
-//! credentials when hole punching fails. A joining plugin arrives here as
-//! just another listener — see `tap`.
+//! Off-LAN listeners get Opus from a libdatachannel peer per listener: a
+//! browser takes it as an RTP audio track, a joining plugin asks for a data
+//! channel instead (`want` with `dc`) because it has no `<audio>` element to
+//! hand a track to. ICE does the NAT work; the room hands out TURN
+//! credentials when hole punching fails. See `tap` for the joining side.
 
 use std::collections::HashMap;
 use std::task::{Context, Poll, Waker};
@@ -49,6 +50,9 @@ struct Peer {
     ready: bool,
     dead: bool,
     answered: bool,
+    /// Opus on a data channel rather than an RTP track. Set by the listener's
+    /// `want`, so a rebuild is needed if a later `want` disagrees.
+    dc: bool,
     offer_sdp: Option<String>,
     pending_ice: Vec<(String, Option<String>)>,
     born: Instant,
@@ -118,7 +122,7 @@ impl Hub {
 
     pub fn apply(&mut self, signal: &Signal, outgoing: &mut Vec<String>) {
         match signal {
-            Signal::Want { id } => self.want(id, outgoing),
+            Signal::Want { id, dc } => self.want(id, *dc, outgoing),
             Signal::Answer { id, sdp } => self.answer(id, sdp),
             Signal::Ice { id, cand, mid } => self.remote_ice(id, cand, mid.clone()),
             Signal::Bye { id } => self.drop_peer(id),
@@ -204,8 +208,12 @@ impl Hub {
         }
     }
 
-    fn want(&mut self, id: &str, outgoing: &mut Vec<String>) {
-        if let Some(peer) = self.peers.get(id).filter(|peer| !peer.dead) {
+    fn want(&mut self, id: &str, dc: bool, outgoing: &mut Vec<String>) {
+        if let Some(peer) = self
+            .peers
+            .get(id)
+            .filter(|peer| !peer.dead && peer.dc == dc)
+        {
             if let Some(sdp) = &peer.offer_sdp {
                 outgoing.push(Outbound::Offer { id, sdp }.to_json());
             }
@@ -224,7 +232,7 @@ impl Hub {
             };
             self.drop_peer(&old);
         }
-        match self.new_peer() {
+        match self.new_peer(dc) {
             Some(peer) => {
                 self.peers.insert(id.to_owned(), peer);
             }
@@ -234,8 +242,11 @@ impl Hub {
         }
     }
 
-    fn new_peer(&mut self) -> Option<Peer> {
-        let config = listen_offerer_config(&self.ice).ok()?;
+    fn new_peer(&mut self, dc: bool) -> Option<Peer> {
+        let mut config = listen_offerer_config(&self.ice).ok()?;
+        // The sendonly-Opus track is what a browser can play; it turns the
+        // data channel below into an RTP track. A plugin wants the bytes.
+        config.sendonly_opus = !dc;
         let validated = config.validate_for(self.provider.capabilities()).ok()?;
         let driver = self.provider.create_peer(validated).ok()?;
         let mut peer = Peer {
@@ -244,6 +255,7 @@ impl Hub {
             ready: false,
             dead: false,
             answered: false,
+            dc,
             offer_sdp: None,
             pending_ice: Vec::new(),
             born: Instant::now(),
@@ -372,7 +384,10 @@ mod tests {
     use super::*;
 
     fn want(id: &str) -> Signal {
-        Signal::Want { id: id.into() }
+        Signal::Want {
+            id: id.into(),
+            dc: false,
+        }
     }
 
     fn bye(id: &str) -> Signal {

@@ -3,9 +3,9 @@
 //! Joining over a LAN slug or a direct `ip:port` needs both plugins on the
 //! same network, or a forwarded port. This path instead speaks the exact
 //! protocol the browser listen page speaks — `/out` socket, `want`, answer
-//! the host's offer, Opus over a data channel — so ICE does the NAT work and
-//! symmetric NAT falls back to the room's TURN relay. The host side needs no
-//! changes: a joining plugin is just another listener.
+//! the host's offer — so ICE does the NAT work and symmetric NAT falls back
+//! to the room's TURN relay. The one difference from a browser is `dc` on the
+//! `want`: a browser plays an RTP audio track, we want the Opus bytes.
 
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
@@ -36,6 +36,8 @@ pub struct Tap {
     ice: Vec<IceServer>,
     scratch: Vec<f32>,
     next_want: Instant,
+    /// The offer the current peer is for, so a resend is not a rebuild.
+    answering: String,
 }
 
 struct Peer {
@@ -57,6 +59,7 @@ impl Default for Tap {
             ice: Vec::new(),
             scratch: vec![0.0; FRAME_SAMPLES],
             next_want: Instant::now(),
+            answering: String::new(),
         }
     }
 }
@@ -81,6 +84,7 @@ impl Tap {
             peer.shutdown();
         }
         self.decoder = None;
+        self.answering.clear();
         self.next_want = Instant::now();
     }
 
@@ -91,8 +95,11 @@ impl Tap {
             self.apply(message);
         }
         self.drive(outgoing, pcm);
-        if !self.connected() && Instant::now() >= self.next_want {
-            outgoing.push(Ask::Want.to_json());
+        // Only while there is no peer at all: asking again mid-negotiation
+        // makes the host re-offer, and answering that offer would throw away
+        // the connection that was about to come up.
+        if self.peer.is_none() && Instant::now() >= self.next_want {
+            outgoing.push(Ask::Want { dc: true }.to_json());
             self.next_want = Instant::now() + WANT_EVERY;
         }
     }
@@ -112,9 +119,20 @@ impl Tap {
     }
 
     /// A fresh offer replaces whatever peer we had: the host only re-offers
-    /// after it gave up on the old one.
+    /// after it gave up on the old one. A repeat of the offer we are already
+    /// working on is the room being chatty, not a new session.
     fn offer(&mut self, sdp: &str) {
+        // The room sends its own `want` the moment we connect, before ours
+        // with `dc` gets there, so the first offer is usually the media one a
+        // browser would take. Ignore it and let the next `want` re-offer.
+        if !sdp.contains("m=application") {
+            return;
+        }
+        if self.answering == sdp {
+            return;
+        }
         self.clear();
+        sdp.clone_into(&mut self.answering);
         let Some(mut peer) = self.new_peer() else {
             return;
         };
@@ -284,7 +302,7 @@ mod tests {
         let mut outgoing = Vec::new();
         let mut pcm = Vec::new();
         tap.step(&[], &mut outgoing, &mut pcm);
-        assert_eq!(outgoing, vec![r#"{"t":"want"}"#.to_owned()]);
+        assert_eq!(outgoing, vec![r#"{"t":"want","dc":true}"#.to_owned()]);
 
         // The watchdog is on a timer: a second tick right away is quiet.
         outgoing.clear();
@@ -293,8 +311,60 @@ mod tests {
 
         // A host coming online resets it, so the join does not wait it out.
         tap.step(&[Incoming::Room { host: true }], &mut outgoing, &mut pcm);
-        assert_eq!(outgoing, vec![r#"{"t":"want"}"#.to_owned()]);
+        assert_eq!(outgoing, vec![r#"{"t":"want","dc":true}"#.to_owned()]);
         assert!(pcm.is_empty());
+    }
+
+    /// The room, in-process: it only ever adds or strips the listener id.
+    fn to_listener(text: &str) -> Option<Incoming> {
+        let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
+        value.as_object_mut()?.remove("id");
+        Incoming::parse(&value.to_string())
+    }
+
+    fn to_host(text: &str) -> Option<crate::signal::Signal> {
+        let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
+        value
+            .as_object_mut()?
+            .insert("id".into(), "listener".into());
+        crate::signal::Signal::parse(&value.to_string())
+    }
+
+    /// The whole cloud-join road: the joining plugin asks, the host offers,
+    /// ICE connects, and Opus comes back out as PCM. Local candidates carry
+    /// it here — over the internet the same peers hole punch or relay.
+    #[test]
+    fn a_join_answers_the_host_and_gets_its_audio() {
+        let mut hub = crate::p2p::Hub::default();
+        let mut tap = Tap::default();
+        let tone: Vec<f32> = (0..FRAME_SAMPLES)
+            .map(|i| ((i / 2) as f32 * 0.05).sin() * 0.5)
+            .collect();
+
+        let mut inbound = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut pcm = Vec::new();
+        while pcm.is_empty() && Instant::now() < deadline {
+            let mut asks = Vec::new();
+            tap.step(&inbound, &mut asks, &mut pcm);
+
+            let signals: Vec<_> = asks.iter().filter_map(|ask| to_host(ask)).collect();
+            let mut said = Vec::new();
+            hub.apply_all(&signals, &mut said);
+            hub.push_pcm(&tone, 128);
+            hub.drive(&mut said);
+            inbound = said.iter().filter_map(|text| to_listener(text)).collect();
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(tap.connected(), "the data channel never opened");
+        assert!(!pcm.is_empty(), "no audio decoded");
+        assert_eq!(pcm.len() % FRAME_SAMPLES, 0, "whole 10 ms frames only");
+        assert!(
+            pcm.iter().any(|sample| sample.abs() > 0.01),
+            "decoded silence"
+        );
     }
 
     #[test]

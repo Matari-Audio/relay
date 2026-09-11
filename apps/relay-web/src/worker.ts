@@ -400,7 +400,9 @@ export class SessionRoom extends DurableObject<Env> {
   }
 
   private forwardRtc(from: "in" | "out", ws: WebSocket, raw: string): boolean {
-    let msg: { t?: string; id?: string; sdp?: string; cand?: string };
+    // `dc` is a plugin listener asking for a data channel instead of an RTP
+    // track. It is relayed untouched — the room does not care which it is.
+    let msg: { t?: string; id?: string; sdp?: string; cand?: string; dc?: boolean };
     try {
       msg = JSON.parse(raw) as typeof msg;
     } catch {
