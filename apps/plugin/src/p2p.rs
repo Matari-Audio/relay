@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 use relay_opus::{
     Bitrate, Encoder, EncoderConfigV1, EncoderPolicyV1, FrameDuration, InbandFec, MAX_PACKET_BYTES,
@@ -24,6 +25,9 @@ pub const MAX_PEERS: usize = 10;
 const FRAME_SAMPLES: usize = 960;
 const CHANNEL: ChannelId = ChannelId(0);
 const EPOCH: NegotiationEpoch = NegotiationEpoch(1);
+/// A peer that has not produced its offer by now never will. Reap it so the
+/// listener's next `want` builds a fresh one instead of waiting forever.
+const OFFER_GRACE: Duration = Duration::from_secs(2);
 
 pub struct Hub {
     provider: LibdatachannelProvider,
@@ -44,6 +48,7 @@ struct Peer {
     answered: bool,
     offer_sdp: Option<String>,
     pending_ice: Vec<(String, Option<String>)>,
+    born: Instant,
 }
 
 impl Default for Hub {
@@ -172,11 +177,14 @@ impl Hub {
                 }
             }
         }
-        self.peers.retain(|_, peer| {
-            if peer.dead {
+        self.peers.retain(|id, peer| {
+            let stalled = peer.offer_sdp.is_none() && peer.born.elapsed() > OFFER_GRACE;
+            if peer.dead || stalled {
+                outgoing.push(Outbound::Bye { id }.to_json());
                 peer.shutdown();
+                return false;
             }
-            !peer.dead
+            true
         });
     }
 
@@ -206,8 +214,13 @@ impl Hub {
             };
             self.drop_peer(&old);
         }
-        if let Some(peer) = self.new_peer() {
-            self.peers.insert(id.to_owned(), peer);
+        match self.new_peer() {
+            Some(peer) => {
+                self.peers.insert(id.to_owned(), peer);
+            }
+            // No transport means no offer is ever coming. Say so, or the
+            // listener retries `want` every four seconds forever.
+            None => outgoing.push(Outbound::Bye { id }.to_json()),
         }
     }
 
@@ -223,6 +236,7 @@ impl Hub {
             answered: false,
             offer_sdp: None,
             pending_ice: Vec::new(),
+            born: Instant::now(),
         };
         peer.submit(|operation_id| Command::OpenDataChannel {
             operation_id,
@@ -426,6 +440,28 @@ mod tests {
         assert_eq!(hub.peer_count(), 1);
         let second = offer_sdp(&wait_offer(&mut hub)).expect("second offer");
         assert_ne!(first, second, "bye must drop the old ICE credentials");
+    }
+
+    #[test]
+    fn an_offerless_peer_is_reaped_so_the_next_want_rebuilds() {
+        let mut hub = Hub::default();
+        let mut outgoing = Vec::new();
+        hub.apply(&want("ab"), &mut outgoing);
+        wait_offer(&mut hub);
+        // Pretend offer generation never delivered.
+        let peer = hub.peers.get_mut("ab").expect("peer");
+        peer.offer_sdp = None;
+        peer.born = Instant::now() - OFFER_GRACE - Duration::from_millis(1);
+        outgoing.clear();
+        hub.drive(&mut outgoing);
+        assert_eq!(hub.peer_count(), 0, "a peer with no offer must not linger");
+        assert!(
+            outgoing.iter().any(|msg| msg.contains("\"t\":\"bye\"")),
+            "the listener is told to stop waiting: {outgoing:?}"
+        );
+        outgoing.clear();
+        hub.apply(&want("ab"), &mut outgoing);
+        assert!(offer_sdp(&wait_offer(&mut hub)).is_some(), "want rebuilds");
     }
 
     #[test]
