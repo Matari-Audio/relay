@@ -80,6 +80,8 @@ pub struct SessionControl {
     password: Mutex<String>,
     pcm: Mutex<Vec<f32>>,
     pcm_generation: AtomicU64,
+    rx_pcm: Mutex<Vec<f32>>,
+    cloud_rx: AtomicBool,
     web_ok: AtomicBool,
     web_silent: AtomicBool,
     web_wake: AtomicBool,
@@ -113,6 +115,8 @@ impl Default for SessionControl {
             session_name: Mutex::new(String::new()),
             password: Mutex::new(String::new()),
             pcm: Mutex::new(Vec::new()),
+            rx_pcm: Mutex::new(Vec::new()),
+            cloud_rx: AtomicBool::new(false),
             pcm_generation: AtomicU64::new(0),
             web_ok: AtomicBool::new(false),
             web_silent: AtomicBool::new(false),
@@ -440,6 +444,43 @@ impl SessionControl {
         }
     }
 
+    /// Audio arriving from a cloud join, for the worker to play out.
+    ///
+    /// Written by the listen thread, drained by the worker thread; the audio
+    /// callback never touches it.
+    pub fn push_rx_pcm(&self, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.rx_pcm.lock() {
+            guard.extend_from_slice(samples);
+            // Half a second. A stall should resync to live, not play late.
+            const MAX_QUEUED: usize = 48_000;
+            if guard.len() > MAX_QUEUED {
+                let overflow = guard.len() - MAX_QUEUED;
+                guard.drain(..overflow);
+            }
+        }
+    }
+
+    pub(crate) fn take_rx_pcm(&self) -> Vec<f32> {
+        self.rx_pcm
+            .lock()
+            .map(|mut guard| std::mem::take(&mut *guard))
+            .unwrap_or_default()
+    }
+
+    /// True while a cloud join is delivering the host's audio.
+    #[must_use]
+    pub fn cloud_rx(&self) -> bool {
+        self.cloud_rx.load(Ordering::Acquire)
+    }
+
+    /// Set by the listen thread when the join's data channel is live.
+    pub fn set_cloud_rx(&self, live: bool) {
+        self.cloud_rx.store(live, Ordering::Release);
+    }
+
     /// Copies the current session slug.
     ///
     /// # Errors
@@ -706,6 +747,10 @@ fn run_worker(worker: &mut SessionWorker, control: &SessionControl) {
             let _ = worker.apply(EngineCommand::Disconnect);
             applied = None;
             hold_error = Some("session worker recovered".into());
+        }
+        let inbound = control.take_rx_pcm();
+        if !inbound.is_empty() {
+            worker.push_cloud_pcm(&inbound);
         }
         if let Some((pcm, seq)) = worker.take_web_pcm()
             && seq != posted_web
@@ -1008,6 +1053,8 @@ pub struct SessionView {
     pub web_wanted: bool,
     /// A UDP socket is bound.
     pub bound: bool,
+    /// A cloud join is delivering the host's audio.
+    pub cloud_rx: bool,
 }
 
 /// Maps a snapshot to the header pill.
@@ -1023,7 +1070,7 @@ pub fn classify_session(view: SessionView) -> SessionPill {
         return SessionPill::Asleep;
     }
     let audience = view.peers > 0 || view.lan_browsers > 0 || view.web_listeners > 0;
-    if audience || view.state == ConnectionState::Connected {
+    if audience || view.cloud_rx || view.state == ConnectionState::Connected {
         return SessionPill::Live;
     }
     if view.web_ok {
@@ -1070,6 +1117,9 @@ pub fn format_session_status(
     let listening = view.peers + view.lan_browsers as usize + view.web_listeners as usize;
     if listening > 0 {
         bits.push(format!("{listening} listening"));
+    }
+    if view.cloud_rx {
+        bits.push("via cloud".into());
     }
     if view.web_wanted && !view.web_ok {
         bits.push("listen page offline".into());
@@ -1123,6 +1173,24 @@ mod tests {
     fn slug_keeps_safe_chars() {
         assert_eq!(normalize_slug("Late Night Mix!"), "latenightmix");
         assert_eq!(normalize_slug("room-AB-12"), "room-ab-12");
+    }
+
+    #[test]
+    fn rx_pcm_drops_the_oldest_audio_rather_than_playing_late() {
+        let control = super::SessionControl::default();
+        control.push_rx_pcm(&[0.25; 1_000]);
+        assert_eq!(control.take_rx_pcm().len(), 1_000);
+        assert!(control.take_rx_pcm().is_empty(), "drained");
+
+        // Half a second is the ceiling; a stall must resync to live.
+        control.push_rx_pcm(&[0.5; 40_000]);
+        control.push_rx_pcm(&[0.75; 40_000]);
+        let queued = control.take_rx_pcm();
+        assert_eq!(queued.len(), 48_000);
+        assert!(
+            (queued[queued.len() - 1] - 0.75).abs() < 1e-6,
+            "newest audio survives"
+        );
     }
 
     #[test]
@@ -1190,6 +1258,7 @@ mod tests {
             web_silent: false,
             web_wanted: false,
             bound: true,
+            cloud_rx: false,
         };
         assert_eq!(super::classify_session(view), super::SessionPill::Hosting);
         assert_eq!(super::classify_session(view).as_str(), "ready");

@@ -1,7 +1,9 @@
 //! Plugin → browser WebRTC. The cloud only relays signaling.
 //!
 //! Off-LAN listeners get Opus over a data channel from a libdatachannel
-//! peer per listener. STUN only; libjuice has no TURN/TLS.
+//! peer per listener. ICE does the NAT work; the room hands out TURN
+//! credentials when hole punching fails. A joining plugin arrives here as
+//! just another listener — see `tap`.
 
 use std::collections::HashMap;
 use std::task::{Context, Poll, Waker};

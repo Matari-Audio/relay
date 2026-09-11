@@ -84,7 +84,26 @@ pub fn default_stun_server() -> Result<IceServer, TransportError> {
 ///
 /// Returns a construction error when the STUN server or capacities are invalid.
 pub fn listen_offerer_config(ice_servers: &[IceServer]) -> Result<PeerConfig, TransportError> {
-    let mut config = PeerConfig::offerer();
+    let mut config = with_usable_ice(PeerConfig::offerer(), ice_servers)?;
+    config.sendonly_opus = true;
+    Ok(config)
+}
+
+/// Answerer configuration for one listener peer — a joining plugin taking the
+/// same offer a browser would. Data channel only: the host's Opus arrives
+/// there, so the answerer never negotiates a media track.
+///
+/// # Errors
+///
+/// Returns a construction error when the STUN server or capacities are invalid.
+pub fn listen_answerer_config(ice_servers: &[IceServer]) -> Result<PeerConfig, TransportError> {
+    with_usable_ice(PeerConfig::answerer(), ice_servers)
+}
+
+fn with_usable_ice(
+    mut config: PeerConfig,
+    ice_servers: &[IceServer],
+) -> Result<PeerConfig, TransportError> {
     let capabilities = capabilities_for(sys::ice_backend());
     let usable: Vec<IceServer> = ice_servers
         .iter()
@@ -96,7 +115,6 @@ pub fn listen_offerer_config(ice_servers: &[IceServer]) -> Result<PeerConfig, Tr
     } else {
         usable
     };
-    config.sendonly_opus = true;
     config.required_capabilities = RequiredCapabilities::default();
     Ok(config)
 }

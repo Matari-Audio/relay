@@ -12,14 +12,16 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use relay_session::{PUBLIC_LINK_ORIGIN, SessionControl, SessionRole, normalize_slug};
+use relay_session::{
+    ConnectionState, PUBLIC_LINK_ORIGIN, SessionControl, SessionRole, normalize_slug,
+};
 use relay_transport::{IceServer, TurnCredentials};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 use crate::local_listen::LocalHub;
-use crate::signal::{ClaimBody, Outbound, Signal};
+use crate::signal::{ClaimBody, Incoming, Outbound, Signal};
 use crate::ws;
 use crate::{SessionPersist, SessionStore, default_peer};
 
@@ -43,6 +45,9 @@ const ROOM_EVERY: Duration = Duration::from_millis(400);
 const IDLE_TICK: Duration = Duration::from_millis(80);
 const STARVED_TICK: Duration = Duration::from_millis(8);
 const USER_AGENT: &str = "Mozilla/5.0 RELAY/0.1";
+/// How long a join gets to find the host directly before the cloud tap
+/// opens. LAN is free and lower latency, so it goes first.
+const LAN_GRACE: Duration = Duration::from_secs(3);
 
 /// Owns the worker thread; dropping stops and joins it.
 pub struct Fanout {
@@ -121,6 +126,7 @@ struct Worker {
     stop: Arc<AtomicBool>,
     lan: Arc<LocalHub>,
     p2p: crate::p2p::Hub,
+    tap: crate::tap::Tap,
     cloud: Cloud,
     synced: Option<SessionPersist>,
     lan_seq: u32,
@@ -133,6 +139,8 @@ struct Worker {
     last_keep: Instant,
     /// Sub-batch PCM waiting for enough samples to emit.
     pending: Vec<f32>,
+    /// When the current join attempt started looking for a direct route.
+    lan_wait: Option<Instant>,
     silence: Vec<f32>,
 }
 
@@ -145,6 +153,7 @@ impl Worker {
             stop,
             lan,
             p2p: crate::p2p::Hub::default(),
+            tap: crate::tap::Tap::default(),
             cloud: Cloud::new(),
             synced: None,
             lan_seq: 0,
@@ -154,6 +163,7 @@ impl Worker {
             tail: (0.0, 0.0),
             last_keep: Instant::now(),
             pending: Vec::with_capacity(KEEP_SAMPLES),
+            lan_wait: None,
             silence: vec![0.0; WEB_BATCH_SAMPLES],
         }
     }
@@ -175,7 +185,19 @@ impl Worker {
             self.next_room = Instant::now() + ROOM_EVERY;
         }
 
-        if !self.control.linked() || !is_sender(self.control.role()) {
+        let role = self.control.role();
+        if self.control.linked() && role == SessionRole::ConnectJoin {
+            self.join_tick();
+            // Tick fast while audio is arriving; a data channel packet is
+            // 10 ms and IDLE_TICK would batch eight of them.
+            thread::sleep(if self.tap.connected() {
+                STARVED_TICK
+            } else {
+                IDLE_TICK
+            });
+            return;
+        }
+        if !self.control.linked() || !is_sender(role) {
             self.go_idle();
             thread::sleep(IDLE_TICK);
             return;
@@ -224,11 +246,56 @@ impl Worker {
     }
 
     fn go_idle(&mut self) {
+        self.drop_tap();
         self.cloud.reset(&self.control);
         self.p2p.clear();
         self.held = false;
         self.empty_runs = 0;
         self.pending.clear();
+    }
+
+    /// Join over the cloud when the direct route cannot reach the host.
+    ///
+    /// The joining plugin becomes an ordinary listener on the host's room, so
+    /// ICE handles the NAT traversal that a raw `ip:port` cannot. Only opened
+    /// once the direct attempt has had `LAN_GRACE`, and torn down the moment
+    /// the direct route connects.
+    fn join_tick(&mut self) {
+        let Some(slug) = self.control.peer().ok().and_then(|peer| host_slug(&peer)) else {
+            self.drop_tap();
+            return;
+        };
+        if self.control.snapshot().state == ConnectionState::Connected {
+            self.drop_tap();
+            return;
+        }
+        let since = *self.lan_wait.get_or_insert_with(Instant::now);
+        if since.elapsed() < LAN_GRACE {
+            return;
+        }
+
+        let pass = self.control.password().unwrap_or_default();
+        let inbound = self.cloud.maintain_out(&slug, &pass);
+        if let Some(servers) = self.cloud.poll_ice(&slug) {
+            self.tap.set_ice_servers(servers);
+        }
+        let mut outgoing = Vec::new();
+        let mut pcm = Vec::new();
+        self.tap.step(&inbound, &mut outgoing, &mut pcm);
+        self.cloud.send_all(outgoing);
+        if !pcm.is_empty() {
+            self.control.push_rx_pcm(&pcm);
+        }
+        self.control.set_cloud_rx(self.tap.connected());
+    }
+
+    fn drop_tap(&mut self) {
+        self.lan_wait = None;
+        if self.cloud.leg == "out" {
+            self.tap.clear();
+            self.cloud.reset(&self.control);
+        }
+        self.control.set_cloud_rx(false);
     }
 
     fn pump_p2p(&mut self, signals: &[Signal], lan_n: u32) {
@@ -355,6 +422,8 @@ struct DialOutcome {
 struct Cloud {
     agent: ureq::Agent,
     socket: Option<CloudSocket>,
+    /// Which leg of the room this socket is on: `in` to host, `out` to listen.
+    leg: &'static str,
     ice: Option<Receiver<Vec<IceServer>>>,
     next_ice_try: Instant,
     claimed: String,
@@ -383,6 +452,7 @@ impl Cloud {
                 .user_agent(USER_AGENT)
                 .build(),
             socket: None,
+            leg: "in",
             ice: None,
             next_ice_try: Instant::now(),
             claimed: String::new(),
@@ -418,6 +488,7 @@ impl Cloud {
 
     /// One tick of room upkeep. Returns inbound WebRTC signals.
     fn maintain(&mut self, control: &SessionControl, slug: &str, lan_http: u16) -> Vec<Signal> {
+        self.take_leg(control, "in");
         self.poll_dial();
         let port = control
             .snapshot()
@@ -446,7 +517,7 @@ impl Cloud {
                 )
                 .to_json()
             });
-            self.start_dial(slug.to_owned(), key, body);
+            self.start_dial(slug.to_owned(), key, body, "in");
         }
 
         let mut signals = Vec::new();
@@ -475,7 +546,69 @@ impl Cloud {
         signals
     }
 
-    fn start_dial(&mut self, slug: String, key: String, claim_body: Option<String>) {
+    /// One tick of the listener leg: `/out` on the host's room, exactly what
+    /// the browser listen page opens. Returns inbound room messages.
+    fn maintain_out(&mut self, slug: &str, pass: &str) -> Vec<Incoming> {
+        self.take_leg_out();
+        self.poll_dial();
+        if self.dial.is_none() && self.socket.is_none() && Instant::now() >= self.next_ws_try {
+            self.start_dial(slug.to_owned(), String::new(), None, "out");
+        }
+
+        let mut inbound = Vec::new();
+        let Some(ws) = self.socket.as_mut() else {
+            return inbound;
+        };
+        // The room takes the listener password as a bare text frame and
+        // answers `auth`. Unlocked rooms accept it too, so this needs no
+        // knowledge of whether the host set one.
+        if self.sent_cfg.is_empty() {
+            if !ws::send_keep(ws, Message::Text(pass.to_owned().into())) {
+                self.drop_socket();
+                return inbound;
+            }
+            "sent".clone_into(&mut self.sent_cfg);
+        }
+        if self.last_ping.elapsed() >= PING_EVERY {
+            if !ws::send_keep(ws, Message::Ping(Vec::new().into())) {
+                self.drop_socket();
+                return inbound;
+            }
+            self.last_ping = Instant::now();
+        }
+        let open = ws::drain(ws, |text| inbound.extend(Incoming::parse(text)));
+        if !open {
+            self.drop_socket();
+        }
+        inbound
+    }
+
+    /// Switching roles switches legs; the old socket is for the wrong one.
+    fn take_leg(&mut self, control: &SessionControl, leg: &'static str) {
+        if self.leg != leg {
+            self.reset(control);
+            self.leg = leg;
+            self.next_ws_try = Instant::now();
+        }
+    }
+
+    fn take_leg_out(&mut self) {
+        if self.leg != "out" {
+            self.drop_socket();
+            self.claimed.clear();
+            self.dial = None;
+            self.leg = "out";
+            self.next_ws_try = Instant::now();
+        }
+    }
+
+    fn start_dial(
+        &mut self,
+        slug: String,
+        key: String,
+        claim_body: Option<String>,
+        leg: &'static str,
+    ) {
         let (tx, rx) = mpsc::channel();
         let agent = self.agent.clone();
         let spawned = thread::Builder::new()
@@ -490,12 +623,12 @@ impl Cloud {
                     Some(_) => DialOutcome {
                         claimed: Some(key),
                         claim_failed: false,
-                        socket: open_in(&slug),
+                        socket: open_room(&slug, leg),
                     },
                     None => DialOutcome {
                         claimed: None,
                         claim_failed: false,
-                        socket: open_in(&slug),
+                        socket: open_room(&slug, leg),
                     },
                 };
                 let _ = tx.send(outcome);
@@ -657,12 +790,12 @@ fn claim(agent: &ureq::Agent, body: &str) -> Result<(), Box<ureq::Error>> {
         .map_err(Box::new)
 }
 
-/// Blocking: DNS + TCP + TLS + WebSocket handshake for `wss://…/<slug>/in`.
-fn open_in(slug: &str) -> Option<CloudSocket> {
+/// Blocking: DNS + TCP + TLS + WebSocket handshake for `wss://…/<slug>/<leg>`.
+fn open_room(slug: &str, leg: &str) -> Option<CloudSocket> {
     let host = PUBLIC_LINK_ORIGIN
         .strip_prefix("https://")
         .unwrap_or(PUBLIC_LINK_ORIGIN);
-    let mut request = format!("wss://{host}/{slug}/in")
+    let mut request = format!("wss://{host}/{slug}/{leg}")
         .into_client_request()
         .ok()?;
     let headers = request.headers_mut();
@@ -691,6 +824,19 @@ fn open_in(slug: &str) -> Option<CloudSocket> {
         }
     }
     None
+}
+
+/// The room name behind a join target, or `None` when the user typed an
+/// address. Mirrors `lan_slug` in relay-session: anything with a `:` or `.`
+/// is a host, not a room.
+fn host_slug(peer: &str) -> Option<String> {
+    let trimmed = peer.trim();
+    let raw = trimmed.strip_prefix("lan:").unwrap_or(trimmed);
+    if raw.is_empty() || raw.contains(':') || raw.contains('.') {
+        return None;
+    }
+    let slug = normalize_slug(raw);
+    (!slug.is_empty()).then_some(slug)
 }
 
 /// IPv4 first: a black-holed IPv6 route is common on Linux DAW hosts.
@@ -820,6 +966,16 @@ mod tests {
     }
 
     #[test]
+    fn host_slug_only_accepts_room_names() {
+        assert_eq!(host_slug("Studio Mix"), Some("studiomix".into()));
+        assert_eq!(host_slug("lan:studio-mix"), Some("studio-mix".into()));
+        // An address is for the direct route; there is no room by that name.
+        assert_eq!(host_slug("192.168.1.5:17492"), None);
+        assert_eq!(host_slug("relay.example.com"), None);
+        assert_eq!(host_slug("   "), None);
+    }
+
+    #[test]
     fn ordered_addrs_puts_ipv4_first() {
         let addrs = ordered_addrs("localhost", 443);
         let first_v6 = addrs.iter().position(SocketAddr::is_ipv6);
@@ -861,7 +1017,7 @@ mod tests {
         let slug = diag_slug("diag");
         diag_claim(&slug);
         assert!(
-            open_in(&slug).is_some(),
+            open_room(&slug, "in").is_some(),
             "/in must open with the plugin's TLS stack"
         );
     }
@@ -879,7 +1035,7 @@ mod tests {
         listener
             .send(Message::Text(r#"{"t":"want"}"#.to_owned().into()))
             .expect("listener want");
-        let mut socket = open_in(&slug).expect("host /in after waiting listener");
+        let mut socket = open_room(&slug, "in").expect("host /in after waiting listener");
         let deadline = Instant::now() + Duration::from_secs(4);
         let mut signals = Vec::new();
         while Instant::now() < deadline {

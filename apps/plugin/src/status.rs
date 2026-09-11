@@ -37,6 +37,8 @@ pub struct Facts {
     pub web_silent: bool,
     pub listeners: u32,
     pub dropouts: u32,
+    /// A cloud join is carrying the host's audio instead of the direct route.
+    pub cloud: bool,
 }
 
 impl Facts {
@@ -56,6 +58,7 @@ impl Facts {
                 .saturating_add(control.web_listeners())
                 .saturating_add(control.lan_listeners()),
             dropouts: snap.dropouts,
+            cloud: control.cloud_rx(),
         }
     }
 }
@@ -115,6 +118,9 @@ fn share_bits(facts: &Facts) -> (Health, Vec<String>) {
 fn join_bits(facts: &Facts) -> (Health, Vec<String>) {
     if facts.connected || facts.listeners > 0 {
         return (Health::Live, vec!["Connected".into()]);
+    }
+    if facts.cloud {
+        return (Health::Live, vec!["Connected".into(), "via cloud".into()]);
     }
     if facts.bound {
         return (Health::Pending, vec!["Joining".into()]);

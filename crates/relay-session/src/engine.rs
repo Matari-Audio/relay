@@ -202,6 +202,8 @@ pub struct SessionWorker {
     pcm_ts: u32,
     pcm_bytes: Vec<u8>,
     pcm_decode: Vec<f32>,
+    cloud_bytes: Vec<u8>,
+    cloud_timestamp: u32,
     web_pcm: Vec<f32>,
     web_pcm_seq: u64,
     lan_frame: PcmFrame,
@@ -304,6 +306,8 @@ impl SessionEngine {
                 pcm_ts: 0,
                 pcm_bytes: vec![0; media_pcm_samples.saturating_mul(2)],
                 pcm_decode: vec![0.0; media_pcm_samples],
+                cloud_bytes: Vec::new(),
+                cloud_timestamp: 0,
                 web_pcm: Vec::new(),
                 web_pcm_seq: 0,
                 lan_frame: PcmFrame::empty(),
@@ -811,6 +815,32 @@ impl SessionWorker {
             port: self.plane.local_addr().map(|addr| addr.port()).unwrap_or(0),
             name: Self::slug_text(&self.slug, self.slug_len).to_string(),
         }
+    }
+
+    /// Play out audio from a cloud join, which arrives already decoded.
+    ///
+    /// The tap decodes 10 ms at a time but the engine's frame may be longer,
+    /// so a partial frame is carried to the next call rather than dropped.
+    ///
+    /// ponytail: quantises to s16 so it can reuse the LAN road below. The
+    /// source is Opus at 256 kbps or less, so 16 bits costs nothing audible;
+    /// give this its own float path if RELAY ever carries lossless off-LAN.
+    pub fn push_cloud_pcm(&mut self, samples: &[f32]) {
+        for sample in samples {
+            let quant = (sample.clamp(-1.0, 1.0) * 32_767.0) as i16;
+            self.cloud_bytes.extend_from_slice(&quant.to_le_bytes());
+        }
+        let frame_bytes = self.tx.media_pcm_frame_samples().max(2) * 2;
+        let whole = self.cloud_bytes.len() / frame_bytes * frame_bytes;
+        if whole == 0 {
+            return;
+        }
+        let mut bytes = core::mem::take(&mut self.cloud_bytes);
+        self.push_lan_pcm(&bytes[..whole], self.cloud_timestamp);
+        let frames = (whole / 2 / CHANNELS) as u32;
+        self.cloud_timestamp = self.cloud_timestamp.wrapping_add(frames);
+        bytes.drain(..whole);
+        self.cloud_bytes = bytes;
     }
 
     fn push_lan_pcm(&mut self, samples: &[u8], timestamp: u32) {
