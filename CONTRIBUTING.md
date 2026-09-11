@@ -35,6 +35,22 @@ cargo truce install --au3          # macOS, Xcode
 
 Workspace checks live at the repo root (`just check`, `just test`).
 
+## Cut a release
+
+Releases are built on a developer machine, not in CI: `apps/plugin` compiles
+against a sibling Truce checkout that CI does not have.
+
+```bash
+./scripts/release.sh                      # gate, then package into dist/
+./scripts/release.sh build --no-notarize  # package only, no Apple credentials
+./scripts/release.sh publish v0.1.0       # upload dist/ to a GitHub release
+```
+
+A host builds its own platform: the Linux run makes a tarball plus
+`install.sh`, macOS makes a `.pkg`, Windows makes a `.exe`. Run it on each OS
+you ship, copy the results into one `dist/`, then publish from there — the
+checksum file is regenerated over everything staged.
+
 ## License
 
 By contributing you agree that your changes are licensed under MPL-2.0, same as the rest of the tree. Keep the SPDX identifier `MPL-2.0` on new crates and `package.json` files.
