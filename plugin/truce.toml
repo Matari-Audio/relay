@@ -1,0 +1,15 @@
+[vendor]
+name = "Matari Audio"
+id = "com.matari.audio"
+url = "https://matari-audio.com"
+au_manufacturer = "Mtri"
+
+[[plugin]]
+name = "RELAY"
+bundle_id = "relay"
+crate = "relay-plugin"
+category = "effect"
+fourcc = "RlyP"
+au_tag = "Effects"
+vst3_subcategory = "Tools"
+description = "Share the track you're on with another DAW on your network, or hear theirs."

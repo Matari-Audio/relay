@@ -77,6 +77,14 @@ fn run(shared: &Shared, mut tx: Consumer<f32>, mut rx: Producer<f32>) {
     }
 }
 
+/// The address other machines reach us on: the one the OS would route a
+/// packet out of. `connect` on UDP sends nothing.
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let probe = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    probe.connect(("192.0.2.1", 9)).ok()?;
+    Some(probe.local_addr().ok()?.ip())
+}
+
 struct Session {
     sock: UdpSocket,
     role: Role,
@@ -102,7 +110,10 @@ impl Session {
         let (sock, host) = match role {
             Role::Off => return None,
             // Several instances on one machine each take the next port.
-            Role::Share => ((PORT..PORT + 16).find_map(|p| UdpSocket::bind(("0.0.0.0", p)).ok())?, None),
+            Role::Share => (
+                (PORT..PORT + 16).find_map(|p| UdpSocket::bind(("0.0.0.0", p)).ok())?,
+                None,
+            ),
             Role::Join => {
                 let peer = Shared::text(&shared.peer);
                 let peer = peer.trim();
@@ -116,7 +127,15 @@ impl Session {
         };
         sock.set_nonblocking(true).ok()?;
         if role == Role::Share {
-            shared.port.store(u32::from(sock.local_addr().ok()?.port()), Relaxed);
+            let port = sock.local_addr().ok()?.port();
+            shared.port.store(u32::from(port), Relaxed);
+            let ip = lan_ip().map_or_else(|| "this machine".to_owned(), |ip| ip.to_string());
+            let address = if port == PORT {
+                ip
+            } else {
+                format!("{ip}:{port}")
+            };
+            *shared.address.lock().unwrap_or_else(|e| e.into_inner()) = address;
         }
         Some(Self {
             sock,
@@ -137,7 +156,9 @@ impl Session {
         let now = Instant::now();
         let mut recv = [0u8; 2048];
         while let Ok((n, from)) = self.sock.recv_from(&mut recv) {
-            let Some(p) = wire::decode(&recv[..n]) else { continue };
+            let Some(p) = wire::decode(&recv[..n]) else {
+                continue;
+            };
             if p.tag != self.tag {
                 continue;
             }
@@ -168,7 +189,9 @@ impl Session {
                     self.last_hello = Some(now);
                     self.control(wire::HELLO);
                 }
-                let live = self.last_audio.is_some_and(|t| now - t < Duration::from_millis(500));
+                let live = self
+                    .last_audio
+                    .is_some_and(|t| now - t < Duration::from_millis(500));
                 shared.peers.store(u32::from(live), Relaxed);
                 // Nothing to share while joined.
                 if let Ok(chunk) = tx.read_chunk(tx.slots()) {
@@ -194,13 +217,22 @@ impl Session {
             if n == 0 {
                 return;
             }
-            let Ok(chunk) = tx.read_chunk(n * CHANNELS) else { return };
+            let Ok(chunk) = tx.read_chunk(n * CHANNELS) else {
+                return;
+            };
             let (a, b) = chunk.as_slices();
             self.samples[..a.len()].copy_from_slice(a);
             self.samples[a.len()..a.len() + b.len()].copy_from_slice(b);
             chunk.commit_all();
             if !self.peers.is_empty() {
-                wire::encode(&mut self.buf, wire::AUDIO, self.tag, rate, self.frame, &self.samples[..n * CHANNELS]);
+                wire::encode(
+                    &mut self.buf,
+                    wire::AUDIO,
+                    self.tag,
+                    rate,
+                    self.frame,
+                    &self.samples[..n * CHANNELS],
+                );
                 for (peer, _) in &self.peers {
                     let _ = self.sock.send_to(&self.buf, peer);
                 }
@@ -211,7 +243,14 @@ impl Session {
 
     /// Join: place a packet at its frame index. Late packets are dropped,
     /// small gaps become silence, a big jump (host restarted) resyncs.
-    fn receive(&mut self, shared: &Shared, rate: u32, frame: u64, bytes: &[u8], rx: &mut Producer<f32>) {
+    fn receive(
+        &mut self,
+        shared: &Shared,
+        rate: u32,
+        frame: u64,
+        bytes: &[u8],
+        rx: &mut Producer<f32>,
+    ) {
         let mismatch = rate != shared.rate.load(Relaxed);
         shared.rate_mismatch.store(mismatch, Relaxed);
         // ponytail: equal rates only; resample in the link if mixed rates matter.
@@ -251,7 +290,11 @@ impl Drop for Session {
 mod tests {
     use super::*;
 
-    fn link(role: Role, room: &str, peer: &str) -> (Arc<Shared>, Link, Producer<f32>, Consumer<f32>) {
+    fn link(
+        role: Role,
+        room: &str,
+        peer: &str,
+    ) -> (Arc<Shared>, Link, Producer<f32>, Consumer<f32>) {
         let shared = Shared::new();
         shared.rate.store(48_000, Relaxed);
         shared.set_text(&shared.room, room);
@@ -282,7 +325,10 @@ mod tests {
         let port = host.port.load(Relaxed);
         let (_, _j, _, mut hear) = link(Role::Join, "room-a", &format!("127.0.0.1:{port}"));
         let (_, _x, _, stranger) = link(Role::Join, "room-b", &format!("127.0.0.1:{port}"));
-        assert!(wait(|| host.peers.load(Relaxed) == 1), "joiner registered, stranger not");
+        assert!(
+            wait(|| host.peers.load(Relaxed) == 1),
+            "joiner registered, stranger not"
+        );
 
         let sent: Vec<f32> = (0..4_800).map(|i| (i as f32 * 0.01).sin()).collect();
         let chunk = send.write_chunk_uninit(sent.len()).unwrap();

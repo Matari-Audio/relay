@@ -30,7 +30,8 @@ pub struct Playout {
 
 impl Playout {
     pub fn new(rx: Consumer<f32>) -> Self {
-        let slip = Slip::new(CHUNK, CHANNELS, FixedAsync::Output).expect("64 frames is a valid Slip chunk");
+        let slip = Slip::new(CHUNK, CHANNELS, FixedAsync::Output)
+            .expect("64 frames is a valid Slip chunk");
         let input = vec![0.0; slip.input_frames_max() * CHANNELS];
         Self {
             rx,
@@ -94,7 +95,12 @@ impl Playout {
             }
         }
         let frames = n.min(self.fifo_len / CHANNELS);
-        for (i, frame) in self.fifo[..frames * CHANNELS].chunks_exact(CHANNELS).enumerate() {
+        for (i, frame) in self.fifo[..frames * CHANNELS]
+            .as_chunks::<CHANNELS>()
+            .0
+            .iter()
+            .enumerate()
+        {
             left[i] += frame[0];
             right[i] += frame[1];
         }

@@ -7,11 +7,12 @@
 mod net;
 mod playout;
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
 pub use net::Link;
 pub use playout::Playout;
+pub use rtrb;
 
 /// Share listens here; Join dials it when no port is given.
 pub const PORT: u16 = 17_492;
@@ -44,6 +45,8 @@ pub struct Shared {
     role: AtomicU8,
     /// Local host sample rate.
     pub rate: AtomicU32,
+    /// Frames in the last host block.
+    pub block: AtomicU32,
     /// Room name. With the password it makes the tag every packet carries.
     pub room: Mutex<String>,
     pub password: Mutex<String>,
@@ -55,9 +58,10 @@ pub struct Shared {
     pub peers: AtomicU32,
     /// Share: the bound port. 0 when not bound.
     pub port: AtomicU32,
+    /// Share: what a joiner types as Host, `192.168.1.20` or `…:17493`.
+    pub address: Mutex<String>,
     /// Join: the sender's rate differs from ours (v1 plays silence then).
     pub rate_mismatch: AtomicBool,
-    pub underruns: AtomicU64,
     stop: AtomicBool,
 }
 
@@ -122,7 +126,14 @@ pub mod wire {
         pub samples: &'a [u8],
     }
 
-    pub fn encode(out: &mut Vec<u8>, kind: u8, tag: [u8; 8], rate: u32, frame: u64, samples: &[f32]) {
+    pub fn encode(
+        out: &mut Vec<u8>,
+        kind: u8,
+        tag: [u8; 8],
+        rate: u32,
+        frame: u64,
+        samples: &[f32],
+    ) {
         out.clear();
         out.extend_from_slice(b"RL");
         out.extend_from_slice(&[kind, super::CHANNELS as u8]);
@@ -139,7 +150,7 @@ pub mod wire {
             return None;
         }
         let samples = &buf[HEADER..];
-        if samples.len() % (4 * super::CHANNELS) != 0 {
+        if !samples.len().is_multiple_of(4 * super::CHANNELS) {
             return None;
         }
         Some(Packet {
@@ -152,15 +163,39 @@ pub mod wire {
     }
 
     pub fn samples(bytes: &[u8]) -> impl Iterator<Item = f32> + '_ {
-        bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 }
 
-/// The two rings between the audio thread and the link, sized [`RING`].
-pub fn rings() -> (
-    (rtrb::Producer<f32>, rtrb::Consumer<f32>),
-    (rtrb::Producer<f32>, rtrb::Consumer<f32>),
-) {
+/// A fresh three-word room name, `quiet-dusty-papaya`. Unique enough per
+/// instance; the password is what keeps a room private.
+pub fn room_name() -> String {
+    use std::hash::{BuildHasher, RandomState};
+    const ADJ: &[&str] = &[
+        "big", "quiet", "late", "warm", "cold", "loud", "soft", "bright", "dark", "wild", "rusty",
+        "dusty", "sweet", "heavy", "sharp", "slow", "fast", "deep", "tiny", "pale", "calm", "odd",
+        "bold", "polar", "lunar", "still", "vivid", "gold",
+    ];
+    const NOUN: &[&str] = &[
+        "papaya", "mango", "cedar", "river", "stone", "fox", "wolf", "moth", "ember", "comet",
+        "attic", "kettle", "drum", "piano", "fader", "meter", "booth", "lamp", "tape", "reel",
+        "stem", "plate", "spring", "canyon", "meadow", "velvet", "copper", "quartz",
+    ];
+    let z = RandomState::new().hash_one(std::process::id()) as usize;
+    let (a, b) = (z % ADJ.len(), (z / ADJ.len()) % (ADJ.len() - 1));
+    let b = if b >= a { b + 1 } else { b };
+    format!("{}-{}-{}", ADJ[a], ADJ[b], NOUN[(z >> 32) % NOUN.len()])
+}
+
+pub type Ring = (rtrb::Producer<f32>, rtrb::Consumer<f32>);
+
+/// The two rings between the audio thread and the link, sized [`RING`]:
+/// (shared audio, played audio).
+pub fn rings() -> (Ring, Ring) {
     (rtrb::RingBuffer::new(RING), rtrb::RingBuffer::new(RING))
 }
 
@@ -174,7 +209,10 @@ mod tests {
         let t = tag("big-filthy-papaya", "");
         wire::encode(&mut buf, wire::AUDIO, t, 48_000, 7, &[0.5, -0.25]);
         let p = wire::decode(&buf).unwrap();
-        assert_eq!((p.kind, p.tag, p.rate, p.frame), (wire::AUDIO, t, 48_000, 7));
+        assert_eq!(
+            (p.kind, p.tag, p.rate, p.frame),
+            (wire::AUDIO, t, 48_000, 7)
+        );
         assert_eq!(wire::samples(p.samples).collect::<Vec<_>>(), [0.5, -0.25]);
         assert!(wire::decode(&buf[..10]).is_none());
         assert!(wire::decode(&buf[..buf.len() - 1]).is_none());
