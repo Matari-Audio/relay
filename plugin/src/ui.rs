@@ -1,6 +1,6 @@
 //! The editor: a compact charcoal panel. Room, password and link fields
-//! with their actions inside them on the left; input and output meters with
-//! the output fader on the right, like a mastering limiter.
+//! with their actions inside them on the left; input and output meters,
+//! each with its own fader, on the right.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
@@ -35,7 +35,7 @@ const H: f64 = 24.0;
 const R: f64 = 4.0;
 /// Meter floor, dB.
 const FLOOR: f32 = -60.0;
-/// Output fader range, dB, as the param declares it.
+/// Fader range, dB, as the params declare it.
 const GAIN: (f64, f64) = (-24.0, 12.0);
 /// Width of an L/R meter pair and of the scale between pairs.
 const PAIR: f64 = 28.0;
@@ -108,8 +108,8 @@ struct View {
     copied: bool,
     /// IN L, IN R, OUT L, OUT R.
     rails: [Rail; 4],
-    /// Highest IN, OUT and true peak since the last reset, linear.
-    max: [f32; 3],
+    /// Highest IN and OUT since the last reset, linear.
+    max: [f32; 2],
     last: Instant,
 }
 
@@ -128,7 +128,7 @@ impl Default for View {
             show_address: false,
             copied: false,
             rails: [rail; 4],
-            max: [0.0; 3],
+            max: [0.0; 2],
             last: now,
         }
     }
@@ -389,8 +389,8 @@ fn build(
     row([left, meters]).gap(12.0).pad(10.0).fill(BG)
 }
 
-/// IN and OUT pairs, the scale between them, the output fader riding the
-/// OUT pair, max-peak readouts on top and the gain below.
+/// IN and OUT pairs with a fader riding each, the scale between them,
+/// max-peak readouts on top and the gains below.
 fn meters(
     ui: &mut Ui,
     bridge: &mut Bridge<RelayParams>,
@@ -405,69 +405,33 @@ fn meters(
     for (rail, peak) in view.rails.iter_mut().zip(takes) {
         rail.feed(peak, now, dt);
     }
-    let latest = [
-        takes[0].max(takes[1]),
-        takes[2].max(takes[3]),
-        shared.take_peak(Peak::TruePeak),
-    ];
-    for (max, v) in view.max.iter_mut().zip(latest) {
-        *max = max.max(v);
-    }
+    view.max[0] = view.max[0].max(takes[0]).max(takes[1]);
+    view.max[1] = view.max[1].max(takes[2]).max(takes[3]);
 
-    // Readouts: max IN, max OUT, max true peak. A click clears them.
+    // Readouts: max IN and OUT. A click clears them.
     if ui.get("peaks").clicked_with(Button::Primary) {
-        view.max = [0.0; 3];
+        view.max = [0.0; 2];
     }
-    let readouts: Vec<El> = ["IN", "OUT", "TP"]
-        .into_iter()
-        .zip(view.max)
-        .map(|(label, v)| {
-            let value = if v < 1e-5 {
-                "-inf".into()
-            } else {
-                format!("{:.1}", db(v))
-            };
-            column([
-                text(label).text_size(8.0).fill(DIM),
-                mono(fonts, value, 9.0, if v >= 1.0 { RED } else { TEXT }),
-            ])
+    let [max_in, max_out] = [("IN", view.max[0]), ("OUT", view.max[1])].map(|(label, v)| {
+        let ink = if v >= 1.0 { RED } else { TEXT };
+        let value = if v < 1e-5 {
+            minus_infinity(fonts, ink)
+        } else {
+            mono(fonts, format!("{:.1}", db(v)), 9.0, ink)
+        };
+        column([text(label).text_size(8.0).fill(DIM), value])
             .align(Align::Center)
-            .w((PAIR * 2.0 + SCALE) / 3.0)
-        })
-        .collect();
-    let readouts = row(readouts)
+            .w(PAIR)
+    });
+    let readouts = row![max_in, spacer().w(SCALE), max_out]
         .role(Kind::Button)
         .label("Reset peaks")
         .id("peaks");
 
     let [il, ir, ol, or] = view.rails;
     let pair = |a: Rail, b: Rail| row![rail(a), rail(b)].gap(1.0).w(PAIR);
-
-    // The fader: drag anywhere on the OUT pair, double-click for 0 dB.
-    let gain = bridge.bind(ui, "fader", P::Output, |ui, v| {
-        let h = ui
-            .scene()
-            .and_then(|s| s.surface("fader"))
-            .map_or(100.0, |s| s.frame.size.height);
-        ui.drag("fader", v, 0.0..=1.0, h, true);
-        if ui.double_click("fader") {
-            *v = -GAIN.0 / (GAIN.1 - GAIN.0);
-        }
-        let handle = row([leaf(0.0, 3.0).grow(1.0).radius(1.5).fill(TEXT)])
-            .pad(1.0)
-            .radius(2.5)
-            .fill(BG);
-        overlay([pair(ol, or), at(1.0 - *v as f32, handle)])
-            .role(Kind::Slider {
-                value: *v,
-                min: 0.0,
-                max: 1.0,
-            })
-            .label("Output")
-            .focusable()
-            .id("fader")
-    });
-    let gain_db = GAIN.0 + bridge.value(P::Output) * (GAIN.1 - GAIN.0);
+    let input = fader(ui, bridge, "in", P::Input, "Input", pair(il, ir));
+    let output = fader(ui, bridge, "out", P::Output, "Output", pair(ol, or));
 
     let scale = column(
         [(0, 6.0), (-6, 6.0), (-12, 12.0), (-24, 24.0), (-48, 12.0)].map(|(d, span)| {
@@ -478,19 +442,74 @@ fn meters(
     )
     .w(SCALE);
 
-    let under = |el: El| column([el]).align(Align::Center).w(PAIR);
+    let under = |p: P| {
+        let db = GAIN.0 + bridge.value(p) * (GAIN.1 - GAIN.0);
+        column([mono(fonts, format!("{db:+.1}"), 8.0, TEXT)])
+            .align(Align::Center)
+            .w(PAIR)
+    };
     column([
         readouts,
-        row![pair(il, ir), scale, gain].grow(1.0),
+        row![input, scale, output].grow(1.0),
         row![
-            under(text("IN").text_size(8.0).fill(DIM)),
+            under(P::Input),
             spacer().w(SCALE),
-            under(mono(fonts, format!("{gain_db:+.1}"), 8.0, TEXT)),
+            under(P::Output)
         ],
     ])
     .gap(4.0)
     .w(PAIR * 2.0 + SCALE)
     .h(Len::Pct(100.0))
+}
+
+/// A gain fader over a meter pair: drag anywhere on it, double-click for
+/// 0 dB.
+fn fader(
+    ui: &mut Ui,
+    bridge: &mut Bridge<RelayParams>,
+    id: &'static str,
+    param: P,
+    label: &'static str,
+    meter: El,
+) -> El {
+    bridge.bind(ui, id, param, |ui, v| {
+        let h = ui
+            .scene()
+            .and_then(|s| s.surface(id))
+            .map_or(100.0, |s| s.frame.size.height);
+        ui.drag(id, v, 0.0..=1.0, h, true);
+        if ui.double_click(id) {
+            *v = -GAIN.0 / (GAIN.1 - GAIN.0);
+        }
+        let handle = row([leaf(0.0, 3.0).grow(1.0).radius(1.5).fill(TEXT)])
+            .pad(1.0)
+            .radius(2.5)
+            .fill(BG);
+        overlay([meter, at(1.0 - *v as f32, handle)])
+            .role(Kind::Slider {
+                value: *v,
+                min: 0.0,
+                max: 1.0,
+            })
+            .label(label)
+            .focusable()
+            .id(id)
+    })
+}
+
+/// "−∞" for a readout that has seen nothing. The fonts have no ∞, so it
+/// is drawn: a lemniscate the height of a digit.
+fn minus_infinity(fonts: &Fonts, ink: Color) -> El {
+    let loop_ = canvas(move |_| {
+        let curve = (0..24).map(|i| {
+            let t = f64::from(i) * std::f64::consts::TAU / 24.0;
+            let d = 1.0 + t.sin().powi(2);
+            Point::new(5.0 + 4.2 * t.cos() / d, 5.5 + 4.2 * t.sin() * t.cos() / d)
+        });
+        vec![Draw::stroke(Path::polyline(curve, true), ink, 1.1)]
+    })
+    .size(10.0, 11.0);
+    row![mono(fonts, "\u{2212}".into(), 9.0, ink), loop_].center()
 }
 
 /// The RELAY mark, a dot sending two chevrons. While live the chevrons
@@ -683,8 +702,11 @@ mod snapshot {
             (Peak::InR, 0.5),
             (Peak::OutL, 0.2),
             (Peak::OutR, 1.02),
-            (Peak::TruePeak, 1.1),
         ] {
+            // Join shows an empty IN: the "−∞" readout.
+            if name == "join" && matches!(p, Peak::InL | Peak::InR) {
+                continue;
+            }
             shared.note_peak(p, v);
         }
         let mut view = View {

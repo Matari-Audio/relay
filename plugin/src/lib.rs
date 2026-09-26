@@ -28,9 +28,12 @@ pub enum Mode {
 pub struct RelayParams {
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
-    /// Level of what is shared (Share) or played (Join).
+    /// Level of this plugin's output: what you hear.
     #[param(name = "Output", range = "linear(-24, 12)", unit = "dB", default = 0.0)]
     pub output: FloatParam,
+    /// Level of the room's audio: what is shared (Share) or played (Join).
+    #[param(name = "Input", range = "linear(-24, 12)", unit = "dB", default = 0.0)]
+    pub input: FloatParam,
     #[persist = "session"]
     pub link: Session,
 }
@@ -93,9 +96,8 @@ pub struct Dsp {
     playout: Playout,
     left: Vec<f32>,
     right: Vec<f32>,
-    /// The output gain the last block ended on, linear.
-    gain: f32,
-    true_peak: relay_core::TruePeak,
+    /// The input and output gains the last block ended on, linear.
+    gain: [f32; 2],
     /// Stops and joins the link thread on drop.
     _link: Option<Link>,
 }
@@ -110,8 +112,7 @@ impl Dsp {
             playout: Playout::new(rx),
             left: Vec::new(),
             right: Vec::new(),
-            gain: 1.0,
-            true_peak: relay_core::TruePeak::default(),
+            gain: [1.0; 2],
         }
     }
 }
@@ -165,14 +166,11 @@ impl PluginLogic for Relay {
         let (l, r) = (&mut state.left[..n], &mut state.right[..n]);
         l.copy_from_slice(&buffer.input(0)[..n]);
         r.copy_from_slice(&buffer.input(buffer.num_input_channels().min(2) - 1)[..n]);
-        let shared = &state.shared;
-        shared.note_peak(Peak::InL, peak(l));
-        shared.note_peak(Peak::InR, peak(r));
-
-        let gain = db_to_linear(params.output.value());
+        let gain = [params.input.value(), params.output.value()].map(db_to_linear);
         match role {
             Role::Share => {
-                ramp(l, r, state.gain, gain);
+                ramp(l, state.gain[0], gain[0]);
+                ramp(r, state.gain[0], gain[0]);
                 if let Ok(chunk) = state.tx.write_chunk_uninit(n * 2) {
                     chunk.fill_from_iter(l.iter().zip(r.iter()).flat_map(|(a, b)| [*a, *b]));
                 }
@@ -181,23 +179,30 @@ impl PluginLogic for Relay {
                 l.fill(0.0);
                 r.fill(0.0);
                 state.playout.render(l, r);
-                shared.latency.store(state.playout.target() as u32, Relaxed);
-                ramp(l, r, state.gain, gain);
+                state.shared.latency.store(state.playout.target() as u32, Relaxed);
+                ramp(l, state.gain[0], gain[0]);
+                ramp(r, state.gain[0], gain[0]);
                 for (ch, src) in [&*l, &*r].into_iter().enumerate().take(outs) {
                     for (o, s) in buffer.output(ch)[..n].iter_mut().zip(src) {
                         *o += s;
                     }
                 }
             }
-            Role::Off => {
-                l.fill(0.0);
-                r.fill(0.0);
-            }
+            Role::Off => {}
         }
+        let shared = &state.shared;
+        shared.note_peak(Peak::InL, peak(l));
+        shared.note_peak(Peak::InR, peak(r));
+        let mut out = [0.0; 2];
+        for ch in 0..outs {
+            let o = &mut buffer.output(ch)[..n];
+            ramp(o, state.gain[1], gain[1]);
+            out[ch] = peak(o);
+        }
+        // A mono output shows on both rails.
+        shared.note_peak(Peak::OutL, out[0]);
+        shared.note_peak(Peak::OutR, out[outs.saturating_sub(1)]);
         state.gain = gain;
-        shared.note_peak(Peak::OutL, peak(l));
-        shared.note_peak(Peak::OutR, peak(r));
-        shared.note_peak(Peak::TruePeak, state.true_peak.process(l, r));
         ProcessStatus::Normal
     }
 
@@ -211,13 +216,11 @@ fn peak(x: &[f32]) -> f32 {
 }
 
 /// Scale by a gain gliding from `from` to `to` over the block, so moving
-/// the Output fader never clicks.
-fn ramp(l: &mut [f32], r: &mut [f32], from: f32, to: f32) {
-    let step = (to - from) / l.len().max(1) as f32;
-    for (i, (a, b)) in l.iter_mut().zip(r.iter_mut()).enumerate() {
-        let g = from + step * (i + 1) as f32;
-        *a *= g;
-        *b *= g;
+/// a fader never clicks.
+fn ramp(x: &mut [f32], from: f32, to: f32) {
+    let step = (to - from) / x.len().max(1) as f32;
+    for (i, s) in x.iter_mut().enumerate() {
+        *s *= from + step * (i + 1) as f32;
     }
 }
 

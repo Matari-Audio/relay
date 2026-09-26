@@ -5,7 +5,6 @@
 //! atomics. Sockets, strings and allocation live on the network thread.
 
 mod mdns;
-mod meter;
 mod net;
 mod playout;
 mod portmap;
@@ -15,7 +14,6 @@ mod signal;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
-pub use meter::TruePeak;
 pub use net::Link;
 pub use playout::Playout;
 pub use rtrb;
@@ -86,15 +84,14 @@ impl Net {
     }
 }
 
-/// The editor's meters: input, output (what is shared or played) and the
-/// output's true peak.
+/// The editor's meters: input (what is shared or played) and output
+/// (what the plugin plays out).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Peak {
     InL = 0,
     InR = 1,
     OutL = 2,
     OutR = 3,
-    TruePeak = 4,
 }
 
 /// Everything the plugin, the editor and the network thread share.
@@ -128,7 +125,7 @@ pub struct Shared {
     pub latency: AtomicU32,
     /// Peaks since the editor last looked, as `f32` bits, indexed by
     /// [`Peak`]. The audio thread raises them, the editor takes them.
-    pub peaks: [AtomicU32; 5],
+    pub peaks: [AtomicU32; 4],
     stop: AtomicBool,
 }
 
