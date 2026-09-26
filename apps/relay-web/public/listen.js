@@ -151,4 +151,4 @@ $("copy").onclick = async () => {
 };
 
 setInterval(() => ws?.readyState === 1 && ws.send("ping"), 30_000);
-if (!room) $("room").focus();
+if (!room) { status("Enter a room name"); $("room").focus(); }
