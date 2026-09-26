@@ -121,7 +121,7 @@ fn build(ui: &mut Ui, bridge: &mut Bridge<RelayParams>, shared: &Shared) -> El {
             Success,
             format!("Sharing on port {port} · {peers} listening"),
         ),
-        2 if shared.rate_mismatch.load(Relaxed) => (Warning, "Sample rates differ".to_owned()),
+        2 if shared.net() == relay_core::Net::RateMismatch => (Warning, "Sample rates differ".to_owned()),
         2 if peers > 0 => (Success, "Live".to_owned()),
         2 => (Warning, "Waiting for host".to_owned()),
         _ => (Field, "Off".to_owned()),

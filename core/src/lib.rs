@@ -20,6 +20,8 @@ pub const PORT: u16 = 17_492;
 pub const CHANNELS: usize = 2;
 /// Ring capacity in samples: a quarter second of stereo at 192 kHz.
 pub const RING: usize = 48_000 * CHANNELS;
+/// Signaling and the browser listen page: `https://{SITE}/{room}`.
+pub const SITE: &str = "relay.matari-audio.com";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -39,6 +41,45 @@ impl Role {
     }
 }
 
+/// What the link is doing, for the editor's status line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Net {
+    Idle = 0,
+    /// Share: up, nobody listening yet. Join: looking for the room.
+    Waiting = 1,
+    /// Audio flowing over the LAN, uncompressed.
+    Lan = 2,
+    /// Audio flowing over the internet (WebRTC, Opus).
+    Internet = 3,
+    /// Cannot reach the signaling server; LAN still works.
+    Offline = 4,
+    /// Share: another plugin already hosts this room.
+    Taken = 5,
+    /// Join: the host refused our password.
+    Denied = 6,
+    /// Join: the sender's sample rate differs from ours.
+    RateMismatch = 7,
+}
+
+impl Net {
+    pub fn from_u8(v: u8) -> Self {
+        [
+            Self::Idle,
+            Self::Waiting,
+            Self::Lan,
+            Self::Internet,
+            Self::Offline,
+            Self::Taken,
+            Self::Denied,
+            Self::RateMismatch,
+        ]
+        .get(usize::from(v))
+        .copied()
+        .unwrap_or(Self::Idle)
+    }
+}
+
 /// Everything the plugin, the editor and the network thread share.
 #[derive(Default)]
 pub struct Shared {
@@ -50,18 +91,24 @@ pub struct Shared {
     /// Room name. With the password it makes the tag every packet carries.
     pub room: Mutex<String>,
     pub password: Mutex<String>,
-    /// Join target: `host`, or `host:port`.
+    /// Proves to signaling that this instance owns its room. Random per
+    /// project, saved with it.
+    pub host_key: Mutex<String>,
+    /// Join: a LAN `host[:port]` to dial directly. Empty: find the room by
+    /// mDNS, then over the internet.
     pub peer: Mutex<String>,
-    /// Bumped whenever room, password or peer change, so the link rebuilds.
+    /// Bumped whenever room or password change, so the link rebuilds.
     pub config: AtomicU32,
-    /// Share: listeners. Join: 1 while audio arrives.
+    /// Share: listeners, LAN and internet. Join: 1 while audio arrives.
     pub peers: AtomicU32,
-    /// Share: the bound port. 0 when not bound.
+    /// Share: the bound LAN port. 0 when not bound.
     pub port: AtomicU32,
-    /// Share: what a joiner types as Host, `192.168.1.20` or `…:17493`.
+    /// Share: this machine's LAN address, `192.168.1.20` or `…:17493`.
     pub address: Mutex<String>,
-    /// Join: the sender's rate differs from ours (v1 plays silence then).
-    pub rate_mismatch: AtomicBool,
+    /// A [`Net`], written by the link.
+    pub net: AtomicU8,
+    /// Join: frames the playout buffer holds, written by the audio thread.
+    pub latency: AtomicU32,
     stop: AtomicBool,
 }
 
@@ -87,6 +134,14 @@ impl Shared {
         }
     }
 
+    pub fn net(&self) -> Net {
+        Net::from_u8(self.net.load(Relaxed))
+    }
+
+    pub fn set_net(&self, net: Net) {
+        self.net.store(net as u8, Relaxed);
+    }
+
     pub fn text(field: &Mutex<String>) -> String {
         field.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -97,7 +152,7 @@ impl Shared {
 pub fn tag(room: &str, password: &str) -> [u8; 8] {
     use sha2::{Digest, Sha256};
     let digest = Sha256::new()
-        .chain_update(room.trim().to_lowercase())
+        .chain_update(slug(room))
         .chain_update([0])
         .chain_update(password)
         .finalize();
@@ -171,6 +226,29 @@ pub mod wire {
     }
 }
 
+/// A room name as signaling and URLs accept it: lowercase `a-z0-9-`,
+/// at most 48 characters.
+pub fn slug(room: &str) -> String {
+    let mut out = String::new();
+    for c in room.trim().to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.truncate(48);
+    out.trim_end_matches('-').to_owned()
+}
+
+/// A random hex key, 32 characters.
+pub fn random_key() -> String {
+    use std::hash::{BuildHasher, RandomState};
+    (0..2)
+        .map(|i| format!("{:016x}", RandomState::new().hash_one(i)))
+        .collect()
+}
+
 /// A fresh three-word room name, `quiet-dusty-papaya`. Unique enough per
 /// instance; the password is what keeps a room private.
 pub fn room_name() -> String {
@@ -219,5 +297,7 @@ mod tests {
         assert!(wire::decode(b"XXXXXXXXXXXXXXXXXXXXXXXXXXXX").is_none());
         assert_ne!(tag("room", ""), tag("room", "pw"));
         assert_eq!(tag(" Room ", "pw"), tag("room", "pw"));
+        assert_eq!(slug(" Big Room!/x-"), "big-room-x");
+        assert_ne!(random_key(), random_key());
     }
 }

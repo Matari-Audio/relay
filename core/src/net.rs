@@ -106,7 +106,11 @@ impl Session {
     fn open(shared: &Shared, role: Role) -> Option<Self> {
         shared.peers.store(0, Relaxed);
         shared.port.store(0, Relaxed);
-        shared.rate_mismatch.store(false, Relaxed);
+        shared.set_net(if role == Role::Off {
+            crate::Net::Idle
+        } else {
+            crate::Net::Waiting
+        });
         let (sock, host) = match role {
             Role::Off => return None,
             // Several instances on one machine each take the next port.
@@ -182,6 +186,11 @@ impl Session {
             Role::Share => {
                 self.peers.retain(|(_, seen)| now - *seen < PEER_TIMEOUT);
                 shared.peers.store(self.peers.len() as u32, Relaxed);
+                shared.set_net(if self.peers.is_empty() {
+                    crate::Net::Waiting
+                } else {
+                    crate::Net::Lan
+                });
                 self.send(shared, tx);
             }
             Role::Join => {
@@ -193,6 +202,13 @@ impl Session {
                     .last_audio
                     .is_some_and(|t| now - t < Duration::from_millis(500));
                 shared.peers.store(u32::from(live), Relaxed);
+                if shared.net() != crate::Net::RateMismatch {
+                    shared.set_net(if live {
+                        crate::Net::Lan
+                    } else {
+                        crate::Net::Waiting
+                    });
+                }
                 // Nothing to share while joined.
                 if let Ok(chunk) = tx.read_chunk(tx.slots()) {
                     chunk.commit_all();
@@ -252,7 +268,9 @@ impl Session {
         rx: &mut Producer<f32>,
     ) {
         let mismatch = rate != shared.rate.load(Relaxed);
-        shared.rate_mismatch.store(mismatch, Relaxed);
+        if mismatch {
+            shared.set_net(crate::Net::RateMismatch);
+        }
         // ponytail: equal rates only; resample in the link if mixed rates matter.
         if mismatch {
             return;
