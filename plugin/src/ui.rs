@@ -398,7 +398,7 @@ fn segment(ui: &Ui, name: &str, on: bool) -> (El, bool) {
     (el, clicked)
 }
 
-/// A vertical peak meter on a -60..0 dB scale: blue, amber over -6 dB,
+/// A vertical peak meter on a -60..0 dB scale: green, amber over -6 dB,
 /// red over -1 dB, with ticks at -6, -12, -18, -24 and -48.
 fn meter(peak: f64) -> El {
     let db = 20.0 * peak.max(1e-6).log10();
@@ -420,7 +420,7 @@ fn meter(peak: f64) -> El {
         [
             rect(0.0, h, ink::line()),
             rect(1.0, h - 1.0, ink::field()),
-            rect(top.max(y(-6.0)), h, ink::accent()),
+            rect(top.max(y(-6.0)), h, ink::ok()),
             rect(top.max(y(-1.0)), y(-6.0).max(top), ink::warn()),
             rect(top, y(-1.0).max(top), ink::bad()),
         ]
