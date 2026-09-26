@@ -37,8 +37,7 @@ kept for the meters and problems. No orange anywhere.
 - **Text.** `text` #f2f2f2 for values, `dim` #8c8c8c for icons, labels and
   scale numbers. Both pass AA on `bg` and `field`.
 - **Accent.** Green #1fe06a, the same green as the meters, is for action and
-  selection: the picked mode segment, the Listen and Download buttons, the
-  output fader, links, focus rings, text selection, the logo mark and the live
+  selection: the picked mode segment, the Listen and Download buttons, links, focus rings, text selection, the logo mark and the live
   lamp. Anything on green uses `ink` #04140a, never white.
 - **Signal.** Yellow #ffd21a and red #ff2d46 appear in the meters and, outside
   them, only for status: yellow is waiting or reconnecting, red is an error.
@@ -71,8 +70,8 @@ kept for the meters and problems. No orange anywhere.
 
 ## Output fader
 
-- The output gain is a green fader riding over the OUT pair, like Pro-L:
+- The output gain is a white bar riding over the OUT pair (green would vanish into the meter), like Pro-L:
   drag anywhere on the OUT rails; double-click for 0 dB. The gain reads out
-  under the pair in green.
+  under the pair.
 - Above the meters sit three readouts: max IN, max OUT and max true peak since
   the last reset. They turn red above 0 dB. Click them to reset.
