@@ -56,6 +56,8 @@ export async function iceServers(env: Env): Promise<RTCIceServer[]> {
           at: Date.now(),
           servers: iceServers.map((s) => ({ ...s, urls: [s.urls].flat().filter(no53) })),
         };
+      } else {
+        console.warn("TURN mint failed", r?.status, await r?.text());
       }
     }
     if (turn) servers = turn.servers;
