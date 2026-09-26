@@ -5,6 +5,8 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
+/// ponytail: never refreshed; a share longer than 2 h keeps only flows the
+/// NAT already tracks. Refresh at half-life if long sessions lose peers.
 const LIFETIME: u32 = 7_200;
 const PCP_PORT: u16 = 5_351;
 
