@@ -283,5 +283,16 @@ $("copy").onclick = async () => {
 };
 
 setInterval(() => ws?.readyState === 1 && ws.send("ping"), 30_000);
+// Incoming bitrate: the host adapts it to the slowest listener's line.
+let rxBytes = 0;
+setInterval(async () => {
+  let bytes = 0;
+  (await pc?.getStats().catch(() => undefined))?.forEach((r) => {
+    if (r.type === "inbound-rtp" && r.kind === "audio") bytes = r.bytesReceived;
+  });
+  const kbps = Math.round(((bytes - rxBytes) * 8) / 1000);
+  rxBytes = bytes;
+  $("kbps").textContent = pc && kbps > 0 ? `${kbps} kbps` : "";
+}, 1000);
 if (!room) { $("label").textContent = "Join"; $("room").focus(); }
 micButton();

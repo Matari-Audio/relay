@@ -314,9 +314,30 @@ fn build(
                 .map(|c| if c.is_ascii_hexdigit() { '•' } else { c })
                 .collect();
         }
+        // Internet bitrate: what Opus runs at, adapting to the listeners,
+        // over the ceiling. A click steps the ceiling down, then round.
+        let quality = bridge.bind(ui, "quality", P::Quality, |ui, v| {
+            let r = ui.get("quality");
+            let mut step = (*v * 3.0).round() as usize % 4;
+            if r.clicked_with(Button::Primary) {
+                step = (step + 1) % 4;
+                *v = step as f64 / 3.0;
+            }
+            let cap = [510, 256, 128, 64][step];
+            let label = if shared.net() == Net::Internet {
+                format!("{}/{cap}k", shared.bitrate.load(Relaxed) / 1000)
+            } else {
+                format!("{cap}k")
+            };
+            mono(fonts, label, 9.0, if r.hovered { TEXT } else { DIM })
+                .role(Kind::Button)
+                .label("Internet quality ceiling")
+                .focusable()
+                .id("quality")
+        });
         let r = ui.get("lan");
         view.show_address ^= r.clicked_with(Button::Primary);
-        row![
+        let lan = row![
             glyph(fonts, WIFI, DIM),
             mono(fonts, address, 9.0, if r.hovered { TEXT } else { DIM }),
         ]
@@ -324,7 +345,8 @@ fn build(
         .role(Kind::Button)
         .label("LAN address")
         .focusable()
-        .id("lan")
+        .id("lan");
+        row![quality, lan].gap(8.0).center()
     } else if picked == 2 && peers > 0 {
         let rate = f64::from(shared.rate.load(Relaxed).max(1));
         let ms = f64::from(shared.latency.load(Relaxed)) * 1000.0 / rate;
@@ -710,6 +732,7 @@ mod snapshot {
         shared.rate.store(48_000, Relaxed);
         shared.latency.store(512, Relaxed);
         shared.talking.store(1, Relaxed);
+        shared.bitrate.store(312_000, Relaxed);
         let mut bridge = Bridge::new(params);
         let (mut ui, fonts) = new_ui();
         for (p, v) in [

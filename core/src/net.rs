@@ -271,6 +271,9 @@ impl Session {
                 self.peers.retain(|(_, seen)| now - *seen < PEER_TIMEOUT);
                 let internet = self.rtc.as_mut().map_or(0, |h| {
                     h.poll(now);
+                    let cap = shared.bitrate_cap.load(Relaxed);
+                    h.set_cap(if cap == 0 { crate::MAX_BPS } else { cap });
+                    shared.bitrate.store(h.bitrate(), Relaxed);
                     h.live()
                 });
                 shared
@@ -716,7 +719,8 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         let rms = (energy / (heard.max(1) * 2) as f64).sqrt();
-        eprintln!("talking {talking}, heard {heard} frames, rms {rms:.4}");
+        let kbps = shared.bitrate.load(Relaxed) / 1000;
+        eprintln!("talking {talking}, heard {heard} frames, rms {rms:.4}, opus {kbps} kbps");
         assert!(talking >= 1 && heard >= 44_100 && rms > 0.005);
     }
 }

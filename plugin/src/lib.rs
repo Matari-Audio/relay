@@ -24,6 +24,31 @@ pub enum Mode {
     Join,
 }
 
+/// The ceiling for internet audio. Opus adapts below it to the slowest
+/// listener's connection.
+#[derive(ParamEnum, Debug)]
+pub enum Quality {
+    #[name = "510 kbps"]
+    Max,
+    #[name = "256 kbps"]
+    High,
+    #[name = "128 kbps"]
+    Medium,
+    #[name = "64 kbps"]
+    Low,
+}
+
+impl Quality {
+    pub fn bps(&self) -> u32 {
+        match self {
+            Self::Max => relay_core::MAX_BPS,
+            Self::High => 256_000,
+            Self::Medium => 128_000,
+            Self::Low => 64_000,
+        }
+    }
+}
+
 #[derive(Params)]
 pub struct RelayParams {
     #[param(name = "Mode")]
@@ -34,6 +59,8 @@ pub struct RelayParams {
     /// Level of the room's audio: what is shared (Share) or played (Join).
     #[param(name = "Input", range = "linear(-24, 12)", unit = "dB", default = 0.0)]
     pub input: FloatParam,
+    #[param(name = "Internet quality")]
+    pub quality: EnumParam<Quality>,
     #[persist = "session"]
     pub link: Session,
 }
@@ -154,6 +181,10 @@ impl PluginLogic for Relay {
             Mode::Join => Role::Join,
         };
         state.shared.set_role(role);
+        state
+            .shared
+            .bitrate_cap
+            .store(params.quality.value().bps(), Relaxed);
         let n = buffer.num_samples().min(state.left.len());
         state.shared.block.store(n as u32, Relaxed);
         let outs = buffer.num_output_channels().min(2);

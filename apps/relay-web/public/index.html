@@ -30,6 +30,7 @@ header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; heig
 header b { font-size: 15px; letter-spacing: .06em; }
 #mark { width: 18px; height: 18px; color: var(--accent); overflow: visible; stroke-width: 13; }
 .state { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); }
+#kbps { font: 400 10px var(--mono); color: var(--dim); }
 .lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .lamp.ok { background: var(--green); } .lamp.warn { background: var(--yellow); } .lamp.bad { background: var(--red); }
 .controls { display: grid; gap: 8px; align-content: start; min-width: 0; }
@@ -112,7 +113,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
       <path class="c" d="M42 26L56 50L42 74"/><path class="c c2" d="M66 26L80 50L66 74"/>
     </svg>
     <b>RELAY</b>
-    <span class="state room-only"><span class="lamp" id="lamp"></span><span id="status" role="status" aria-live="polite">Ready</span></span>
+    <span class="state room-only"><span class="lamp" id="lamp"></span><span id="status" role="status" aria-live="polite">Ready</span><span id="kbps" title="Incoming audio bitrate"></span></span>
   </header>
   <form class="controls" id="form">
     <div class="field">

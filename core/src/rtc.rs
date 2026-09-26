@@ -18,6 +18,7 @@ use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::format::{Codec, FormatParams};
 use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid, Pt};
 use str0m::net::{Protocol, Receive, Transmit};
+use str0m::bwe::{Bitrate, BweKind};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 
 use crate::CHANNELS;
@@ -29,11 +30,17 @@ const FRAME: usize = 480;
 const PRIME: usize = 1_920 * CHANNELS;
 /// …and a backlog past 200 ms is cut back to that.
 const BACKLOG: usize = 9_600 * CHANNELS;
+/// Adaptive bitrate: the most Opus is asked for, and the least it falls to.
+pub const MAX_BPS: u32 = 510_000;
+const MIN_BPS: u32 = 32_000;
 const PT: Pt = Pt::new_with_value(111);
 const STUN: &str = "stun.cloudflare.com:3478";
 
-fn new_rtc(now: Instant) -> Rtc {
-    let mut cfg = Rtc::builder().clear_codecs();
+/// `bwe`: estimate the path to the peer, so the host can size its bitrate.
+fn new_rtc(now: Instant, bwe: bool) -> Rtc {
+    let mut cfg = Rtc::builder()
+        .clear_codecs()
+        .enable_bwe(bwe.then(|| Bitrate::bps(MAX_BPS.into())));
     let opus = FormatParams {
         min_p_time: Some(10),
         use_inband_fec: Some(true),
@@ -326,6 +333,8 @@ struct Peer {
     live: bool,
     dead: bool,
     voice: Voice,
+    /// What the path to this peer carries, bits/s, from TWCC or REMB.
+    estimate: u32,
 }
 
 /// Share: every internet peer, one Opus encoder for all of them.
@@ -342,6 +351,9 @@ pub struct Host {
     mix: Vec<f32>,
     down: Option<((u32, u32), Resample)>,
     talk: Vec<f32>,
+    /// The user's ceiling, bits/s. The encoder runs at the lowest peer
+    /// estimate under it.
+    pub cap: u32,
 }
 
 impl Host {
@@ -361,6 +373,7 @@ impl Host {
             mix: Vec::new(),
             down: None,
             talk: Vec::new(),
+            cap: MAX_BPS,
         })
     }
 
@@ -382,7 +395,8 @@ impl Host {
     /// A new peer said hello: its complete offer.
     pub fn offer(&mut self, id: &str, now: Instant) -> Option<String> {
         self.leave(id);
-        let mut rtc = new_rtc(now);
+        let mut rtc = new_rtc(now, true);
+        rtc.bwe().set_desired_bitrate(Bitrate::bps(self.cap.into()));
         for c in self.ice.candidates() {
             rtc.add_local_candidate(c);
         }
@@ -407,9 +421,14 @@ impl Host {
             live: false,
             dead: false,
             voice: Voice::new()?,
+            estimate: MAX_BPS,
         });
-        // str0m has no fmtp field for it; the browser's encoder reads it.
-        Some(sdp.replace("useinbandfec=1", "useinbandfec=1;maxaveragebitrate=510000"))
+        // str0m has no fmtp fields for these. A browser reads usedtx as
+        // "send nothing while your mic is silent".
+        Some(sdp.replace(
+            "useinbandfec=1",
+            "useinbandfec=1;maxaveragebitrate=510000;usedtx=1",
+        ))
     }
 
     pub fn answer(&mut self, id: &str, sdp: &str) {
@@ -450,15 +469,38 @@ impl Host {
     }
 
     fn drain(p: &mut Peer, ice: &Ice) -> Instant {
-        let (live, dead, voice) = (&mut p.live, &mut p.dead, &mut p.voice);
+        let (live, dead, voice, estimate) =
+            (&mut p.live, &mut p.dead, &mut p.voice, &mut p.estimate);
         let next = drain(&mut p.rtc, ice, |e| match e {
             Event::Connected => *live = true,
             Event::MediaData(m) => voice.push(&m.data),
+            Event::EgressBitrateEstimate(
+                BweKind::Twcc { estimate: b, .. } | BweKind::Remb { estimate: b, .. },
+            ) => *estimate = b.as_u64().min(u64::from(MAX_BPS)) as u32,
             Event::IceConnectionStateChange(IceConnectionState::Disconnected) => *dead = true,
             _ => {}
         });
         *dead |= next.is_none();
         next.unwrap_or_else(Instant::now)
+    }
+
+    /// What Opus encodes at, bits/s: the slowest listener's path, less a
+    /// margin for headers and cross traffic, under the user's cap.
+    pub fn bitrate(&self) -> u32 {
+        let path = self.peers.iter().filter(|p| p.live).map(|p| p.estimate).min();
+        path.map_or(self.cap, |b| b / 10 * 8)
+            .min(self.cap)
+            .max(MIN_BPS)
+    }
+
+    /// Set the user's ceiling; the estimators probe up to it.
+    pub fn set_cap(&mut self, cap: u32) {
+        if cap != self.cap {
+            self.cap = cap;
+            for p in &mut self.peers {
+                p.rtc.bwe().set_desired_bitrate(Bitrate::bps(cap.into()));
+            }
+        }
     }
 
     /// Peers whose mic is playing.
@@ -505,6 +547,7 @@ impl Host {
             Some(r) => r.run(samples, &mut self.pcm),
             None => self.pcm.extend_from_slice(samples),
         }
+        self.enc.bitrate_bps = self.bitrate() as i32;
         while self.pcm.len() >= FRAME * CHANNELS {
             let n = self
                 .enc
@@ -552,7 +595,7 @@ impl Guest {
     }
 
     pub fn offer(&mut self, sdp: &str, now: Instant) -> Option<String> {
-        let mut rtc = new_rtc(now);
+        let mut rtc = new_rtc(now, false);
         for c in self.ice.candidates() {
             rtc.add_local_candidate(c);
         }

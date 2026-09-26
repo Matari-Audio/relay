@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 pub use net::Link;
 pub use playout::Playout;
+pub use rtc::MAX_BPS;
 pub use rtrb;
 
 /// Share listens here; Join dials it when no port is given.
@@ -117,6 +118,11 @@ pub struct Shared {
     pub peers: AtomicU32,
     /// Share: browser listeners whose mic is playing.
     pub talking: AtomicU32,
+    /// Share: the internet bitrate ceiling the user picked, bits/s. 0: the
+    /// most, [`MAX_BPS`].
+    pub bitrate_cap: AtomicU32,
+    /// Share: what Opus encodes at now, bits/s, adapted to the listeners.
+    pub bitrate: AtomicU32,
     /// Share: the bound LAN port. 0 when not bound.
     pub port: AtomicU32,
     /// Share: this machine's LAN address, `192.168.1.20` or `…:17493`.
