@@ -22,11 +22,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TRUCE_VERSION: 6.3.0
-  # Cargo.toml patches truce to ../truce-clap-scale (GUI-scale fix, branch
-  # fix/clap-replay-host-scale). Drop this and the restore step once truce
-  # ships the fix.
-  TRUCE_REPO: DerpcatMusic/truce
-  TRUCE_REV: 577b2c7e805207026f7f9d5ea51c6c0967946021
 
 jobs:
   build:
@@ -52,14 +47,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ env.TRUCE_REPO }}
-          ref: ${{ env.TRUCE_REV }}
-          path: .ci-inputs/truce-clap-scale
-          persist-credentials: false
-      - name: Place patched truce beside the repo
-        run: mv .ci-inputs/truce-clap-scale ../truce-clap-scale
       - uses: Swatinem/rust-cache@v2
         with:
           key: cargo-truce-${{ env.CARGO_TRUCE_VERSION }}
@@ -93,14 +80,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ env.TRUCE_REPO }}
-          ref: ${{ env.TRUCE_REV }}
-          path: .ci-inputs/truce-clap-scale
-          persist-credentials: false
-      - name: Place patched truce beside the repo
-        run: mv .ci-inputs/truce-clap-scale ../truce-clap-scale
       - name: Add Apple targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       # build-macos-signed.sh uses its own target dirs, so only cache the registry and cargo-truce.
