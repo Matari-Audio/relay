@@ -9,7 +9,6 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "@relay/web-rtc": "workspace:*",
     "astro": "7.2.2"
   },
   "devDependencies": {

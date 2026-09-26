@@ -1,240 +1,105 @@
 ---
 import Base from "../layouts/Base.astro";
 
-const listenOrigin = "https://relay.matari-audio.com";
+const listen = "https://relay.matari-audio.com";
 const download = "https://matari-audio.com/relay";
 
-const specs = [
-  { label: "Wire", value: "48 kHz stereo. Opus 192 kbps, FLAC 16-bit, or PCM 16-bit." },
-  { label: "LAN", value: "5 ms uncompressed PCM between two RELAY instances." },
-  { label: "Listen", value: "Browser playback over P2P WebRTC, up to 10 listeners." },
-  { label: "Formats", value: "CLAP, VST3, VST2, LV2, AU v2/v3, standalone." },
+const paths = [
+  ["LAN", "lossless float PCM"],
+  ["Internet", "WebRTC, Opus 510 kbps"],
+  ["Browser", "a link, nothing to install"],
 ];
 ---
 
 <Base
-  title="RELAY — send the track you are playing"
-  description="RELAY is a DAW insert that streams the track you are playing to a listener in the browser. Name a session, go live, send the link."
+  title="RELAY: share your track peer to peer"
+  description="RELAY is a CLAP and VST3 insert that shares the track it sits on, peer to peer, to another RELAY or to anyone's browser. No account, no server in the audio path."
 >
-  <main>
-    <section class="hero">
-      <div class="pitch">
-        <h1>Send the track you are playing.</h1>
-        <p class="lede">
-          RELAY is an insert for your DAW. Name a session, go live, and whoever has the
-          link hears that track in a browser — no account, no upload, no bounce.
-        </p>
-        <div class="actions">
-          <a class="primary" href={download}>Download RELAY</a>
-          <a class="secondary" href={listenOrigin}>Open a listen page</a>
-        </div>
-        <p class="address">
-          A session is a name: <code>{listenOrigin.replace("https://", "")}/&lt;session&gt;</code>
-        </p>
-      </div>
-
-      <figure class="shot">
-        <div class="frame">
-          <picture>
-            <source srcset="/relay-editor.webp" type="image/webp" />
-            <img
-              src="/relay-editor.png"
-              width="1360"
-              height="960"
-              alt="The RELAY plugin editor: session name, password, format, send fader, spectrum, and stereo level meters."
-              fetchpriority="high"
-            />
-          </picture>
-        </div>
-        <figcaption>The editor in Share, live on a named session.</figcaption>
-      </figure>
-    </section>
-
-    <section class="specs" aria-label="Specification">
-      {
-        specs.map((spec) => (
-          <div class="spec">
-            <span class="spec-label">{spec.label}</span>
-            <span class="spec-value">{spec.value}</span>
-          </div>
-        ))
-      }
-    </section>
+  <main class="card">
+    <header>
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="24" cy="50" r="9" fill="currentColor" stroke="none" />
+        <path d="M42 26L56 50L42 74" /><path d="M66 26L80 50L66 74" />
+      </svg>
+      <h1>RELAY</h1>
+    </header>
+    <form class="controls" id="join" action={listen}>
+      <label class="field">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 2.5l-2 11M11.5 2.5l-2 11M2.5 6h11M2 10h11" /></svg>
+        <input name="room" aria-label="Room" autocomplete="off" spellcheck="false" placeholder="room-name" enterkeyhint="go" />
+      </label>
+      <button>
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z" /></svg>
+        Join
+      </button>
+      <p>Share a track from your DAW, peer to peer, to another RELAY or any browser. <a href={download}>Get the plugin</a></p>
+    </form>
+    <div class="meters" aria-hidden="true"><i></i><i></i></div>
   </main>
+
+  <dl>
+    {paths.map(([to, how]) => (<div><dt>{to}</dt><dd>{how}</dd></div>))}
+  </dl>
 </Base>
 
+<script>
+  // Same rule as relay_core::slug, so the link lands on a valid room.
+  const form = document.getElementById("join") as HTMLFormElement;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const room = String(new FormData(form).get("room") ?? "")
+      .trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+    location.assign(room ? `${form.action}/${room}` : form.action);
+  });
+</script>
+
 <style>
-  main {
-    padding-top: 44px;
-  }
-
-  .hero {
+  .card {
     display: grid;
-    gap: 28px;
+    grid-template-columns: 1fr auto;
+    gap: 10px 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
   }
 
-  h1 {
-    margin: 0;
-    font-size: clamp(30px, 6vw, 44px);
-    font-weight: 600;
-    line-height: 1.05;
-    letter-spacing: -0.02em;
-  }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; height: 20px; }
+  h1 { margin: 0; font-size: 15px; letter-spacing: 0.06em; }
+  .mark { width: 18px; height: 18px; color: var(--accent); stroke: currentColor; stroke-width: 13; stroke-linecap: round; stroke-linejoin: round; fill: none; }
 
-  .lede {
-    margin: 14px 0 0;
-    max-width: 46ch;
-    font-size: 16px;
-    line-height: 1.45;
-    color: var(--muted);
-  }
+  .controls { display: grid; gap: 8px; min-width: 0; }
+  .field { display: flex; align-items: center; height: 36px; border-radius: var(--r); background: var(--field); }
+  .field:hover { background: var(--hover); }
+  .field:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+  .field svg { flex: none; width: 36px; height: 36px; padding: 10px; color: var(--dim); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  input { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
+  input::placeholder { color: var(--dim); }
 
-  .actions {
+  button {
+    height: 36px;
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 16px;
-    margin-top: 24px;
-  }
-
-  .primary {
-    display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 48px;
-    padding: 0 22px;
-    border-radius: var(--r-hardware);
-    background: var(--studio-blue);
+    gap: 8px;
+    border: 0;
+    border-radius: var(--r);
+    background: var(--accent);
     color: var(--ink);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
+    font: 700 14px Barlow, sans-serif;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    text-decoration: none;
+    cursor: pointer;
   }
+  button svg { width: 12px; height: 12px; fill: currentColor; }
+  button:hover { filter: brightness(1.1); }
 
-  .primary:hover {
-    background: #2bbaff;
-    text-decoration: none;
-  }
+  p { margin: 0; color: var(--dim); }
 
-  .primary:active {
-    transform: translateY(1px);
-  }
+  .meters { display: flex; gap: 1px; }
+  .meters i { width: 16px; border-radius: 2px; background: #0a0a0a; }
 
-  .secondary {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-    padding: 0 4px;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--surface);
-  }
-
-  .secondary:hover {
-    color: var(--studio-blue);
-    border-bottom-color: var(--studio-blue);
-    text-decoration: none;
-  }
-
-  .address {
-    margin: 20px 0 0;
-    color: var(--muted);
-  }
-
-  code {
-    display: inline-block;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    padding: 3px 6px;
-    border-radius: var(--r-well);
-    background: var(--well);
-    color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-  }
-
-  @media (max-width: 520px) {
-    .address code {
-      display: block;
-      margin-top: 6px;
-    }
-  }
-
-  .shot {
-    margin: 0;
-  }
-
-  .frame {
-    padding: 8px;
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-hardware);
-    background: var(--chassis);
-  }
-
-  .frame img {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: var(--r-well);
-  }
-
-  figcaption {
-    margin-top: 10px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-
-  .specs {
-    display: grid;
-    gap: 1px;
-    margin-top: 44px;
-    background: var(--hairline);
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-hardware);
-    overflow: hidden;
-  }
-
-  .spec {
-    padding: 14px 16px;
-    background: var(--chassis);
-  }
-
-  .spec-label {
-    display: block;
-    margin-bottom: 6px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-
-  .spec-value {
-    display: block;
-    max-width: 34ch;
-  }
-
-  @media (min-width: 860px) {
-    main {
-      padding-top: 64px;
-    }
-
-    .hero {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-      gap: 44px;
-      align-items: center;
-    }
-
-    .specs {
-      grid-template-columns: repeat(4, 1fr);
-    }
-  }
+  dl { margin: 16px 0 0; display: grid; gap: 4px; }
+  dl div { display: flex; justify-content: space-between; gap: 12px; }
+  dt { color: var(--dim); }
+  dd { margin: 0; }
 </style>

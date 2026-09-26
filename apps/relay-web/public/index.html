@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Listen to a RELAY room: audio straight from the sharer's DAW, peer to peer.">
+<title>RELAY</title>
+<script>if (location.pathname === "/") document.documentElement.className = "home";</script>
+<link rel="preload" href="/fonts/Barlow-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face { font-family: Barlow; font-weight: 600; font-display: swap; src: url(/fonts/Barlow-SemiBold.woff2) format("woff2"); }
+@font-face { font-family: Barlow; font-weight: 700; font-display: swap; src: url(/fonts/Barlow-Bold.woff2) format("woff2"); }
+@font-face { font-family: "Martian Mono"; font-display: swap; src: url(/fonts/MartianMono.woff2) format("woff2"); }
+:root {
+  --bg: #121212; --field: #1e1e1e; --hover: #292929; --line: #2e2e2e; --well: #0a0a0a;
+  --text: #f2f2f2; --dim: #8c8c8c; --accent: #1fe06a; --ink: #04140a;
+  --green: #1fe06a; --yellow: #ffd21a; --red: #ff2d46; --r: 4px;
+  --mono: "Martian Mono", ui-monospace, monospace;
+  --spring: linear(0, .09 4%, .33 10%, .84 22%, 1.06 30%, 1.1 35%, 1.06 42%, .99 54%, 1);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 600 13px/1.3 Barlow, system-ui, sans-serif; }
+body { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+[hidden], .home .room-only, html:not(.home) .home-only { display: none !important; }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+main { width: min(400px, 100%); display: grid; grid-template-columns: 1fr auto; gap: 10px 12px;
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--r); }
+header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; height: 20px; }
+header b { font-size: 15px; letter-spacing: .06em; }
+#mark { width: 18px; height: 18px; color: var(--accent); overflow: visible; stroke-width: 13; }
+.state { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); }
+#kbps { font: 400 10px var(--mono); color: var(--dim); }
+.lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.lamp.ok { background: var(--green); } .lamp.warn { background: var(--yellow); } .lamp.bad { background: var(--red); }
+.controls { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.field { display: flex; align-items: center; height: 36px; border-radius: var(--r); background: var(--field); }
+.field:hover { background: var(--hover); }
+.field:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.field > svg { flex: none; width: 36px; height: 36px; padding: 10px; color: var(--dim); }
+.field input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
+.field input::placeholder { color: var(--dim); }
+.field button { flex: none; width: 36px; height: 100%; border: 0; border-radius: var(--r); background: none; color: var(--dim); display: grid; place-items: center; cursor: pointer; }
+.field button:hover, .field button:focus-visible { color: var(--text); outline: none; }
+.field button:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.field button svg { width: 16px; height: 16px; }
+svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.play { display: flex; align-items: center; gap: 12px; }
+#listen { flex: 1; height: 36px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: var(--r);
+  background: var(--accent); color: var(--ink); font: 700 14px Barlow, sans-serif; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+#listen svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
+#listen .stop, #listen[aria-pressed="true"] .go { display: none; } #listen[aria-pressed="true"] .stop { display: block; }
+#listen:hover { filter: brightness(1.1); } #listen:active { transform: translateY(1px); }
+#listen:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+#listen[aria-pressed="true"] { background: var(--field); color: var(--text); }
+#listen[aria-pressed="true"]:hover { background: var(--hover); filter: none; }
+/* Talk: a square mic key. Lit green while the room hears you, with your own
+   level rising through it so you can see the mic works. */
+#mic { position: relative; flex: none; width: 36px; height: 36px; display: grid; place-items: center; overflow: hidden;
+  border: 0; border-radius: var(--r); background: var(--field); color: var(--dim); cursor: pointer; }
+#mic svg { position: relative; width: 16px; height: 16px; }
+#mic .x { display: none; }
+#mic::before { content: ""; position: absolute; inset: 0; background: var(--ink); opacity: .35;
+  transform: scaleY(var(--lvl, 0)); transform-origin: bottom; }
+#mic:hover { background: var(--hover); color: var(--text); }
+#mic:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+#mic[aria-pressed="true"] { background: var(--accent); color: var(--ink); }
+#mic.asking { color: var(--text); animation: ask 1s ease-in-out infinite alternate; }
+#mic.denied { color: var(--red); } #mic.denied .x { display: block; }
+#mic:disabled { cursor: not-allowed; opacity: .45; }
+@keyframes ask { to { box-shadow: inset 0 0 0 1px var(--accent); } }
+.field select { flex: 1; min-width: 0; height: 100%; border: 0; background: none; color: var(--text); font: inherit; font-size: 14px;
+  appearance: none; cursor: pointer; outline: none; }
+.field select option { background: var(--field); }
+.field .chev { flex: none; width: 36px; height: 36px; padding: 11px; color: var(--dim); pointer-events: none; }
+#db { min-width: 76px; text-align: right; font: 400 16px var(--mono); font-variant-numeric: tabular-nums; }
+#db small { font: 600 10px Barlow, sans-serif; color: var(--dim); }
+.who { margin: 0; padding: 0; list-style: none; }
+.who li { display: flex; justify-content: space-between; padding: 5px 0; border-top: 1px solid var(--line); }
+.who li:first-child { color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border: 0; }
+.who span + span { color: var(--dim); }
+.who .n { font: 400 11px var(--mono); color: var(--text); }
+.about { margin: 0; color: var(--dim); }
+/* Meters: -60..0 dB, one gradient in a well, clipped to the level. */
+.meters { display: grid; grid-template-columns: auto 16px 16px; grid-template-rows: 1fr auto; column-gap: 1px; row-gap: 4px;
+  color: var(--dim); font-size: 11px; min-height: 150px; }
+.scale { position: relative; width: 24px; margin-right: 4px; font: 400 9px/1 var(--mono); }
+.scale span { position: absolute; right: 0; transform: translateY(-50%); }
+.rail { position: relative; overflow: hidden; border-radius: 2px; background: var(--well); }
+.level { position: absolute; inset: 0; background: linear-gradient(var(--red), var(--yellow) 15%, var(--green) 35%); clip-path: inset(100% 0 0 0); }
+.hold { position: absolute; inset: 0; border-top: 1px solid var(--text); will-change: transform; transform: translateY(100%); }
+.ch { grid-column: 2 / 4; text-align: center; font: 400 10px var(--mono); color: var(--text); }
+/* The volume fader rides the rails, like the plugin's: a white handle, drag anywhere. */
+#vol { grid-column: 2 / 4; grid-row: 1; z-index: 1; margin: 0; width: 100%; height: 100%; writing-mode: vertical-lr; direction: rtl;
+  appearance: none; background: none; cursor: ns-resize; touch-action: none; }
+#vol::-webkit-slider-runnable-track { background: none; }
+#vol::-moz-range-track { background: none; }
+#vol::-webkit-slider-thumb { appearance: none; width: 33px; height: 5px; border: 1px solid var(--bg); border-radius: 2px; background: var(--text); }
+#vol::-moz-range-thumb { width: 31px; height: 3px; border: 1px solid var(--bg); border-radius: 2px; background: var(--text); }
+#vol:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+/* Live: the chevrons ripple out from the dot on a spring. */
+.live #mark .c { animation: ripple 1.8s var(--spring) infinite; }
+.live #mark .c2 { animation-delay: .14s; }
+@keyframes ripple { 0% { transform: none; } 30% { transform: translateX(9px); opacity: .5; } 60%, 100% { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { #listen:active { transform: none; } #mic.asking { animation: none; box-shadow: inset 0 0 0 1px var(--accent); } .live #mark .c { animation: none; } }
+</style>
+</head>
+<body>
+<main id="card">
+  <header>
+    <svg id="mark" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="24" cy="50" r="9" fill="currentColor" stroke="none"/>
+      <path class="c" d="M42 26L56 50L42 74"/><path class="c c2" d="M66 26L80 50L66 74"/>
+    </svg>
+    <b>RELAY</b>
+    <span class="state room-only"><span class="lamp" id="lamp"></span><span id="status" role="status" aria-live="polite">Ready</span><span id="kbps" title="Incoming audio bitrate"></span></span>
+  </header>
+  <form class="controls" id="form">
+    <div class="field">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 2.5l-2 11M11.5 2.5l-2 11M2.5 6h11M2 10h11"/></svg>
+      <input id="room" aria-label="Room" autocomplete="off" spellcheck="false" placeholder="room-name" enterkeyhint="go">
+      <button type="button" id="copy" class="room-only" aria-label="Copy listen link" title="Copy link">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 3.5v-1h-8v8h1"/></svg>
+      </button>
+    </div>
+    <div class="field room-only">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>
+      <input id="pw" aria-label="Password" type="password" autocomplete="off" placeholder="Password (optional)">
+      <button type="button" id="eye" aria-label="Show password" aria-pressed="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path id="slash" style="display:none" d="M2.5 13.5l11-11"/></svg>
+      </button>
+    </div>
+    <div class="play">
+      <button id="listen" aria-pressed="false">
+        <svg class="go" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z"/></svg>
+        <svg class="stop" viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="1"/></svg>
+        <span id="label">Listen</span>
+      </button>
+      <button type="button" id="mic" class="room-only" aria-pressed="false" aria-label="Talk: send your mic to the room" title="Talk: send your mic to the room">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0010 0M8 12.5v2"/><path class="x" d="M2.5 1.5l11 13"/></svg>
+      </button>
+      <div id="db" class="room-only" aria-label="Peak level">−∞ <small>dB</small></div>
+    </div>
+    <div class="field" id="input" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0010 0M8 12.5v2"/></svg>
+      <select id="device" aria-label="Microphone"></select>
+      <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+    </div>
+    <ul class="who room-only" id="who" hidden><li><span>In the room</span><span class="n" id="count"></span></li></ul>
+    <p class="about home-only">Audio from a DAW to your browser, peer to peer. <a href="https://matari-audio.com/relay">Get the plugin</a></p>
+  </form>
+  <div class="meters">
+    <div class="scale" style="grid-area:1/1" aria-hidden="true"><span style="top:0">0</span><span style="top:10%">-6</span><span style="top:20%">-12</span><span style="top:40%">-24</span><span style="top:80%">-48</span></div>
+    <div class="rail" style="grid-area:1/2"><div class="level" id="mL"></div><div class="hold" id="hL"></div></div>
+    <div class="rail" style="grid-area:1/3"><div class="level" id="mR"></div><div class="hold" id="hR"></div></div>
+    <input id="vol" type="range" min="-60" max="12" step="0.5" value="0" aria-label="Volume" title="Volume · double-click for 0 dB">
+    <div class="ch" id="gain"></div>
+  </div>
+</main>
+<audio id="out" autoplay playsinline></audio>
+<script type="module" src="/listen.js"></script>
+</body>
+</html>

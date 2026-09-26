@@ -1,41 +1,34 @@
 [workspace]
-members = [
-    "apps/audio-lab",
-    "crates/relay-audio",
-    "crates/relay-clock",
-    "crates/relay-domain",
-    "crates/relay-jitter",
-    "crates/relay-opus",
-    "crates/relay-opus-sys",
-    "crates/relay-protocol",
-    "crates/relay-resample",
-    "crates/relay-rt",
-    "crates/relay-session",
-    "crates/relay-testkit",
-    "crates/relay-transport",
-    "crates/relay-libdatachannel-sys",
-    "crates/relay-transport-libdatachannel",
-    "apps/connect",
-    "apps/stream",
-    "apps/link",
-]
-exclude = ["apps/plugin"]
+members = ["core", "plugin"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.92"
 license = "MPL-2.0"
-repository = "https://github.com/DerpcatMusic/relay"
-homepage = "https://relay.matari-audio.com"
+repository = "https://github.com/Matari-Audio/relay"
 
-[workspace.dependencies]
-prost = "=0.14.4"
-rtrb = "=0.4.0"
-rubato = "=4.0.0"
+[profile.release]
+lto = "thin"
 
-[workspace.lints.rust]
-unsafe_code = "forbid"
+# Opus and DTLS are too slow unoptimised for a debug plugin to keep up.
+[profile.dev.package."*"]
+opt-level = 2
 
-[workspace.lints.clippy]
-unwrap_used = "deny"
+# The CLAP editor lost the host's GUI scale on reopen (1.5x came back as 1x).
+# Fixed on truce branch fix/clap-replay-host-scale; drop this once it is released.
+[patch.crates-io]
+truce = { path = "../truce-clap-scale/crates/truce" }
+truce-build = { path = "../truce-clap-scale/crates/truce-build" }
+truce-clap = { path = "../truce-clap-scale/crates/truce-clap" }
+truce-core = { path = "../truce-clap-scale/crates/truce-core" }
+truce-cpu = { path = "../truce-clap-scale/crates/truce-cpu" }
+truce-derive = { path = "../truce-clap-scale/crates/truce-derive" }
+truce-font = { path = "../truce-clap-scale/crates/truce-font" }
+truce-gui = { path = "../truce-clap-scale/crates/truce-gui" }
+truce-gui-types = { path = "../truce-clap-scale/crates/truce-gui-types" }
+truce-gui-utils = { path = "../truce-clap-scale/crates/truce-gui-utils" }
+truce-loader = { path = "../truce-clap-scale/crates/truce-loader" }
+truce-params = { path = "../truce-clap-scale/crates/truce-params" }
+truce-plugin = { path = "../truce-clap-scale/crates/truce-plugin" }
+truce-utils = { path = "../truce-clap-scale/crates/truce-utils" }
+truce-vst3 = { path = "../truce-clap-scale/crates/truce-vst3" }
