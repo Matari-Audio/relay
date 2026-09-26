@@ -8,7 +8,7 @@ mod ui;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, RwLock};
 
-use relay_core::{Link, Playout, Role, Shared};
+use relay_core::{Link, Peak, Playout, Role, Shared};
 use truce::prelude::*;
 use truce_core::custom_state::{PersistField, StateCursor};
 
@@ -28,11 +28,9 @@ pub enum Mode {
 pub struct RelayParams {
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
-    /// Peak of what is shared (Share) or received (Join), per side.
-    #[meter]
-    pub left: MeterSlot,
-    #[meter]
-    pub right: MeterSlot,
+    /// Level of what is shared (Share) or played (Join).
+    #[param(name = "Output", range = "linear(-24, 12)", unit = "dB", default = 0.0)]
+    pub output: FloatParam,
     #[persist = "session"]
     pub link: Session,
 }
@@ -95,6 +93,9 @@ pub struct Dsp {
     playout: Playout,
     left: Vec<f32>,
     right: Vec<f32>,
+    /// The output gain the last block ended on, linear.
+    gain: f32,
+    true_peak: relay_core::TruePeak,
     /// Stops and joins the link thread on drop.
     _link: Option<Link>,
 }
@@ -109,6 +110,8 @@ impl Dsp {
             playout: Playout::new(rx),
             left: Vec::new(),
             right: Vec::new(),
+            gain: 1.0,
+            true_peak: relay_core::TruePeak::default(),
         }
     }
 }
@@ -142,7 +145,7 @@ impl PluginLogic for Relay {
         params: &RelayParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
-        context: &mut ProcessContext,
+        _context: &mut ProcessContext,
     ) -> ProcessStatus {
         let role = match params.mode.value() {
             Mode::Off => Role::Off,
@@ -162,9 +165,14 @@ impl PluginLogic for Relay {
         let (l, r) = (&mut state.left[..n], &mut state.right[..n]);
         l.copy_from_slice(&buffer.input(0)[..n]);
         r.copy_from_slice(&buffer.input(buffer.num_input_channels().min(2) - 1)[..n]);
+        let shared = &state.shared;
+        shared.note_peak(Peak::InL, peak(l));
+        shared.note_peak(Peak::InR, peak(r));
 
+        let gain = db_to_linear(params.output.value());
         match role {
             Role::Share => {
+                ramp(l, r, state.gain, gain);
                 if let Ok(chunk) = state.tx.write_chunk_uninit(n * 2) {
                     chunk.fill_from_iter(l.iter().zip(r.iter()).flat_map(|(a, b)| [*a, *b]));
                 }
@@ -173,26 +181,43 @@ impl PluginLogic for Relay {
                 l.fill(0.0);
                 r.fill(0.0);
                 state.playout.render(l, r);
-                state
-                    .shared
-                    .latency
-                    .store(state.playout.target() as u32, Relaxed);
+                shared.latency.store(state.playout.target() as u32, Relaxed);
+                ramp(l, r, state.gain, gain);
                 for (ch, src) in [&*l, &*r].into_iter().enumerate().take(outs) {
                     for (o, s) in buffer.output(ch)[..n].iter_mut().zip(src) {
                         *o += s;
                     }
                 }
             }
-            Role::Off => l.fill(0.0),
+            Role::Off => {
+                l.fill(0.0);
+                r.fill(0.0);
+            }
         }
-        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs())).min(1.0);
-        context.set_meter(params.left.id(), peak(l));
-        context.set_meter(params.right.id(), peak(r));
+        state.gain = gain;
+        shared.note_peak(Peak::OutL, peak(l));
+        shared.note_peak(Peak::OutR, peak(r));
+        shared.note_peak(Peak::TruePeak, state.true_peak.process(l, r));
         ProcessStatus::Normal
     }
 
     fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
         ui::editor(params)
+    }
+}
+
+fn peak(x: &[f32]) -> f32 {
+    x.iter().fold(0.0, |m, s| m.max(s.abs()))
+}
+
+/// Scale by a gain gliding from `from` to `to` over the block, so moving
+/// the Output fader never clicks.
+fn ramp(l: &mut [f32], r: &mut [f32], from: f32, to: f32) {
+    let step = (to - from) / l.len().max(1) as f32;
+    for (i, (a, b)) in l.iter_mut().zip(r.iter_mut()).enumerate() {
+        let g = from + step * (i + 1) as f32;
+        *a *= g;
+        *b *= g;
     }
 }
 

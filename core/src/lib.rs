@@ -5,6 +5,7 @@
 //! atomics. Sockets, strings and allocation live on the network thread.
 
 mod mdns;
+mod meter;
 mod net;
 mod playout;
 mod portmap;
@@ -14,6 +15,7 @@ mod signal;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
+pub use meter::TruePeak;
 pub use net::Link;
 pub use playout::Playout;
 pub use rtrb;
@@ -84,6 +86,17 @@ impl Net {
     }
 }
 
+/// The editor's meters: input, output (what is shared or played) and the
+/// output's true peak.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Peak {
+    InL = 0,
+    InR = 1,
+    OutL = 2,
+    OutR = 3,
+    TruePeak = 4,
+}
+
 /// Everything the plugin, the editor and the network thread share.
 #[derive(Default)]
 pub struct Shared {
@@ -113,6 +126,9 @@ pub struct Shared {
     pub net: AtomicU8,
     /// Join: frames the playout buffer holds, written by the audio thread.
     pub latency: AtomicU32,
+    /// Peaks since the editor last looked, as `f32` bits, indexed by
+    /// [`Peak`]. The audio thread raises them, the editor takes them.
+    pub peaks: [AtomicU32; 5],
     stop: AtomicBool,
 }
 
@@ -140,6 +156,16 @@ impl Shared {
 
     pub fn net(&self) -> Net {
         Net::from_u8(self.net.load(Relaxed))
+    }
+
+    /// Raise a peak meter. Non-negative floats order like their bits.
+    pub fn note_peak(&self, which: Peak, value: f32) {
+        self.peaks[which as usize].fetch_max(value.abs().to_bits(), Relaxed);
+    }
+
+    /// The highest value since the last call, and reset.
+    pub fn take_peak(&self, which: Peak) -> f32 {
+        f32::from_bits(self.peaks[which as usize].swap(0, Relaxed))
     }
 
     pub fn set_net(&self, net: Net) {
