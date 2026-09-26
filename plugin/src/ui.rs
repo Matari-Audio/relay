@@ -1,6 +1,5 @@
-//! The editor: one flat panel in BUFFR's Polar Night with Studio Blue.
-//! Mode, room, password and the share link on the left; L/R meters on the
-//! right, like a limiter's.
+//! The editor: a compact black strip. Welded pills for the mode, the room,
+//! the password and the link; one fused L/R meter down the right edge.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
@@ -23,8 +22,15 @@ const DICE: char = '\u{E1EE}';
 const EYE: char = '\u{E220}';
 const EYE_OFF: char = '\u{E224}';
 const CHECK: char = '\u{E182}';
+const HASH: char = '\u{E2A2}';
+const LINK: char = '\u{E2E6}';
+const LOCK: char = '\u{E308}';
+const WIFI: char = '\u{E4EA}';
 
-const SIZE: (u32, u32) = (420, 196);
+const SIZE: (u32, u32) = (300, 132);
+/// Pill height and corner.
+const H: f64 = 24.0;
+const R: f64 = 7.0;
 
 /// sRGB from `0xRRGGBB`.
 fn hex(c: u32) -> Color {
@@ -32,51 +38,46 @@ fn hex(c: u32) -> Color {
     Color::srgb(ch(16), ch(8), ch(0))
 }
 
-/// The panel's tokens; apps/relay-web and apps/web use the same values.
+/// Black, white, one signal colour. apps/relay-web uses the same values.
 mod ink {
     use super::{Color, hex};
     pub fn bg() -> Color {
-        hex(0x0a0b0d)
+        hex(0x050505)
     }
-    pub fn field() -> Color {
-        hex(0x06070a)
+    pub fn pill() -> Color {
+        hex(0x161616)
     }
-    pub fn line() -> Color {
-        hex(0x22252c)
+    pub fn hot() -> Color {
+        hex(0x262626)
     }
     pub fn text() -> Color {
-        hex(0xf3f5f8)
+        hex(0xffffff)
     }
     pub fn dim() -> Color {
-        hex(0x8b93a1)
+        hex(0x6e6e6e)
     }
-    pub fn accent() -> Color {
-        hex(0x00aaff)
+    pub fn black() -> Color {
+        hex(0x000000)
     }
-    pub fn on_accent() -> Color {
-        hex(0x00131d)
-    }
-    pub fn ok() -> Color {
-        hex(0x2fd67b)
+    /// Live.
+    pub fn volt() -> Color {
+        hex(0xc8ff00)
     }
     pub fn warn() -> Color {
-        hex(0xffb020)
+        hex(0xffb400)
     }
     pub fn bad() -> Color {
-        hex(0xff4d4f)
+        hex(0xff3b30)
     }
 }
 
 const THEME: Theme = Theme {
-    palette: Palette {
-        primary: Pigment::new(237.0, 0.16),
-        ..Palette::NEUTRAL
-    },
+    palette: Palette::NEUTRAL,
     corners: Corners {
-        selector: 2.0,
-        field: 3.0,
-        box_: 3.0,
-        concave: 2.0,
+        selector: R,
+        field: R,
+        box_: R,
+        concave: 4.0,
     },
     text: 12.0,
     ..Theme::DEFAULT
@@ -94,7 +95,7 @@ struct View {
     show_password: bool,
     show_address: bool,
     /// Which copy button was pressed last, for its check mark.
-    copied: Option<&'static str>,
+    copied: bool,
     /// Peak L and R, 0..1, from the audio thread's meters.
     levels: (f64, f64),
 }
@@ -119,26 +120,47 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     MuiEditor::new(params, ui, SIZE, move |ui, bridge| {
         build(ui, bridge, &shared, &fonts, &mut view)
     })
-    .resizable((360, 180))
+    .resizable((260, 120))
     .into_editor()
 }
 
-/// A square icon button for the end of a [`group`].
-fn button(ui: &Ui, fonts: &Fonts, id: &'static str, glyph: char, label: &str) -> (El, bool) {
+/// Siblings a few pixels apart, fused where they face each other.
+fn welded(children: impl IntoIterator<Item = El>) -> El {
+    row(children)
+        .gap(4.0)
+        .weld_with(Weld::all().reach(5.0).blend(1.5))
+}
+
+fn glyph(fonts: &Fonts, c: char, ink: Color) -> El {
+    icon(fonts.icons.clone(), c).text_size(12.0).fill(ink)
+}
+
+/// A square icon button, welded to the pill before it.
+fn button(ui: &Ui, fonts: &Fonts, id: &'static str, c: char, label: &str) -> (El, bool) {
     let hot = ui.get(id).hovered;
-    let el = row([icon(fonts.icons.clone(), glyph)
-        .text_size(13.0)
-        .fill(if hot { ink::text() } else { ink::dim() })])
-    .justify(Justify::Center)
-    .center()
-    .w(26.0)
-    .h(Len::Pct(100.0))
-    .fill(if hot { ink::line() } else { ink::field() })
-    .role(Kind::Button)
-    .label(label)
-    .focusable()
-    .id(id);
+    let el = row([glyph(fonts, c, if hot { ink::text() } else { ink::dim() })])
+        .justify(Justify::Center)
+        .center()
+        .size(H, H)
+        .radius(R)
+        .fill(if hot { ink::hot() } else { ink::pill() })
+        .role(Kind::Button)
+        .label(label)
+        .focusable()
+        .id(id);
     (el, ui.get(id).clicked_with(Button::Primary))
+}
+
+/// A pill that leads with an icon: the field's label, without a label.
+fn pill(fonts: &Fonts, c: char, body: El) -> El {
+    row([glyph(fonts, c, ink::dim()), body.grow(1.0)])
+        .gap(6.0)
+        .center()
+        .pad_xy(8.0, 0.0)
+        .h(H)
+        .radius(R)
+        .fill(ink::pill())
+        .grow(1.0)
 }
 
 fn build(
@@ -150,25 +172,20 @@ fn build(
 ) -> El {
     let picked = (bridge.value(P::Mode) * 2.0).round() as usize;
     let mode = bridge.bind(ui, "mode", P::Mode, |ui, v| {
-        let segments = ["Off", "Share", "Join"]
-            .into_iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let (el, clicked) = segment(ui, name, i == picked);
-                if clicked {
-                    *v = i as f64 / 2.0;
-                }
-                el
-            });
-        row(segments.collect::<Vec<_>>())
-            .inside(2.0)
-            .gap(0.0)
-            .radius(3.0)
-            .fill(ink::field())
-            .border(ink::line(), 1.0)
+        welded(
+            ["Off", "Share", "Join"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let (el, clicked) = segment(ui, name, i == picked);
+                    if clicked {
+                        *v = i as f64 / 2.0;
+                    }
+                    el
+                }),
+        )
     });
 
-    // Room, with a dice to roll a fresh name.
     let mut room = Shared::text(&shared.room);
     let (input, changed) = text_input(ui, "room", &mut room);
     if changed {
@@ -178,9 +195,8 @@ fn build(
     if roll {
         shared.set_text(&shared.room, &relay_core::room_name());
     }
-    let mut rows = vec![labelled("Room", group([bare(input), dice]))];
+    let mut rows = vec![welded([pill(fonts, HASH, bare(input)), dice])];
 
-    // Password, dots unless the eye is open.
     let mut password = Shared::text(&shared.password);
     let (input, changed) = if view.show_password {
         text_input(ui, "pass", &mut password)
@@ -190,91 +206,127 @@ fn build(
     if changed {
         shared.set_text(&shared.password, &password);
     }
-    let (eye, toggle) = eye_button(ui, fonts, "pass-eye", view.show_password, "password");
+    let (eye, toggle) = button(
+        ui,
+        fonts,
+        "pass-eye",
+        if view.show_password { EYE_OFF } else { EYE },
+        if view.show_password {
+            "Hide password"
+        } else {
+            "Show password"
+        },
+    );
     view.show_password ^= toggle;
-    rows.push(labelled("Password", group([bare(input), eye])));
+    rows.push(welded([pill(fonts, LOCK, bare(input)), eye]));
 
+    let mut lan = None;
     if picked == 1 {
         let link = format!("{}/{}", relay_core::SITE, relay_core::slug(&room));
+        let (copy, clicked) = button(
+            ui,
+            fonts,
+            "copy",
+            if view.copied { CHECK } else { COPY },
+            "Copy link",
+        );
+        if clicked {
+            ui.set_clipboard(format!("https://{link}"));
+            view.copied = true;
+        }
+        let link = row![
+            text(format!("{}/", relay_core::SITE))
+                .text_size(10.0)
+                .fill(ink::dim()),
+            text(relay_core::slug(&room))
+                .text_size(10.0)
+                .fill(ink::text()),
+        ];
+        rows.push(welded([pill(fonts, LINK, link), copy]));
+
+        // The LAN address rides in the status line, hidden until asked.
         let address = Shared::text(&shared.address);
         let shown: String = if view.show_address {
-            address.clone()
+            address
         } else {
             address
                 .chars()
                 .map(|c| if c.is_ascii_hexdigit() { '•' } else { c })
                 .collect()
         };
-        let mut copy = |ui: &mut Ui, id: &'static str, value: String| {
-            let glyph = if view.copied == Some(id) { CHECK } else { COPY };
-            let (el, clicked) = button(ui, fonts, id, glyph, "Copy");
-            if clicked {
-                ui.set_clipboard(value);
-                view.copied = Some(id);
-            }
-            el
-        };
-        let copy_link = copy(ui, "copy-link", format!("https://{link}"));
-        let copy_address = copy(ui, "copy-lan", address);
-        let (eye, toggle) = eye_button(ui, fonts, "lan-eye", view.show_address, "address");
-        view.show_address ^= toggle;
-        rows.push(labelled("Link", group([readout(&link, fonts), copy_link])));
-        rows.push(labelled(
-            "LAN",
-            group([readout(&shown, fonts), eye, copy_address]),
-        ));
+        let id = "lan-eye";
+        let hot = ui.get(id).hovered;
+        view.show_address ^= ui.get(id).clicked_with(Button::Primary);
+        lan = Some(
+            row![
+                glyph(fonts, WIFI, ink::dim()),
+                text(shown)
+                    .font(fonts.mono.clone())
+                    .text_size(9.0)
+                    .fill(if hot { ink::text() } else { ink::dim() }),
+            ]
+            .gap(4.0)
+            .center()
+            .role(Kind::Button)
+            .label(if view.show_address {
+                "Hide LAN address"
+            } else {
+                "Show LAN address"
+            })
+            .focusable()
+            .id(id),
+        );
     }
 
     let peers = shared.peers.load(Relaxed);
     let (lit, status) = match (picked, shared.net()) {
-        (0, _) | (_, Net::Idle) => (ink::line(), "Off".to_owned()),
-        (1, Net::Taken) => (
-            ink::bad(),
-            "Room is hosted elsewhere, roll a new name".into(),
-        ),
+        (0, _) | (_, Net::Idle) => (ink::dim(), "Off".to_owned()),
+        (1, Net::Taken) => (ink::bad(), "Room taken, roll a new name".into()),
         (_, Net::Denied) => (ink::bad(), "Wrong password".into()),
         (_, Net::RateMismatch) => (ink::warn(), "Sample rates differ".into()),
-        (1, Net::Offline) if peers == 0 => (ink::warn(), "LAN only, no internet link".into()),
-        (1, _) if peers == 0 => (ink::accent(), "Waiting for listeners".into()),
-        (1, _) => (ink::ok(), format!("{peers} listening")),
-        (_, Net::Lan) => (ink::ok(), "Live on LAN, lossless".into()),
-        (_, Net::Internet) => (ink::ok(), "Live over the internet".into()),
-        (_, Net::Offline) => (ink::warn(), "Looking on LAN, no internet link".into()),
-        _ => (ink::accent(), "Looking for the room".into()),
+        (1, Net::Offline) if peers == 0 => (ink::warn(), "LAN only".into()),
+        (1, _) if peers == 0 => (ink::text(), "Waiting".into()),
+        (1, _) => (ink::volt(), format!("{peers} listening")),
+        (_, Net::Lan) => (ink::volt(), "Live · LAN".into()),
+        (_, Net::Internet) => (ink::volt(), "Live · Internet".into()),
+        (_, Net::Offline) => (ink::warn(), "Searching LAN".into()),
+        _ => (ink::text(), "Searching".into()),
     };
-    let latency = if picked == 2 && peers > 0 {
-        let rate = f64::from(shared.rate.load(Relaxed).max(1));
-        let ms = f64::from(shared.latency.load(Relaxed)) * 1000.0 / rate;
-        format!("BUF {ms:.1} ms")
-    } else {
-        String::new()
+    let tail = match lan {
+        Some(lan) => lan,
+        None if picked == 2 && peers > 0 => {
+            let rate = f64::from(shared.rate.load(Relaxed).max(1));
+            let ms = f64::from(shared.latency.load(Relaxed)) * 1000.0 / rate;
+            text(format!("{ms:.1} ms"))
+                .font(fonts.mono.clone())
+                .text_size(9.0)
+                .fill(ink::dim())
+        }
+        None => spacer(),
     };
 
     let left = column([
         row![
             text("RELAY")
                 .font(fonts.bold.clone())
-                .text_size(16.0)
+                .text_size(12.0)
                 .fill(ink::text()),
             spacer().grow(1.0),
-            mode.w(180.0),
+            mode,
         ]
         .center(),
         column(rows).gap(4.0),
         spacer().grow(1.0),
         row![
-            leaf(6.0, 6.0).radius(1.0).fill(lit),
-            text(status).text_size(11.0).fill(ink::text()),
+            leaf(5.0, 5.0).radius(2.5).fill(lit),
+            text(status).text_size(10.0).fill(ink::text()),
             spacer().grow(1.0),
-            text(latency)
-                .font(fonts.mono.clone())
-                .text_size(9.0)
-                .fill(ink::dim()),
+            tail,
         ]
-        .gap(6.0)
+        .gap(5.0)
         .center(),
     ])
-    .gap(8.0)
+    .gap(5.0)
     .grow(1.0);
 
     if bridge.context().is_some() {
@@ -282,114 +334,31 @@ fn build(
         let level = |id| f64::from(bridge.meter(id)).clamp(0.0, 1.0);
         view.levels = (level(p.left.id()), level(p.right.id()));
     }
-    let (l, r) = view.levels;
-    let peak = l.max(r);
-    let db = if peak > 1e-5 {
-        format!("{:.1}", 20.0 * peak.log10())
-    } else {
-        "-inf".to_owned()
-    };
-    let bar = |level, name| {
-        column([
-            meter(level).w(12.0).grow(1.0),
-            text(name).text_size(9.0).fill(ink::dim()),
-        ])
-        .gap(3.0)
-        .align(Align::Center)
-        .grow(1.0)
-    };
-    let meters = column([
-        row![bar(l, "L"), bar(r, "R")].gap(3.0).grow(1.0),
-        text(db)
-            .font(fonts.mono.clone())
-            .text_size(9.0)
-            .fill(if peak >= 1.0 { ink::bad() } else { ink::text() }),
-    ])
-    .gap(4.0)
-    .align(Align::Center)
-    .w(36.0)
-    .h(Len::Pct(100.0));
-
-    row([
-        left,
-        leaf(1.0, 0.0).h(Len::Pct(100.0)).fill(ink::line()),
-        meters,
-    ])
-    .gap(10.0)
-    .pad(10.0)
-    .fill(ink::bg())
+    row([left, meter(view.levels).h(Len::Pct(100.0))])
+        .gap(8.0)
+        .pad(8.0)
+        .fill(ink::bg())
 }
 
-fn eye_button(ui: &Ui, fonts: &Fonts, id: &'static str, open: bool, what: &str) -> (El, bool) {
-    let (glyph, verb) = if open {
-        (EYE_OFF, "Hide")
-    } else {
-        (EYE, "Show")
-    };
-    button(ui, fonts, id, glyph, &format!("{verb} {what}"))
-}
-
-/// A caps label in a fixed column, then the control.
-fn labelled(name: &str, control: El) -> El {
-    row![
-        text(name.to_uppercase())
-            .text_size(9.5)
-            .fill(ink::dim())
-            .w(62.0),
-        control.grow(1.0),
-    ]
-    .center()
-}
-
-/// A field and its icon buttons, welded into one bordered well.
-fn group(children: impl IntoIterator<Item = El>) -> El {
-    row(children)
-        .inside(1.0)
-        .gap(0.0)
-        .h(26.0)
-        .radius(3.0)
-        .fill(ink::field())
-        .border(ink::line(), 1.0)
-}
-
-/// A text input with its own chrome stripped, to sit in a [`group`].
+/// A text input with its own chrome stripped, to sit in a [`pill`].
 fn bare(input: El) -> El {
-    input.grow(1.0).fill(ink::field()).radius(0.0)
+    input.fill(ink::pill()).radius(0.0).h(H - 4.0)
 }
 
-/// Read-only text in a [`group`]; numbers (an IP) in mono.
-fn readout(value: &str, fonts: &Fonts) -> El {
-    let shown = if value.chars().count() > 44 {
-        format!("{}…", value.chars().take(43).collect::<String>())
-    } else {
-        value.to_owned()
-    };
-    let label = if value.chars().any(|c| c.is_ascii_alphabetic()) {
-        text(shown).text_size(12.0)
-    } else {
-        text(shown).font(fonts.mono.clone()).text_size(10.0)
-    };
-    row([label.fill(ink::text()), spacer().grow(1.0)])
-        .center()
-        .pad_xy(8.0, 0.0)
-        .grow(1.0)
-}
-
-/// One segment of the mode switch: Studio Blue with dark ink when picked.
+/// One mode pill: white with black ink when picked.
 fn segment(ui: &Ui, name: &str, on: bool) -> (El, bool) {
     let clicked = ui.get(name).clicked_with(Button::Primary);
     let hot = ui.get(name).hovered;
     let (bg, fg) = match (on, hot) {
-        (true, _) => (ink::accent(), ink::on_accent()),
-        (false, true) => (ink::line(), ink::text()),
-        (false, false) => (ink::field(), ink::dim()),
+        (true, _) => (ink::text(), ink::black()),
+        (false, true) => (ink::hot(), ink::text()),
+        (false, false) => (ink::pill(), ink::dim()),
     };
-    let el = row([text(name).text_size(11.0).fill(fg)])
+    let el = row([text(name).text_size(10.5).fill(fg)])
         .justify(Justify::Center)
         .center()
-        .grow(1.0)
-        .h(22.0)
-        .radius(2.0)
+        .size(44.0, 20.0)
+        .radius(R)
         .fill(bg)
         .role(Kind::Button)
         .label(name)
@@ -398,17 +367,15 @@ fn segment(ui: &Ui, name: &str, on: bool) -> (El, bool) {
     (el, clicked)
 }
 
-/// A vertical peak meter on a -60..0 dB scale: green, amber over -6 dB,
-/// red over -1 dB, with ticks at -6, -12, -18, -24 and -48.
-fn meter(peak: f64) -> El {
-    let db = 20.0 * peak.max(1e-6).log10();
-    let lit = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+/// L and R rails fused into one 9px strip, -60..0 dB: white, red above -1 dB.
+fn meter((l, r): (f64, f64)) -> El {
+    let lit = |peak: f64| ((20.0 * peak.max(1e-6).log10() + 60.0) / 60.0).clamp(0.0, 1.0);
+    let (l, r) = (lit(l), lit(r));
     canvas(move |size| {
-        let (w, h) = (size.width, size.height);
-        let y = |db: f64| h * (-db / 60.0);
-        let rect = |y0: f64, y1: f64, c: Color| {
+        let h = size.height;
+        let rect = |x: f64, y0: f64, y1: f64, c: Color| {
             let y1 = y1.max(y0);
-            let corners = [(0.0, y0), (w, y0), (w, y1), (0.0, y1)];
+            let corners = [(x, y0), (x + 4.0, y0), (x + 4.0, y1), (x, y1)];
             (y1 > y0).then(|| {
                 Draw::fill(
                     Path::polyline(corners.map(|(x, y)| Point::new(x, y)), true),
@@ -416,19 +383,22 @@ fn meter(peak: f64) -> El {
                 )
             })
         };
-        let top = h * (1.0 - lit);
-        [
-            rect(0.0, h, ink::line()),
-            rect(1.0, h - 1.0, ink::field()),
-            rect(top.max(y(-6.0)), h, ink::ok()),
-            rect(top.max(y(-1.0)), y(-6.0).max(top), ink::warn()),
-            rect(top, y(-1.0).max(top), ink::bad()),
-        ]
-        .into_iter()
-        .chain([6.0, 12.0, 18.0, 24.0, 48.0].map(|d| rect(y(-d), y(-d) + 1.0, ink::bg())))
-        .flatten()
-        .collect()
+        let clip = h / 60.0;
+        [(0.0, l), (5.0, r)]
+            .into_iter()
+            .flat_map(|(x, lit)| {
+                let top = h * (1.0 - lit);
+                [
+                    rect(x, 0.0, h, ink::pill()),
+                    rect(x, top.max(clip), h, ink::text()),
+                    rect(x, top, clip.max(top), ink::bad()),
+                ]
+            })
+            .flatten()
+            .collect()
     })
+    .w(9.0)
+    .radius(2.0)
 }
 
 /// A text input that shows `•` for every character. Typing and deleting go
@@ -498,7 +468,7 @@ mod snapshot {
         let mut bridge = Bridge::new(params);
         let (mut ui, fonts) = new_ui();
         let mut view = View {
-            levels: (0.5, 0.95),
+            levels: (0.5, 0.99),
             ..View::default()
         };
         let (w, h) = (SIZE.0 * 2, SIZE.1 * 2);
