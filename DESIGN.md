@@ -1,17 +1,15 @@
 ---
 name: RELAY
 colors:
-  bg: "#0a0b0d"
-  field: "#06070a"
-  line: "#22252c"
-  text: "#f3f5f8"
-  dim: "#8b93a1"
-  studio-blue: "#00aaff"
-  on-accent: "#00131d"
-  ok: "#2fd67b"
-  warn: "#ffb020"
-  bad: "#ff4d4f"
-radius: 3px
+  bg: "#050505"
+  pill: "#161616"
+  hover: "#262626"
+  text: "#ffffff"
+  dim: "#6e6e6e"
+  volt: "#c8ff00"
+  warn: "#ffb400"
+  bad: "#ff3b30"
+radius: 7px
 fonts:
   ui: Barlow 600
   heading: Barlow 700
@@ -26,20 +24,15 @@ and the product page (`apps/web`) share one set of tokens, listed above.
 
 ## Rules
 
-- **Flat.** One panel on the background, never a card inside a card. Blocks are
-  padded 8–12px, with 16px page gutters on mobile.
-- **Hardware corners.** 3px on fields and panels, 2px on segments. No pills.
-- **Welded groups.** A field and its icon buttons share one bordered well. The
-  mode switch is one well with segments inset 2px.
-- **Accent.** Studio Blue marks action, selection, focus and the caret. It is
-  never a meter.
-- **Meters.** Vertical L and R rails on the right edge on a -60..0 dB scale:
-  green, amber above -6 dB, red above -1 dB. Ticks at -6, -12, -18, -24 and
-  -48. A mono peak readout sits below the rails.
-- **Type.** Barlow SemiBold for UI, Barlow Bold for the RELAY mark and headings.
-  Labels are small caps in `dim`. Numbers (dB, ms, IP addresses) are Martian
-  Mono. URLs and words stay in Barlow.
-- **Icons.** Phosphor Bold, 13px, `dim`, turning `text` on hover. Every icon
-  button has an accessible label.
-- **Status.** One line at the bottom-left: a 6px lamp (ok / warn / bad / accent
-  while waiting) plus words. Latency is at the right, in mono.
+- **Compact.** The plugin is a 300×132 strip. Nothing is nested; 8px padding.
+- **Welded pills.** Controls are 24px pills with 7px corners, 4px apart, welded
+  (MUI `Weld::all().reach(5).blend(1.5)`) so facing edges fuse with a fillet
+  neck. An icon button welds to the field it acts on.
+- **Black and white.** Selection is a white pill with black ink. Volt (#c8ff00)
+  appears only on the live lamp. Amber and red appear only for problems and clipping.
+- **Labels are icons.** `#` room, lock password, link, wifi LAN. No caption column.
+- **Meter.** One 9px strip on the right edge, L and R 4px each with a 1px seam,
+  -60..0 dB, white with red above -1 dB. No ticks, labels or readout.
+- **Type.** Barlow SemiBold for UI, Bold for the RELAY mark, Martian Mono only
+  for numbers (ms, IP). Phosphor Bold icons at 12px.
+- **Quiet.** Motion and colour only where something changed.

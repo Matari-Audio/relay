@@ -9,3 +9,7 @@ repository = "https://github.com/Matari-Audio/relay"
 
 [profile.release]
 lto = "thin"
+
+# Opus and DTLS are too slow unoptimised for a debug plugin to keep up.
+[profile.dev.package."*"]
+opt-level = 2
