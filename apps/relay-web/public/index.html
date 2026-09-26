@@ -53,6 +53,25 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 #listen:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 #listen[aria-pressed="true"] { background: var(--field); color: var(--text); }
 #listen[aria-pressed="true"]:hover { background: var(--hover); filter: none; }
+/* Talk: a square mic key. Lit green while the room hears you, with your own
+   level rising through it so you can see the mic works. */
+#mic { position: relative; flex: none; width: 36px; height: 36px; display: grid; place-items: center; overflow: hidden;
+  border: 0; border-radius: var(--r); background: var(--field); color: var(--dim); cursor: pointer; }
+#mic svg { position: relative; width: 16px; height: 16px; }
+#mic .x { display: none; }
+#mic::before { content: ""; position: absolute; inset: 0; background: var(--ink); opacity: .35;
+  transform: scaleY(var(--lvl, 0)); transform-origin: bottom; }
+#mic:hover { background: var(--hover); color: var(--text); }
+#mic:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+#mic[aria-pressed="true"] { background: var(--accent); color: var(--ink); }
+#mic.asking { color: var(--text); animation: ask 1s ease-in-out infinite alternate; }
+#mic.denied { color: var(--red); } #mic.denied .x { display: block; }
+#mic:disabled { cursor: not-allowed; opacity: .45; }
+@keyframes ask { to { box-shadow: inset 0 0 0 1px var(--accent); } }
+.field select { flex: 1; min-width: 0; height: 100%; border: 0; background: none; color: var(--text); font: inherit; font-size: 14px;
+  appearance: none; cursor: pointer; outline: none; }
+.field select option { background: var(--field); }
+.field .chev { flex: none; width: 36px; height: 36px; padding: 11px; color: var(--dim); pointer-events: none; }
 #db { min-width: 76px; text-align: right; font: 400 16px var(--mono); font-variant-numeric: tabular-nums; }
 #db small { font: 600 10px Barlow, sans-serif; color: var(--dim); }
 .who { margin: 0; padding: 0; list-style: none; }
@@ -82,7 +101,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .live #mark .c { animation: ripple 1.8s var(--spring) infinite; }
 .live #mark .c2 { animation-delay: .14s; }
 @keyframes ripple { 0% { transform: none; } 30% { transform: translateX(9px); opacity: .5; } 60%, 100% { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { #listen:active { transform: none; } .live #mark .c { animation: none; } }
+@media (prefers-reduced-motion: reduce) { #listen:active { transform: none; } #mic.asking { animation: none; box-shadow: inset 0 0 0 1px var(--accent); } .live #mark .c { animation: none; } }
 </style>
 </head>
 <body>
@@ -116,7 +135,15 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
         <svg class="stop" viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="1"/></svg>
         <span id="label">Listen</span>
       </button>
+      <button type="button" id="mic" class="room-only" aria-pressed="false" aria-label="Talk: send your mic to the room" title="Talk: send your mic to the room">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0010 0M8 12.5v2"/><path class="x" d="M2.5 1.5l11 13"/></svg>
+      </button>
       <div id="db" class="room-only" aria-label="Peak level">−∞ <small>dB</small></div>
+    </div>
+    <div class="field" id="input" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0010 0M8 12.5v2"/></svg>
+      <select id="device" aria-label="Microphone"></select>
+      <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
     </div>
     <ul class="who room-only" id="who" hidden><li><span>In the room</span><span class="n" id="count"></span></li></ul>
     <p class="about home-only">Audio from a DAW to your browser, peer to peer. <a href="https://matari-audio.com/relay">Get the plugin</a></p>

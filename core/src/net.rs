@@ -679,4 +679,44 @@ mod tests {
         assert_eq!((hs.net(), js.net()), (Net::Internet, Net::Internet));
         assert!(heard >= 48_000, "heard {heard} frames");
     }
+
+    /// A browser on the deployed listen page talks back. Needs a browser
+    /// driven at `https://{SITE}/$RELAY_TALK_ROOM` with a mic; see
+    /// `apps/relay-web/scripts/talk-e2e.mjs`.
+    #[test]
+    #[ignore = "needs the network, the deployed worker and a browser"]
+    fn live_browser_talks_back() {
+        let room = std::env::var("RELAY_TALK_ROOM").expect("RELAY_TALK_ROOM");
+        let shared = Shared::new();
+        shared.rate.store(44_100, Relaxed);
+        shared.set_text(&shared.room, &room);
+        shared.set_role(Role::Share);
+        let mut host = Session::build(&shared, Role::Share, false).unwrap();
+        let key = crate::random_key();
+        host.signal = Some(Signal::connect(SITE, &format!("/{room}/host?key={key}")));
+        let ((mut send, mut tx), (mut rx, mut talk)) = crate::rings();
+        let start = Instant::now();
+        let (mut pushed, mut heard, mut energy, mut talking) = (0, 0usize, 0.0f64, 0);
+        while start.elapsed() < Duration::from_secs(60) && heard < 44_100 {
+            host.step(&shared, &mut tx, &mut rx);
+            talking = talking.max(shared.talking.load(Relaxed));
+            // The host's clock: real-time silence, which also clocks talkback.
+            let due = (start.elapsed().as_secs_f64() * 44_100.0) as usize * 2;
+            let n = due.saturating_sub(pushed).min(send.slots());
+            if let Ok(chunk) = send.write_chunk_uninit(n) {
+                chunk.fill_from_iter(std::iter::repeat(0.0));
+                pushed += n;
+            }
+            if let Ok(chunk) = talk.read_chunk(talk.slots()) {
+                let (a, b) = chunk.as_slices();
+                heard += (a.len() + b.len()) / 2;
+                energy += a.iter().chain(b).map(|x| f64::from(x * x)).sum::<f64>();
+                chunk.commit_all();
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let rms = (energy / (heard.max(1) * 2) as f64).sqrt();
+        eprintln!("talking {talking}, heard {heard} frames, rms {rms:.4}");
+        assert!(talking >= 1 && heard >= 44_100 && rms > 0.005);
+    }
 }

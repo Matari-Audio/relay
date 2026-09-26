@@ -7,6 +7,9 @@ const out = $("out");
 $("room").value = room;
 
 let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, on = false;
+// Talk: the mic stream while on, its level meter, and whether this room's
+// plugin can hear browsers (older RELAYs offer a send-only track).
+let mic, micLevel, canTalk = true;
 
 // The volume fader, dB; the bottom stop mutes. Remembered per browser.
 const vol = $("vol");
@@ -93,6 +96,14 @@ async function answer(sdp) {
     else if (s === "failed") { status("Reconnecting", "warn"); hello(); }
   };
   await conn.setRemoteDescription({ type: "offer", sdp });
+  const t = conn.getTransceivers()[0];
+  canTalk = /a=sendrecv/.test(sdp);
+  if (t && canTalk) {
+    t.direction = "sendrecv"; // sends nothing until a mic track is set
+    if (mic) t.sender.replaceTrack(mic.getAudioTracks()[0]);
+  }
+  if (!canTalk && mic) talk(false);
+  micButton();
   await conn.setLocalDescription(await conn.createAnswer());
   // No trickle: send the answer once every candidate is in it.
   if (conn.iceGatheringState !== "complete") {
@@ -102,6 +113,12 @@ async function answer(sdp) {
     });
   }
   if (conn === pc) ws?.send(JSON.stringify({ t: "answer", sdp: conn.localDescription.sdp }));
+  // Voice needs far less than music: cap the mic at 32 kbps.
+  const sender = t?.sender, params = sender?.getParameters();
+  if (params?.encodings?.length) {
+    params.encodings[0].maxBitrate = 32_000;
+    sender.setParameters(params).catch(() => {});
+  }
 }
 
 // Play through Web Audio so the fader works everywhere (iOS ignores
@@ -151,6 +168,12 @@ function draw(now) {
     $(`m${lr}`).style.clipPath = `inset(${frac(db) * 100}% 0 0 0)`;
     $(`h${lr}`).style.transform = `translateY(${frac(holds[i]) * 100}%)`;
   });
+  if (micLevel) {
+    micLevel.getFloatTimeDomainData(buf);
+    let p = 0;
+    for (const s of buf) p = Math.max(p, Math.abs(s));
+    $("mic").style.setProperty("--lvl", 1 - frac(20 * Math.log10(p || 1e-9)));
+  }
   if (now - shown > 100) {
     shown = now;
     const db = 20 * Math.log10(Math.max(...peaks) || 1e-9);
@@ -171,6 +194,7 @@ function stop() {
   src?.disconnect();
   src = undefined;
   analysers = [];
+  talk(false);
   peaks.fill(0);
   roster({ peers: [] });
   status("Ready");
@@ -191,6 +215,60 @@ $("form").onsubmit = (e) => {
   connect();
 };
 
+// Talk. The browser asks for the mic (and lets you pick one) on the first
+// press; after that the menu below switches inputs.
+function micButton(state = "") {
+  const b = $("mic"), live = !!mic;
+  b.className = state;
+  b.disabled = on && !canTalk;
+  b.setAttribute("aria-pressed", String(live));
+  b.style.setProperty("--lvl", 0);
+  b.title = !canTalk && on ? "This room's RELAY can't hear browsers yet. It needs an update."
+    : state === "denied" ? "Mic blocked. Allow it in the address bar, then press again."
+    : live ? "Talking: the room hears your mic. Press to stop."
+    : "Talk: send your mic to the room";
+  b.setAttribute("aria-label", b.title);
+  $("input").hidden = !live || $("device").options.length < 2;
+}
+
+async function openMic(deviceId) {
+  ctx ??= new AudioContext({ latencyHint: "interactive" });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { deviceId: deviceId ? { exact: deviceId } : undefined, channelCount: 1,
+      echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  mic?.getTracks().forEach((t) => t.stop());
+  mic = stream;
+  const track = stream.getAudioTracks()[0];
+  await pc?.getTransceivers()[0]?.sender.replaceTrack(track).catch(() => {});
+  micLevel = ctx.createAnalyser();
+  micLevel.fftSize = 1024;
+  ctx.createMediaStreamSource(stream).connect(micLevel);
+  // Labels only show once permission is granted.
+  const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+  $("device").replaceChildren(...inputs.map((d, i) => new Option(d.label || `Microphone ${i + 1}`, d.deviceId)));
+  $("device").value = track.getSettings().deviceId ?? "";
+  micButton();
+}
+
+function talk(want) {
+  if (!want) {
+    mic?.getTracks().forEach((t) => t.stop());
+    mic = micLevel = undefined;
+    pc?.getTransceivers()[0]?.sender.replaceTrack(null).catch(() => {});
+    return micButton();
+  }
+  micButton("asking");
+  openMic($("device").value || undefined).catch((e) => micButton(e.name === "NotAllowedError" ? "denied" : ""));
+}
+
+$("mic").onclick = () => {
+  if (mic) return talk(false);
+  if (!on) $("form").requestSubmit(); // talking implies listening
+  talk(true);
+};
+$("device").onchange = () => mic && openMic($("device").value).catch(() => {});
+
 $("eye").onclick = () => {
   const show = $("pw").type === "password";
   $("pw").type = show ? "text" : "password";
@@ -206,3 +284,4 @@ $("copy").onclick = async () => {
 
 setInterval(() => ws?.readyState === 1 && ws.send("ping"), 30_000);
 if (!room) { $("label").textContent = "Join"; $("room").focus(); }
+micButton();
