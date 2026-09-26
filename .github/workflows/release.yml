@@ -10,8 +10,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-    # Build-only until the workflow is on main (dispatch needs it there).
-    branches: [rewrite]
   workflow_dispatch:
 
 permissions:
