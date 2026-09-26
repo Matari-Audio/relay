@@ -27,7 +27,9 @@ host and its peers. It never sees audio or the password.
 - `GET /<room>/host?key=<hex>` (WebSocket) is the plugin that shares. The first
   host's `sha256(key)` is stored. Another key is refused with
   `{"t":"error","code":"taken"}` while that host is connected. When the room
-  has no host, a new key replaces the stored one.
+  has no host, a new key replaces the stored one. The same key connecting
+  again replaces the old host socket. A key that is not 16–128 hex characters
+  gets HTTP 400.
 - `GET /<room>/peer` (WebSocket) is a browser listener or a joining plugin.
   With no host connected the peer gets `{"t":"error","code":"no-host"}` and
   stays connected. When a host arrives, the object sends `{"t":"host"}` to its
@@ -36,7 +38,9 @@ host and its peers. It never sees audio or the password.
 - Ping: the object sets `setWebSocketAutoResponse("ping" → "pong")`.
   Clients send the text `ping` every 30 s.
 
-Messages. `id` is assigned by the object, one per peer socket.
+Messages. `id` is a random u32 (a JSON number) the object assigns to each
+peer socket. A peer sends `hello` after it receives `ice`, and again on `host`
+or when its connection fails.
 
 | Direction | Message |
 |---|---|
@@ -47,13 +51,15 @@ Messages. `id` is assigned by the object, one per peer socket.
 | peer → object → host | `{"t":"answer","sdp"}`, forwarded as `{"t":"answer","id","sdp"}` |
 | object → host | `{"t":"leave","id"}` when a peer socket closes |
 | object → peers | `{"t":"error","code":"no-host"}` when the host socket closes |
+| object → peer | `{"t":"error","code":"full"}`, then close: the 33rd peer |
 
 - `auth` is `hex(relay_core::tag(room, password))`, which the host compares
   with its own.
 - Offers and answers are complete (no trickle ICE): each side gathers
   candidates before it sends.
-- `ice` servers are Cloudflare TURN credentials minted per connection when
-  `TURN_KEY_ID`/`TURN_KEY_TOKEN` are set, plus `stun:stun.cloudflare.com:3478`.
+- `ice` servers are Cloudflare TURN credentials when `TURN_KEY_ID` and
+  `TURN_KEY_TOKEN` are set. They are 24 h credentials, minted at most hourly
+  per worker instance, with port-53 URLs dropped. Always included: plus `stun:stun.cloudflare.com:3478`.
   Optional `EXTRA_ICE` (JSON) adds a self-hosted TURN.
 
 Limits in the object:
