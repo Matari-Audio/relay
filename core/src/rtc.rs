@@ -35,7 +35,8 @@ fn new_rtc(now: Instant) -> Rtc {
         ..Default::default()
     };
     let hz = Frequency::FORTY_EIGHT_KHZ;
-    cfg.codec_config().add_config(PT, None, Codec::Opus, hz, Some(2), opus);
+    cfg.codec_config()
+        .add_config(PT, None, Codec::Opus, hz, Some(2), opus);
     cfg.build(now)
 }
 
@@ -45,7 +46,13 @@ fn local_ips() -> Vec<IpAddr> {
     let mut ips = Vec::new();
     for i in netdev::get_interfaces().into_iter().filter(|i| i.is_up()) {
         ips.extend(i.ipv4.iter().map(|n| IpAddr::V4(n.addr())));
-        ips.extend(i.ipv6.iter().map(|n| n.addr()).filter(|a| !a.is_unicast_link_local()).map(IpAddr::V6));
+        ips.extend(
+            i.ipv6
+                .iter()
+                .map(|n| n.addr())
+                .filter(|a| !a.is_unicast_link_local())
+                .map(IpAddr::V6),
+        );
     }
     ips
 }
@@ -70,29 +77,43 @@ impl Ice {
         let txid: [u8; 12] = crate::random_key().as_bytes()[..12].try_into().ok()?;
         let mapping = Arc::new(Mutex::new(None));
         let lan = crate::net::lan_ip();
-        let primary = socks.iter().find(|s| s.local_addr().ok().map(|a| a.ip()) == lan);
+        let primary = socks
+            .iter()
+            .find(|s| s.local_addr().ok().map(|a| a.ip()) == lan);
         if let Some((sock, SocketAddr::V4(base))) =
             primary.and_then(|s| Some((s.try_clone().ok()?, s.local_addr().ok()?)))
         {
             let slot = Arc::downgrade(&mapping);
-            let _ = thread::Builder::new().name("relay-gather".into()).spawn(move || {
-                let req = stun_request(txid);
-                if let Some(to) = STUN.to_socket_addrs().ok().and_then(|mut a| a.find(SocketAddr::is_ipv4)) {
-                    for _ in 0..3 {
-                        let _ = sock.send_to(&req, to);
-                        thread::sleep(Duration::from_millis(500));
+            let _ = thread::Builder::new()
+                .name("relay-gather".into())
+                .spawn(move || {
+                    let req = stun_request(txid);
+                    if let Some(to) = STUN
+                        .to_socket_addrs()
+                        .ok()
+                        .and_then(|mut a| a.find(SocketAddr::is_ipv4))
+                    {
+                        for _ in 0..3 {
+                            let _ = sock.send_to(&req, to);
+                            thread::sleep(Duration::from_millis(500));
+                        }
                     }
-                }
-                if !map {
-                    return;
-                }
-                // If the session is gone by now, `m` drops here and unmaps.
-                if let (Some(m), Some(slot)) = (crate::portmap::map(base), slot.upgrade()) {
-                    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(m);
-                }
-            });
+                    if !map {
+                        return;
+                    }
+                    // If the session is gone by now, `m` drops here and unmaps.
+                    if let (Some(m), Some(slot)) = (crate::portmap::map(base), slot.upgrade()) {
+                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(m);
+                    }
+                });
         }
-        Some(Self { socks, txid, srflx: None, mapping, buf: vec![0; 2048] })
+        Some(Self {
+            socks,
+            txid,
+            srflx: None,
+            mapping,
+            buf: vec![0; 2048],
+        })
     }
 
     /// ponytail: candidates are what we know when the offer/answer is made;
@@ -103,12 +124,23 @@ impl Ice {
             .iter()
             .filter_map(|s| Candidate::host(s.local_addr().ok()?, "udp").ok())
             .collect();
-        let mapped = self.mapping.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|m| m.external);
+        let mapped = self
+            .mapping
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|m| m.external);
         let base = self.srflx.map(|(_, b)| b).or_else(|| {
             let lan = crate::net::lan_ip();
-            self.socks.iter().filter_map(|s| s.local_addr().ok()).find(|a| Some(a.ip()) == lan)
+            self.socks
+                .iter()
+                .filter_map(|s| s.local_addr().ok())
+                .find(|a| Some(a.ip()) == lan)
         });
-        let public = [self.srflx.map(|(a, _)| a), mapped.filter(|m| Some(*m) != self.srflx.map(|(a, _)| a))];
+        let public = [
+            self.srflx.map(|(a, _)| a),
+            mapped.filter(|m| Some(*m) != self.srflx.map(|(a, _)| a)),
+        ];
         for (addr, base) in public.into_iter().flatten().zip(std::iter::repeat(base)) {
             if let Some(c) = base.and_then(|b| Candidate::server_reflexive(addr, b, "udp").ok()) {
                 out.push(c);
@@ -133,7 +165,11 @@ impl Ice {
     }
 
     fn send(&self, t: &Transmit) {
-        if let Some(s) = self.socks.iter().find(|s| s.local_addr().ok() == Some(t.source)) {
+        if let Some(s) = self
+            .socks
+            .iter()
+            .find(|s| s.local_addr().ok() == Some(t.source))
+        {
             let _ = s.send_to(&t.contents, t.destination);
         }
     }
@@ -152,7 +188,10 @@ fn stun_response(p: &[u8], txid: [u8; 12]) -> Option<SocketAddr> {
     }
     let mut at = 20;
     while at + 4 <= p.len() {
-        let (kind, len) = (u16::from_be_bytes([p[at], p[at + 1]]), usize::from(u16::from_be_bytes([p[at + 2], p[at + 3]])));
+        let (kind, len) = (
+            u16::from_be_bytes([p[at], p[at + 1]]),
+            usize::from(u16::from_be_bytes([p[at + 2], p[at + 3]])),
+        );
         let v = p.get(at + 4..at + 4 + len)?;
         if kind == 0x20 && len == 8 && v[1] == 1 {
             let port = u16::from_be_bytes([v[2], v[3]]) ^ 0x2112;
@@ -187,7 +226,10 @@ impl Resample {
         let ratio = f64::from(to) / f64::from(from);
         let params = SincInterpolationParameters::default();
         let rs = Async::new_sinc(ratio, 1.0, &params, 256, CHANNELS, FixedAsync::Input).ok()?;
-        Some(Self { rs, input: Vec::new() })
+        Some(Self {
+            rs,
+            input: Vec::new(),
+        })
     }
 
     fn run(&mut self, input: &[f32], out: &mut Vec<f32>) {
@@ -206,7 +248,10 @@ impl Resample {
             ) else {
                 return;
             };
-            let written = self.rs.process_into_buffer(&i, &mut o, None).map_or(0, |(_, w)| w);
+            let written = self
+                .rs
+                .process_into_buffer(&i, &mut o, None)
+                .map_or(0, |(_, w)| w);
             out.truncate(start + written * CHANNELS);
             self.input.drain(..need * CHANNELS);
         }
@@ -214,7 +259,11 @@ impl Resample {
 }
 
 /// To (or from) 48 kHz: `None` when already there.
-fn resampler(slot: &mut Option<((u32, u32), Resample)>, from: u32, to: u32) -> Option<&mut Resample> {
+fn resampler(
+    slot: &mut Option<((u32, u32), Resample)>,
+    from: u32,
+    to: u32,
+) -> Option<&mut Resample> {
     if from == to || from == 0 || to == 0 {
         *slot = None;
         return None;
@@ -252,7 +301,15 @@ impl Host {
         enc.bitrate_bps = 510_000;
         enc.use_inband_fec = true;
         let ice = Ice::open(map)?;
-        Some(Self { ice, peers: Vec::new(), enc, up: None, pcm: Vec::new(), time: 0, packet: vec![0; 1500] })
+        Some(Self {
+            ice,
+            peers: Vec::new(),
+            enc,
+            up: None,
+            pcm: Vec::new(),
+            time: 0,
+            packet: vec![0; 1500],
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -273,11 +330,25 @@ impl Host {
         }
         let mut api = rtc.sdp_api();
         let stream = Some("relay".to_owned());
-        let mid = api.add_media(MediaKind::Audio, Direction::SendOnly, stream.clone(), stream, None);
+        let mid = api.add_media(
+            MediaKind::Audio,
+            Direction::SendOnly,
+            stream.clone(),
+            stream,
+            None,
+        );
         let (offer, pending) = api.apply()?;
         let next = drain(&mut rtc, &self.ice, |_| {})?;
         let sdp = offer.to_sdp_string();
-        self.peers.push(Peer { id: id.to_owned(), rtc, mid, pending: Some(pending), next, live: false, dead: false });
+        self.peers.push(Peer {
+            id: id.to_owned(),
+            rtc,
+            mid,
+            pending: Some(pending),
+            next,
+            live: false,
+            dead: false,
+        });
         // str0m has no fmtp field for it; the browser's encoder reads it.
         Some(sdp.replace("useinbandfec=1", "useinbandfec=1;maxaveragebitrate=510000"))
     }
@@ -286,7 +357,8 @@ impl Host {
         let Some(p) = self.peers.iter_mut().find(|p| p.id == id) else {
             return;
         };
-        let (Some(pending), Ok(answer)) = (p.pending.take(), SdpAnswer::from_sdp_string(sdp)) else {
+        let (Some(pending), Ok(answer)) = (p.pending.take(), SdpAnswer::from_sdp_string(sdp))
+        else {
             return;
         };
         p.dead = p.rtc.sdp_api().accept_answer(pending, answer).is_err();
@@ -341,7 +413,10 @@ impl Host {
             None => self.pcm.extend_from_slice(samples),
         }
         while self.pcm.len() >= FRAME * CHANNELS {
-            let n = self.enc.encode(&self.pcm[..FRAME * CHANNELS], FRAME, &mut self.packet).unwrap_or(0);
+            let n = self
+                .enc
+                .encode(&self.pcm[..FRAME * CHANNELS], FRAME, &mut self.packet)
+                .unwrap_or(0);
             self.pcm.drain(..FRAME * CHANNELS);
             let at = MediaTime::new(self.time, Frequency::FORTY_EIGHT_KHZ);
             self.time += FRAME as u64;
@@ -388,7 +463,10 @@ impl Guest {
         for c in self.ice.candidates() {
             rtc.add_local_candidate(c);
         }
-        let answer = rtc.sdp_api().accept_offer(SdpOffer::from_sdp_string(sdp).ok()?).ok()?;
+        let answer = rtc
+            .sdp_api()
+            .accept_offer(SdpOffer::from_sdp_string(sdp).ok()?)
+            .ok()?;
         let next = drain(&mut rtc, &self.ice, |_| {})?;
         self.rtc = Some((rtc, next));
         Some(answer.to_sdp_string())
@@ -406,10 +484,10 @@ impl Guest {
             return;
         };
         let mut packets: Vec<Arc<[u8]>> = Vec::new();
-        let mut dead = false;
+        let (mut dead, mut gone) = (false, false);
         let mut on = |e| match e {
             Event::MediaData(m) => packets.push(m.data),
-            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => dead = true,
+            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => gone = true,
             _ => {}
         };
         while let Some((local, from, n)) = self.ice.recv() {
@@ -426,7 +504,7 @@ impl Guest {
             dead |= rtc.handle_input(Input::Timeout(now)).is_err();
             *next = drain(rtc, &self.ice, &mut on).unwrap_or(now);
         }
-        if dead || !rtc.is_alive() {
+        if dead || gone || !rtc.is_alive() {
             self.rtc = None;
         }
         for p in packets {
@@ -462,7 +540,10 @@ mod tests {
         p.extend([0, 0x20, 0, 8, 0, 1]);
         p.extend((40_000u16 ^ 0x2112).to_be_bytes());
         p.extend((u32::from_be_bytes([203, 0, 113, 7]) ^ 0x2112_a442).to_be_bytes());
-        assert_eq!(stun_response(&p, txid), Some(SocketAddr::from(([203, 0, 113, 7], 40_000))));
+        assert_eq!(
+            stun_response(&p, txid),
+            Some(SocketAddr::from(([203, 0, 113, 7], 40_000)))
+        );
         assert_eq!(stun_response(&p, [4; 12]), None);
     }
 }

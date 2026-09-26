@@ -30,11 +30,14 @@ pub fn map(internal: SocketAddrV4) -> Option<Mapping> {
             return Some(Mapping { external, kind });
         }
         let ip = ask(internal, gw, &[0, 0]).and_then(|r| pmp_parse_ip(&r));
-        let port = ask(internal, gw, &pmp_map(internal.port(), LIFETIME))
-            .and_then(|r| pmp_parse_map(&r));
+        let port =
+            ask(internal, gw, &pmp_map(internal.port(), LIFETIME)).and_then(|r| pmp_parse_map(&r));
         if let (Some(ip), Some(port)) = (ip, port) {
             let kind = Kind::Pmp(gw, internal);
-            return Some(Mapping { external: SocketAddr::from((ip, port)), kind });
+            return Some(Mapping {
+                external: SocketAddr::from((ip, port)),
+                kind,
+            });
         }
     }
     let opts = igd_next::SearchOptions {
@@ -45,9 +48,13 @@ pub fn map(internal: SocketAddrV4) -> Option<Mapping> {
     let gw = igd_next::search_gateway(opts).ok()?;
     let ip = gw.get_external_ip().ok()?;
     let (proto, local) = (igd_next::PortMappingProtocol::UDP, SocketAddr::V4(internal));
-    gw.add_port(proto, internal.port(), local, LIFETIME, "RELAY").ok()?;
+    gw.add_port(proto, internal.port(), local, LIFETIME, "RELAY")
+        .ok()?;
     let external = SocketAddr::new(ip, internal.port());
-    Some(Mapping { external, kind: Kind::Upnp(gw, internal.port()) })
+    Some(Mapping {
+        external,
+        kind: Kind::Upnp(gw, internal.port()),
+    })
 }
 
 impl Drop for Mapping {
@@ -56,7 +63,9 @@ impl Drop for Mapping {
             Kind::Pcp(gw, nonce, internal) => {
                 send(*internal, *gw, &pcp_map(*internal, *nonce, 0));
             }
-            Kind::Pmp(gw, internal) => send(*internal, *gw, &pmp_map(internal.port(), 0)),
+            Kind::Pmp(gw, internal) => {
+                send(*internal, *gw, &pmp_map(internal.port(), 0));
+            }
             Kind::Upnp(gw, port) => {
                 let (gw, port) = (gw.clone(), *port);
                 // SOAP over HTTP can take a while; never on the link thread.
@@ -79,12 +88,13 @@ fn send(from: SocketAddrV4, to: SocketAddrV4, req: &[u8]) -> Option<UdpSocket> {
 fn ask(from: SocketAddrV4, to: SocketAddrV4, req: &[u8]) -> Option<Vec<u8>> {
     for wait in [250, 500] {
         let sock = send(from, to, req)?;
-        sock.set_read_timeout(Some(Duration::from_millis(wait))).ok()?;
+        sock.set_read_timeout(Some(Duration::from_millis(wait)))
+            .ok()?;
         let mut buf = [0; 1100];
-        if let Ok((n, src)) = sock.recv_from(&mut buf) {
-            if src == SocketAddr::V4(to) {
-                return Some(buf[..n].to_vec());
-            }
+        if let Ok((n, src)) = sock.recv_from(&mut buf)
+            && src == SocketAddr::V4(to)
+        {
+            return Some(buf[..n].to_vec());
         }
     }
     None
@@ -138,11 +148,16 @@ mod tests {
 
     #[test]
     fn nat_pmp_and_pcp_packets() {
-        assert_eq!(pmp_map(17_492, 7_200), [0, 1, 0, 0, 0x44, 0x54, 0x44, 0x54, 0, 0, 0x1c, 0x20]);
+        assert_eq!(
+            pmp_map(17_492, 7_200),
+            [0, 1, 0, 0, 0x44, 0x54, 0x44, 0x54, 0, 0, 0x1c, 0x20]
+        );
         assert_eq!(pmp_map(17_492, 0)[6..], [0, 0, 0, 0, 0, 0]);
         let ip = [0, 128, 0, 0, 0, 0, 0, 9, 203, 0, 113, 7];
         assert_eq!(pmp_parse_ip(&ip), Some(Ipv4Addr::new(203, 0, 113, 7)));
-        let map = [0, 129, 0, 0, 0, 0, 0, 9, 0x44, 0x54, 0x9c, 0x40, 0, 0, 0x1c, 0x20];
+        let map = [
+            0, 129, 0, 0, 0, 0, 0, 9, 0x44, 0x54, 0x9c, 0x40, 0, 0, 0x1c, 0x20,
+        ];
         assert_eq!(pmp_parse_map(&map), Some(40_000));
         let mut bad = map;
         bad[3] = 3; // result code: network failure
@@ -150,7 +165,10 @@ mod tests {
 
         let internal = SocketAddrV4::new(Ipv4Addr::new(192, 168, 1, 20), 50_000);
         let req = pcp_map(internal, [7; 12], 7_200);
-        assert_eq!((req.len(), &req[..2], &req[20..24]), (60, &[2, 1][..], &[192, 168, 1, 20][..]));
+        assert_eq!(
+            (req.len(), &req[..2], &req[20..24]),
+            (60, &[2, 1][..], &[192, 168, 1, 20][..])
+        );
         // The router's answer: same layout, R bit set, assigned address.
         let mut resp = req.clone();
         resp[1] = 0x81;

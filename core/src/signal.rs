@@ -13,7 +13,7 @@ use tungstenite::{Error, Message};
 const PING_EVERY: Duration = Duration::from_secs(30);
 
 pub enum Msg {
-    /// Connected (again): say hello.
+    /// Connected (again). The object's `ice` message follows.
     Up,
     /// Unreachable or dropped; retrying with backoff.
     Down,
@@ -93,7 +93,8 @@ fn run(site: &str, url: &str, out: &Receiver<String>, inbox: &Sender<Msg>) {
         // Wait out the backoff, still noticing when the link hangs up.
         let end = Instant::now() + backoff;
         while Instant::now() < end {
-            if let Err(RecvTimeoutError::Disconnected) = out.recv_timeout(Duration::from_millis(100))
+            if let Err(RecvTimeoutError::Disconnected) =
+                out.recv_timeout(Duration::from_millis(100))
             {
                 return;
             }

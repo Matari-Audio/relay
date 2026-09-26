@@ -4,8 +4,12 @@
 //! Threads: the host audio thread only touches the two `rtrb` rings and
 //! atomics. Sockets, strings and allocation live on the network thread.
 
+mod mdns;
 mod net;
 mod playout;
+mod portmap;
+mod rtc;
+mod signal;
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};

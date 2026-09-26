@@ -25,24 +25,37 @@ impl Mdns {
         let props = [("tag", hex(tag))];
         let info = ServiceInfo::new(TYPE, slug, &host, "", port, &props[..]).ok()?;
         daemon.register(info.enable_addr_auto()).ok()?;
-        Some(Self { daemon, browse: None, name: String::new(), tag: String::new() })
+        Some(Self {
+            daemon,
+            browse: None,
+            name: String::new(),
+            tag: String::new(),
+        })
     }
 
     pub fn browse(slug: &str, tag: [u8; 8]) -> Option<Self> {
         let daemon = ServiceDaemon::new().ok()?;
         let browse = Some(daemon.browse(TYPE).ok()?);
-        Some(Self { daemon, browse, name: format!("{slug}.{TYPE}"), tag: hex(tag) })
+        Some(Self {
+            daemon,
+            browse,
+            name: format!("{slug}.{TYPE}"),
+            tag: hex(tag),
+        })
     }
 
     /// Our room's host, once resolved. ponytail: first IPv4 address only.
     pub fn found(&self) -> Option<SocketAddr> {
         let mut hit = None;
         for event in self.browse.as_ref()?.try_iter() {
-            if let ServiceEvent::ServiceResolved(s) = event {
-                if s.get_fullname() == self.name && s.get_property_val_str("tag") == Some(&self.tag) {
-                    let ip = s.get_addresses_v4().into_iter().next();
-                    hit = ip.map(|ip| SocketAddr::new(IpAddr::V4(ip), s.get_port())).or(hit);
-                }
+            if let ServiceEvent::ServiceResolved(s) = event
+                && s.get_fullname() == self.name
+                && s.get_property_val_str("tag") == Some(&self.tag)
+            {
+                let ip = s.get_addresses_v4().into_iter().next();
+                hit = ip
+                    .map(|ip| SocketAddr::new(IpAddr::V4(ip), s.get_port()))
+                    .or(hit);
             }
         }
         hit
