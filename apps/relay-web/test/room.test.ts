@@ -3,19 +3,27 @@ import { expect, it } from "vitest";
 
 type Msg = Record<string, any>;
 
-// A socket plus a queue of parsed messages, so tests can await the next one.
+// A socket plus queues of parsed messages, so tests can await the next one.
+// Rosters go to their own queue, so the signaling tests read as before.
+function inbox() {
+  const queue: Msg[] = [];
+  const waiters: ((m: Msg) => void)[] = [];
+  return {
+    push: (m: Msg) => (waiters.length ? waiters.shift()!(m) : queue.push(m)),
+    next: () => (queue.length ? Promise.resolve(queue.shift()!) : new Promise<Msg>((r) => waiters.push(r))),
+  };
+}
+
 async function open(path: string) {
   const res = await SELF.fetch(`https://relay.test${path}`, { headers: { Upgrade: "websocket" } });
   const ws = res.webSocket!;
-  const queue: Msg[] = [];
-  const waiters: ((m: Msg) => void)[] = [];
+  const msgs = inbox();
+  const rosters = inbox();
   let closed: ((code: number) => void) | undefined;
   const closedP = new Promise<number>((r) => (closed = r));
   ws.addEventListener("message", (e) => {
     const m = JSON.parse(e.data as string);
-    const w = waiters.shift();
-    if (w) w(m);
-    else queue.push(m);
+    (m.t === "roster" ? rosters : msgs).push(m);
   });
   ws.addEventListener("close", (e) => closed!(e.code));
   ws.accept();
@@ -23,7 +31,8 @@ async function open(path: string) {
     ws,
     closed: closedP,
     send: (m: Msg) => ws.send(JSON.stringify(m)),
-    next: () => (queue.length ? Promise.resolve(queue.shift()!) : new Promise<Msg>((r) => waiters.push(r))),
+    next: msgs.next,
+    roster: rosters.next,
   };
 }
 
@@ -125,4 +134,33 @@ it("drops oversized and malformed messages, closes a flooding socket", async () 
   expect((await h.next()).sdp).toBe("ok");
   for (let i = 0; i < 30; i++) p.ws.send("{}");
   expect(await p.closed).toBe(1008);
+});
+
+it("sends everyone the roster when the host arrives, a peer is admitted or leaves", async () => {
+  const r = room();
+  const h = await open(`/${r}/host?key=${KEY}`);
+  await h.next();
+  expect(await h.roster()).toEqual({ t: "roster", you: null, peers: [{ id: 0, kind: "host" }] });
+  const p = await open(`/${r}/peer`);
+  const q = await open(`/${r}/peer`);
+  await p.next();
+  await q.next();
+  p.send({ t: "hello", kind: "web", auth: AUTH });
+  q.send({ t: "hello", kind: "plugin", auth: AUTH });
+  const idP = (await h.next()).id;
+  const idQ = (await h.next()).id;
+  h.send({ t: "offer", to: idP, sdp: "v=0" });
+  const one = [{ id: 0, kind: "host" }, { id: idP, kind: "web" }];
+  expect(await h.roster()).toEqual({ t: "roster", you: null, peers: one });
+  expect(await p.roster()).toEqual({ t: "roster", you: idP, peers: one });
+  expect(await q.roster()).toEqual({ t: "roster", you: idQ, peers: one });
+  h.send({ t: "deny", to: idQ }); // not admitted: no roster change
+  h.send({ t: "offer", to: idQ, sdp: "v=0" });
+  const two = [...one, { id: idQ, kind: "plugin" }];
+  expect((await p.roster()).peers).toEqual(two);
+  expect((await q.roster()).peers).toEqual(two);
+  p.ws.close(1000);
+  expect((await q.roster()).peers).toEqual([{ id: 0, kind: "host" }, { id: idQ, kind: "plugin" }]);
+  h.ws.close(1000);
+  expect((await q.roster()).peers).toEqual([]);
 });

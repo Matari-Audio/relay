@@ -52,7 +52,15 @@ or when its connection fails.
 | object → host | `{"t":"leave","id"}` when a peer socket closes |
 | object → peers | `{"t":"error","code":"no-host"}` when the host socket closes |
 | object → peer | `{"t":"error","code":"full"}`, then close: the 33rd peer |
+| object → everyone | `{"t":"roster","you":id\|null,"peers":[{"id","kind"}…]}` when the room changes |
 
+- `roster` lists who is in the room: the host as `{"id":0,"kind":"host"}`,
+  then every peer the host has sent an offer, with the `kind` from its hello
+  (`web` or `plugin`). A deny or a closed socket takes a peer out; when the
+  host leaves, the list empties. It is sent to the host and every peer socket
+  when the host connects or leaves and when a peer goes in or out. `you` is
+  the receiver's own id (`null` for the host). Clients ignore message types
+  they do not know, so older plugins and pages are unaffected.
 - `auth` is `hex(relay_core::tag(room, password))`, which the host compares
   with its own.
 - Offers and answers are complete (no trickle ICE): each side gathers

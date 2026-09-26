@@ -17,7 +17,8 @@ const STUN: RTCIceServer = { urls: "stun:stun.cloudflare.com:3478" };
 
 type Msg = Record<string, unknown>;
 type RTCIceServer = { urls: string | string[]; username?: string; credential?: string };
-type Tag = { role: "host" } | { role: "peer"; id: number };
+// A peer is `in` once the host has sent it an offer; `kind` comes from its hello.
+type Tag = { role: "host" } | { role: "peer"; id: number; kind?: string; in?: boolean };
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -136,6 +137,7 @@ export class Room extends DurableObject<Env> {
     send(server, { t: "ice", servers });
     if (isHost) for (const p of this.peers()) send(p, { t: "host" });
     else if (!this.host()) send(server, { t: "error", code: "no-host" });
+    if (isHost) this.roster();
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -158,14 +160,20 @@ export class Room extends DurableObject<Env> {
 
     if (tag.role === "host") {
       const to = this.ctx.getWebSockets(`id:${msg.to}`)[0];
-      if (msg.t === "offer" && typeof msg.sdp === "string") send(to, { t: "offer", sdp: msg.sdp });
-      else if (msg.t === "deny") send(to, { t: "error", code: "denied" });
+      if (msg.t === "offer" && typeof msg.sdp === "string") {
+        send(to, { t: "offer", sdp: msg.sdp });
+        this.admit(to, true);
+      } else if (msg.t === "deny") {
+        send(to, { t: "error", code: "denied" });
+        this.admit(to, false);
+      }
       return;
     }
     const host = this.host();
     if (msg.t === "hello") {
       const { kind, auth } = msg;
       if ((kind !== "web" && kind !== "plugin") || typeof auth !== "string" || !/^[0-9a-f]{16}$/.test(auth)) return;
+      ws.serializeAttachment({ ...tag, kind });
       if (host) send(host, { t: "hello", id: tag.id, kind, auth });
       else send(ws, { t: "error", code: "no-host" });
     } else if (msg.t === "answer" && typeof msg.sdp === "string") {
@@ -193,9 +201,35 @@ export class Room extends DurableObject<Env> {
     } catch {
       // Too late to mark; a duplicate leave is harmless.
     }
-    if (tag?.role === "peer") send(this.host(), { t: "leave", id: tag.id });
-    else if (tag?.role === "host" && !this.host(ws)) {
-      for (const p of this.peers()) send(p, { t: "error", code: "no-host" });
+    if (tag?.role === "peer") {
+      send(this.host(), { t: "leave", id: tag.id });
+      if (tag.in) this.roster();
+    } else if (tag?.role === "host" && !this.host(ws)) {
+      for (const p of this.peers()) {
+        send(p, { t: "error", code: "no-host" });
+        this.admit(p, false, false);
+      }
+      this.roster();
     }
+  }
+
+  admit(ws: WebSocket | undefined, yes: boolean, announce = true) {
+    const tag = ws?.deserializeAttachment() as Tag | null;
+    if (tag?.role !== "peer" || !!tag.in === yes) return;
+    ws!.serializeAttachment({ ...tag, in: yes });
+    if (announce) this.roster();
+  }
+
+  // Everyone gets who is in: the host (id 0) and every admitted peer, plus
+  // `you`, their own id (null for the host).
+  roster() {
+    const host = this.host();
+    const tags = this.peers().map((ws) => [ws, ws.deserializeAttachment() as Tag | null] as const);
+    const peers = [
+      ...(host ? [{ id: 0, kind: "host" }] : []),
+      ...tags.flatMap(([, t]) => (t?.role === "peer" && t.in ? [{ id: t.id, kind: t.kind ?? "web" }] : [])),
+    ];
+    send(host, { t: "roster", you: null, peers });
+    for (const [ws, t] of tags) send(ws, { t: "roster", you: t?.role === "peer" ? t.id : null, peers });
   }
 }
