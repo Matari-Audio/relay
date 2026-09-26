@@ -256,7 +256,7 @@ fn build(
 
     let mut password = Shared::text(&shared.password);
     let show = view.show_password;
-    let (input, changed) = if show {
+    let Response { el: input, changed } = if show {
         text_input(ui, "pass", &mut password)
     } else {
         masked_input(ui, "pass", &mut password)
@@ -317,7 +317,7 @@ fn build(
         // Internet bitrate: what Opus runs at, adapting to the listeners,
         // over the ceiling. A click steps the ceiling down, then round.
         let quality = bridge.bind(ui, P::Quality, |ui, id, v| {
-            let r = ui.get(id);
+            let r = ui.get(&id);
             let mut step = (*v * 3.0).round() as usize % 4;
             if r.clicked_with(Button::Primary) {
                 step = (step + 1) % 4;
@@ -510,10 +510,10 @@ fn fader(
     bridge.bind(ui, param, |ui, id, v| {
         let h = ui
             .scene()
-            .and_then(|s| s.surface(id))
+            .and_then(|s| s.surface(&id))
             .map_or(100.0, |s| s.frame.size.height);
-        ui.drag(id, v, 0.0..=1.0, h, true);
-        if ui.double_click(id) {
+        ui.drag(&id, v, 0.0..=1.0, h, true);
+        if ui.double_click(&id) {
             *v = -GAIN.0 / (GAIN.1 - GAIN.0);
         }
         let handle = row([block(0.0, 3.0).grow(1.0).radius(1.5).fill(TEXT)])
@@ -668,14 +668,14 @@ fn rail(r: Rail) -> El {
 
 /// A text input that shows `•` for every character. Typing and deleting go
 /// through: what changed among the dots is spliced into `value`.
-fn masked_input(ui: &mut Ui, id: &str, value: &mut String) -> (El, bool) {
+fn masked_input(ui: &mut Ui, id: &str, value: &mut String) -> Response {
     let old: Vec<char> = value.chars().collect();
     let mut shown = "•".repeat(old.len());
     let Response { el, changed } = text_input(ui, id, &mut shown);
     if changed {
         *value = unmask(&old, &shown);
     }
-    (el, changed)
+    Response { el, changed }
 }
 
 /// `old` after the edit that turned its dots into `shown`.
