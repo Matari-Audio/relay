@@ -30,7 +30,7 @@ const paths = [
       <thead><tr><th>To</th><th>How</th><th>Audio</th></tr></thead>
       <tbody>
         {paths.map((p) => (
-          <tr><td>{p.to}</td><td>{p.how}</td><td class="spec">{p.spec}</td></tr>
+          <tr><td>{p.to}</td><td>{p.how}</td><td>{p.spec}</td></tr>
         ))}
       </tbody>
     </table>
@@ -56,36 +56,36 @@ const paths = [
 
   .lede { margin: 12px 0 0; max-width: 50ch; font-size: 16px; color: var(--dim); }
 
-  .actions { display: inline-flex; gap: 4px; margin-top: 20px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 
   .actions a {
     display: inline-flex;
     align-items: center;
     height: 40px;
     padding: 0 16px;
-    border: 1px solid var(--accent);
+    border-radius: var(--r);
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
     text-decoration: none;
   }
 
-  .primary { background: var(--accent); color: var(--ink); border-radius: 7px; }
-  .secondary { color: var(--text); border-radius: 7px; }
-  .primary:hover { filter: brightness(1.12); }
-  .secondary:hover { background: var(--surface); }
+  .primary { background: var(--accent); color: var(--ink); }
+  .secondary { background: var(--field); color: var(--text); }
+  .primary:hover { filter: brightness(1.1); }
+  .secondary:hover { background: var(--hover); }
 
   table {
     width: 100%;
     margin-top: 40px;
     border-collapse: collapse;
-    background: var(--surface);
-    border: 1px solid var(--line);
+    background: var(--field);
+    border-radius: var(--r);
+    overflow: hidden;
   }
 
   th, td { padding: 10px 12px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
   th { color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-  td.spec { font-family: var(--mono); font-size: 13px; font-weight: 500; }
 
   .note { margin: 12px 0 0; max-width: 70ch; color: var(--dim); }
 

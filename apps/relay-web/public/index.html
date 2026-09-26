@@ -9,40 +9,55 @@
 <style>
 @font-face { font-family: Barlow; font-weight: 600; font-display: swap; src: url(/fonts/Barlow-SemiBold.woff2) format("woff2"); }
 @font-face { font-family: Barlow; font-weight: 700; font-display: swap; src: url(/fonts/Barlow-Bold.woff2) format("woff2"); }
+@font-face { font-family: "Martian Mono"; font-display: swap; src: url(/fonts/MartianMono.woff2) format("woff2"); }
 :root {
-  --bg: #050505; --surface: #0b0b0b; --field: #161616; --line: #1f1f1f; --text: #ffffff; --dim: #8a8a8a;
-  --accent: #ffffff; --ink: #000000; --ok: #c8ff00; --warn: #ffb400; --bad: #ff3b30;
-  --mono: ui-monospace, "Martian Mono", monospace;
+  --bg: #0e1014; --field: #1b1f27; --hover: #262b36; --line: #2c313d; --well: #07080a;
+  --text: #f4f6fa; --dim: #8b93a4; --accent: #ff6b1a; --ink: #140700;
+  --green: #1fe06a; --yellow: #ffd21a; --red: #ff2d46; --r: 4px;
+  --mono: "Martian Mono", ui-monospace, monospace;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 600 13px/1.3 Barlow, system-ui, sans-serif; }
 body { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 main { width: min(420px, 100%); display: grid; grid-template-columns: 1fr auto; gap: 12px;
-  padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: .16em; }
-.lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
-.lamp.ok { background: var(--ok); } .lamp.warn { background: var(--warn); } .lamp.bad { background: var(--bad); }
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--r); }
+header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; letter-spacing: .06em; }
+.lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.lamp.ok { background: var(--green); } .lamp.warn { background: var(--yellow); } .lamp.bad { background: var(--red); }
 .controls { display: grid; gap: 8px; align-content: start; min-width: 0; }
-label { color: var(--dim); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
-.weld { display: flex; border: 1px solid var(--line); border-radius: 7px; background: var(--field); }
-.weld:focus-within { border-color: var(--accent); }
-.weld input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
-.weld button { width: 36px; border: 0; border-left: 1px solid var(--line); background: none; color: var(--dim); display: grid; place-items: center; cursor: pointer; }
-.weld button:hover, .weld button:focus-visible { color: var(--text); outline: none; }
-.weld svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
-#listen { height: 40px; border: 0; border-radius: 7px; background: var(--accent); color: var(--ink); font: 700 13px Barlow, sans-serif;
-  letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
-#listen:hover { filter: brightness(1.12); } #listen:active { transform: translateY(1px); }
+.field { display: flex; align-items: center; height: 36px; padding-left: 10px; border-radius: var(--r); background: var(--field); }
+.field:hover { background: var(--hover); }
+.field:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.field > svg { flex: none; color: var(--dim); }
+.field input { flex: 1; min-width: 0; height: 100%; padding: 0 8px; border: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
+.field input::placeholder { color: var(--dim); }
+.field button { flex: none; width: 36px; height: 100%; border: 0; border-radius: var(--r); background: none; color: var(--dim); display: grid; place-items: center; cursor: pointer; }
+.field button:hover, .field button:focus-visible { color: var(--text); outline: none; }
+.field button:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.field svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#listen { height: 40px; border: 0; border-radius: var(--r); background: var(--accent); color: var(--ink); font: 700 14px Barlow, sans-serif;
+  letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+#listen:hover { filter: brightness(1.1); } #listen:active { transform: translateY(1px); }
 #listen:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-#listen[aria-pressed="true"] { background: var(--field); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+#listen[aria-pressed="true"] { background: var(--field); color: var(--text); }
+#listen[aria-pressed="true"]:hover { background: var(--hover); filter: none; }
 #status { color: var(--dim); min-height: 17px; }
-#db { font: 500 22px var(--mono); font-variant-numeric: tabular-nums; }
-#db small { font-size: 11px; color: var(--dim); }
-.meters { display: flex; gap: 1px; }
-.ch { display: grid; grid-template-rows: 1fr auto; justify-items: center; gap: 4px; color: var(--dim); font-size: 11px; }
-.rail { position: relative; width: 4px; height: 100%; min-height: 180px; border-radius: 2px; overflow: hidden;
-  background: linear-gradient(to top, var(--text) 0 98.3%, var(--bad) 98.3%); }
-.cover { position: absolute; inset: 0; background: var(--field); transform-origin: top; will-change: transform; }
+#db { font: 400 20px var(--mono); font-variant-numeric: tabular-nums; }
+#db small { font: 600 11px Barlow, sans-serif; color: var(--dim); letter-spacing: .06em; }
+/* Meters: -60..0 dB, green to -12, yellow to -3, red above. Ticks at -6, -12, -24, -48. */
+.meters { display: grid; grid-template-columns: auto 18px 18px; grid-template-rows: 6px 1fr auto; column-gap: 1px; row-gap: 2px;
+  color: var(--dim); font-size: 11px; min-height: 200px; }
+.scale { grid-row: 2; position: relative; width: 24px; margin-right: 4px; font: 400 9px/1 var(--mono); }
+.scale span { position: absolute; right: 0; transform: translateY(-50%); }
+.clip { background: var(--well); } .clip.on { background: var(--red); }
+.rail { grid-row: 2; position: relative; overflow: hidden;
+  background: linear-gradient(to top, var(--green) 0 80%, var(--yellow) 80% 95%, var(--red) 95%); }
+.rail::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(var(--bg) 0 0) 0 10% / 100% 1px no-repeat, linear-gradient(var(--bg) 0 0) 0 20% / 100% 1px no-repeat,
+    linear-gradient(var(--bg) 0 0) 0 40% / 100% 1px no-repeat, linear-gradient(var(--bg) 0 0) 0 80% / 100% 1px no-repeat; }
+.cover { position: absolute; inset: 0; background: var(--well); transform-origin: top; will-change: transform; }
+.hold { position: absolute; inset: 0; border-top: 2px solid var(--text); will-change: transform; }
+.ch { grid-row: 3; text-align: center; }
 @media (prefers-reduced-motion: reduce) { #listen:active { transform: none; } }
 </style>
 </head>
@@ -50,16 +65,16 @@ label { color: var(--dim); font-size: 11px; letter-spacing: .12em; text-transfor
 <main>
   <header><span class="lamp" id="lamp"></span>RELAY</header>
   <form class="controls" id="form">
-    <label for="room">Room</label>
-    <div class="weld">
-      <input id="room" autocomplete="off" spellcheck="false" placeholder="big-filthy-papaya" enterkeyhint="go">
+    <div class="field">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 2.5l-2 11M11.5 2.5l-2 11M2.5 6h11M2 10h11"/></svg>
+      <input id="room" aria-label="Room" autocomplete="off" spellcheck="false" placeholder="big-filthy-papaya" enterkeyhint="go">
       <button type="button" id="copy" aria-label="Copy listen link" title="Copy link">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 3.5v-1h-8v8h1"/></svg>
       </button>
     </div>
-    <label for="pw">Password</label>
-    <div class="weld">
-      <input id="pw" type="password" autocomplete="off" placeholder="optional">
+    <div class="field">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>
+      <input id="pw" aria-label="Password" type="password" autocomplete="off" placeholder="Password (optional)">
       <button type="button" id="eye" aria-label="Show password" aria-pressed="false">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path id="slash" style="display:none" d="M2.5 13.5l11-11"/></svg>
       </button>
@@ -69,8 +84,11 @@ label { color: var(--dim); font-size: 11px; letter-spacing: .12em; text-transfor
     <div id="db" aria-label="Peak level">−∞ <small>dBFS</small></div>
   </form>
   <div class="meters" aria-hidden="true">
-    <div class="ch"><div class="rail"><div class="cover" id="mL"></div></div>L</div>
-    <div class="ch"><div class="rail"><div class="cover" id="mR"></div></div>R</div>
+    <div class="scale"><span style="top:0">0</span><span style="top:10%">-6</span><span style="top:20%">-12</span><span style="top:40%">-24</span><span style="top:80%">-48</span></div>
+    <div class="clip" id="cL" style="grid-area:1/2"></div><div class="clip" id="cR" style="grid-area:1/3"></div>
+    <div class="rail"><div class="cover" id="mL"></div><div class="hold" id="hL"></div></div>
+    <div class="rail"><div class="cover" id="mR"></div><div class="hold" id="hR"></div></div>
+    <div class="ch" style="grid-column:2">L</div><div class="ch" style="grid-column:3">R</div>
   </div>
 </main>
 <audio id="out" autoplay playsinline></audio>

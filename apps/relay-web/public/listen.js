@@ -87,9 +87,14 @@ function meter(stream) {
 
 const buf = new Float32Array(1024);
 const peaks = [0, 0];
-let shown = 0;
+// Peak hold per rail, dB, like the plugin: holds 1.5 s, then falls 20 dB/s.
+const holds = [-60, -60], held = [0, 0];
+const frac = (db) => Math.min(1, Math.max(0, -db / 60)); // 0 at 0 dB, 1 at the -60 dB floor
+let shown = 0, last = 0;
 function draw(now) {
   requestAnimationFrame(draw);
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
   [0, 1].forEach((i) => {
     let p = 0;
     if (analysers[i]) {
@@ -98,7 +103,14 @@ function draw(now) {
     }
     peaks[i] = Math.max(p, peaks[i] * 0.93); // fast attack, ~0.5 s release
     const db = 20 * Math.log10(peaks[i] || 1e-9);
-    $(i ? "mR" : "mL").style.transform = `scaleY(${1 - Math.min(1, Math.max(0, (db + 60) / 60))})`;
+    if (db >= holds[i] || now - held[i] > 1500) {
+      holds[i] = Math.max(db, holds[i] - 20 * dt, -60);
+      if (db >= holds[i]) held[i] = now;
+    }
+    const lr = i ? "R" : "L";
+    $(`m${lr}`).style.transform = `scaleY(${frac(db)})`;
+    $(`h${lr}`).style.transform = `translateY(${frac(holds[i]) * 100}%)`;
+    $(`c${lr}`).classList.toggle("on", holds[i] > -0.05);
   });
   if (now - shown > 100) {
     shown = now;

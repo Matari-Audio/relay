@@ -34,12 +34,13 @@ Audiomovers' link, and free to run: the operator hosts signaling only.
 ## Brand Commitments
 
 - Vendor **Matari Audio**, product **RELAY**.
-- Visual authority: **BUFFR**. Dark, high-contrast, Studio Blue for action.
+- Visual authority: **BUFFR**. Dark charcoal, high contrast, orange for action.
 - Voice: direct, technical. A studio tool, not a marketing surface.
 
 ## Product Principles
 
-- One flat panel: controls on the left, vertical L/R meters on the right.
+- One flat panel: controls on the left, IN and OUT meters with the output fader
+  on the right, like a mastering limiter.
 - Icon buttons live inside the field they act on: roll a room name, show or hide
   the password, copy the link, show or hide the LAN address.
 - The buffer sizes itself; the editor reports the latency instead of asking
