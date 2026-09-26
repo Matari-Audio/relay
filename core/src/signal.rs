@@ -106,8 +106,10 @@ fn run(site: &str, url: &str, out: &Receiver<String>, inbox: &Sender<Msg>) {
 type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
 
 fn open(site: &str, url: &str) -> Option<Ws> {
-    let addr = (site, 443).to_socket_addrs().ok()?.next()?;
-    let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).ok()?;
+    let tcp = (site, 443)
+        .to_socket_addrs()
+        .ok()?
+        .find_map(|a| TcpStream::connect_timeout(&a, Duration::from_secs(5)).ok())?;
     tcp.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     let _ = tcp.set_nodelay(true);
     let (ws, _) = tungstenite::client_tls(url, tcp).ok()?;

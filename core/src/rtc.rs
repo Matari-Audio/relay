@@ -62,7 +62,9 @@ fn local_ips() -> Vec<IpAddr> {
 struct Ice {
     socks: Vec<UdpSocket>,
     txid: [u8; 12],
-    srflx: Option<(SocketAddr, SocketAddr)>,
+    /// The socket STUN and the port mapping are for.
+    primary: Option<SocketAddr>,
+    srflx: Option<SocketAddr>,
     mapping: Arc<Mutex<Option<Mapping>>>,
     buf: Vec<u8>,
 }
@@ -80,8 +82,9 @@ impl Ice {
         let primary = socks
             .iter()
             .find(|s| s.local_addr().ok().map(|a| a.ip()) == lan);
-        if let Some((sock, SocketAddr::V4(base))) =
-            primary.and_then(|s| Some((s.try_clone().ok()?, s.local_addr().ok()?)))
+        let primary_addr = primary.and_then(|s| s.local_addr().ok());
+        if let (Some(sock), Some(SocketAddr::V4(base))) =
+            (primary.and_then(|s| s.try_clone().ok()), primary_addr)
         {
             let slot = Arc::downgrade(&mapping);
             let _ = thread::Builder::new()
@@ -110,6 +113,7 @@ impl Ice {
         Some(Self {
             socks,
             txid,
+            primary: primary_addr,
             srflx: None,
             mapping,
             buf: vec![0; 2048],
@@ -130,20 +134,9 @@ impl Ice {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|m| m.external);
-        let base = self.srflx.map(|(_, b)| b).or_else(|| {
-            let lan = crate::net::lan_ip();
-            self.socks
-                .iter()
-                .filter_map(|s| s.local_addr().ok())
-                .find(|a| Some(a.ip()) == lan)
-        });
-        let public = [
-            self.srflx.map(|(a, _)| a),
-            mapped.filter(|m| Some(*m) != self.srflx.map(|(a, _)| a)),
-        ];
-        for (addr, base) in public.into_iter().flatten().zip(std::iter::repeat(base)) {
-            if let Some(c) = base.and_then(|b| Candidate::server_reflexive(addr, b, "udp").ok()) {
-                out.push(c);
+        if let Some(base) = self.primary {
+            for addr in [self.srflx, mapped.filter(|m| Some(*m) != self.srflx)] {
+                out.extend(addr.and_then(|a| Candidate::server_reflexive(a, base, "udp").ok()));
             }
         }
         out
@@ -156,7 +149,7 @@ impl Ice {
             while let Ok((n, from)) = sock.recv_from(&mut self.buf) {
                 let local = sock.local_addr().ok()?;
                 match stun_response(&self.buf[..n], self.txid) {
-                    Some(public) => self.srflx = Some((public, local)),
+                    Some(public) => self.srflx = Some(public),
                     None => return Some((local, from, n)),
                 }
             }
