@@ -13,3 +13,22 @@ lto = "thin"
 # Opus and DTLS are too slow unoptimised for a debug plugin to keep up.
 [profile.dev.package."*"]
 opt-level = 2
+
+# The CLAP editor lost the host's GUI scale on reopen (1.5x came back as 1x).
+# Fixed on truce branch fix/clap-replay-host-scale; drop this once it is released.
+[patch.crates-io]
+truce = { path = "../truce-clap-scale/crates/truce" }
+truce-build = { path = "../truce-clap-scale/crates/truce-build" }
+truce-clap = { path = "../truce-clap-scale/crates/truce-clap" }
+truce-core = { path = "../truce-clap-scale/crates/truce-core" }
+truce-cpu = { path = "../truce-clap-scale/crates/truce-cpu" }
+truce-derive = { path = "../truce-clap-scale/crates/truce-derive" }
+truce-font = { path = "../truce-clap-scale/crates/truce-font" }
+truce-gui = { path = "../truce-clap-scale/crates/truce-gui" }
+truce-gui-types = { path = "../truce-clap-scale/crates/truce-gui-types" }
+truce-gui-utils = { path = "../truce-clap-scale/crates/truce-gui-utils" }
+truce-loader = { path = "../truce-clap-scale/crates/truce-loader" }
+truce-params = { path = "../truce-clap-scale/crates/truce-params" }
+truce-plugin = { path = "../truce-clap-scale/crates/truce-plugin" }
+truce-utils = { path = "../truce-clap-scale/crates/truce-utils" }
+truce-vst3 = { path = "../truce-clap-scale/crates/truce-vst3" }

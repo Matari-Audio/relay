@@ -3425,8 +3425,6 @@ dependencies = [
 [[package]]
 name = "truce"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "487e318553a5b064b8538d0db29d758f49381c40e78aa4862766bca276219ef5"
 dependencies = [
  "truce-clap",
  "truce-core",
@@ -3441,8 +3439,6 @@ dependencies = [
 [[package]]
 name = "truce-build"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e366bf85ae85548d710dd3e58d802daf1a8363efc78c0037cdc160fe3b6f987"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -3453,8 +3449,6 @@ dependencies = [
 [[package]]
 name = "truce-clap"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0bda9bd8173818a46b34ba72fe03be0e1dcc17df1d6a21447a712c311d7809f"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -3467,8 +3461,6 @@ dependencies = [
 [[package]]
 name = "truce-core"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ecd892fb0f82fdfbf801b4aab7f443f3c51deac572366b8bebfbda49117f1df"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -3480,8 +3472,6 @@ dependencies = [
 [[package]]
 name = "truce-cpu"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bb80f13daf93784451b090461dbeb3810a67d24c557b4b90f82def48320d1f9"
 dependencies = [
  "tiny-skia",
  "truce-core",
@@ -3492,8 +3482,6 @@ dependencies = [
 [[package]]
 name = "truce-derive"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b68393cabbfd1b9d8cbb28d99e93172a8074c422422e5e999403c108673fe848"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3507,8 +3495,6 @@ dependencies = [
 [[package]]
 name = "truce-font"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f229357368c3425d0f39255dfbb7debdc4a53d89fca971841d182dd550836b28"
 dependencies = [
  "skrifa 0.43.2",
  "tiny-skia",
@@ -3517,8 +3503,6 @@ dependencies = [
 [[package]]
 name = "truce-gui"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1c02b25b56744d33cda126dba764bff6dd00839dbf94d322fd5c646a926d39d"
 dependencies = [
  "baseview-truce",
  "log",
@@ -3541,8 +3525,6 @@ dependencies = [
 [[package]]
 name = "truce-gui-types"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8417497c62104ff9737ff59e15d5f3a1ba415e2b8ec88c74f04f88436144586"
 dependencies = [
  "objc2",
  "truce-core",
@@ -3551,8 +3533,6 @@ dependencies = [
 [[package]]
 name = "truce-gui-utils"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ab60ef3a723bc0e1e94778bc36443b25d8613b31809856daeaf58b706bb806"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -3562,8 +3542,6 @@ dependencies = [
 [[package]]
 name = "truce-loader"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae4060004de3078a884160e8c8328e881893e731900911cd43a495ba0b7dc1c"
 dependencies = [
  "crc32fast",
  "log",
@@ -3576,8 +3554,6 @@ dependencies = [
 [[package]]
 name = "truce-params"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee6182c88d6f844a169c9f6ad84461071df15f325da1b954649b6b407260484"
 dependencies = [
  "bitflags 2.13.2",
 ]
@@ -3585,8 +3561,6 @@ dependencies = [
 [[package]]
 name = "truce-plugin"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7860aff3a9914ae2cbd8c812f36b8cf664b3cf223ed7f1110c842c8e0b086e3d"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -3596,14 +3570,10 @@ dependencies = [
 [[package]]
 name = "truce-utils"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c16c39b3d4b34d50004d7e0e752344bb0c048207528adc72ca7118391eb3140e"
 
 [[package]]
 name = "truce-vst3"
 version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfd5cc181c93370a99a684def63f1c80241f07945a2b2a11205e4de259cdbc63"
 dependencies = [
  "cc",
  "crossbeam-queue",
