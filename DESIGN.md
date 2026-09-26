@@ -75,3 +75,16 @@ kept for the meters and problems. No orange anywhere.
   under the pair.
 - Above the meters sit three readouts: max IN, max OUT and max true peak since
   the last reset. They turn red above 0 dB. Click them to reset.
+
+## Web player
+
+- `relay.matari-audio.com/<room>` is one compact card in the plugin's look:
+  mark and wordmark with the status lamp, room and password fields, a
+  play/stop button with the peak dB readout, the L/R meters, and a short
+  list of who is in the room (from the `roster` message, see
+  `docs/protocol.md`).
+- `/` and the product page use the same card empty: a room field, Join, one
+  line on what RELAY is, and a link to the plugin.
+- **Logo motion.** While live, the two chevrons ripple out from the dot and
+  back on a spring (`linear()` easing, CSS only), the second a beat behind
+  the first. Idle, the mark is still. `prefers-reduced-motion` turns it off.

@@ -11,12 +11,27 @@ let ws, pc, ctx, analysers = [], servers = [], tries = 0, retry, on = false;
 function status(text, lamp = "") {
   $("status").textContent = text;
   $("lamp").className = `lamp ${lamp}`;
+  $("card").classList.toggle("live", lamp === "ok");
+}
+
+// Who is in: the host first, then listeners in join order.
+function roster({ you, peers }) {
+  const kinds = { host: "plugin", web: "browser", plugin: "plugin" };
+  const rows = peers.map((p, i) => {
+    const li = document.createElement("li");
+    const name = p.kind === "host" ? "Host" : p.id === you ? "You" : `Listener ${i}`;
+    for (const t of [name, kinds[p.kind] ?? p.kind]) li.appendChild(document.createElement("span")).textContent = t;
+    return li;
+  });
+  $("count").textContent = peers.length;
+  $("who").replaceChildren($("who").firstElementChild, ...rows);
+  $("who").hidden = !peers.length;
 }
 
 function setOn(v) {
   on = v;
   $("listen").setAttribute("aria-pressed", String(v));
-  $("listen").textContent = v ? "Stop" : "Listen";
+  $("label").textContent = v ? "Stop" : "Listen";
 }
 
 async function hello() {
@@ -32,6 +47,7 @@ function connect() {
     if (m.t === "ice") { servers = m.servers; tries = 0; status("Connecting"); hello(); }
     else if (m.t === "host") hello();
     else if (m.t === "offer") answer(m.sdp);
+    else if (m.t === "roster") roster(m);
     else if (m.code === "no-host") status("Waiting for host", "warn");
     else if (m.code === "denied") { stop(); status("Wrong password", "bad"); $("pw").focus(); }
     else if (m.code === "full") { stop(); status("Room is full", "bad"); }
@@ -130,7 +146,8 @@ function stop() {
   out.srcObject = null;
   analysers = [];
   peaks.fill(0);
-  status("Press Listen");
+  roster({ peers: [] });
+  status("Ready");
 }
 
 $("form").onsubmit = (e) => {
@@ -162,4 +179,4 @@ $("copy").onclick = async () => {
 };
 
 setInterval(() => ws?.readyState === 1 && ws.send("ping"), 30_000);
-if (!room) { status("Enter a room name"); $("room").focus(); }
+if (!room) { $("label").textContent = "Join"; $("room").focus(); }

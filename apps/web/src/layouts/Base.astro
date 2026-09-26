@@ -53,15 +53,12 @@ const { title, description } = Astro.props;
       a:hover { text-decoration: underline; }
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-      .wrap { width: min(880px, 100%); margin: 0 auto; flex: 1; }
+      .wrap { width: min(400px, 100%); margin: auto; padding-top: 24px; }
 
-      .nav { display: flex; align-items: center; gap: 8px; height: 32px; font-weight: 700; letter-spacing: 0.16em; }
-      .nav svg { width: 20px; height: 20px; color: var(--accent); }
-      .nav a { color: var(--text); }
 
       .foot {
-        width: min(880px, 100%);
-        margin: 32px auto 0;
+        width: min(400px, 100%);
+        margin: 24px auto 0;
         padding-top: 12px;
         border-top: 1px solid var(--line);
         display: flex;
@@ -80,14 +77,6 @@ const { title, description } = Astro.props;
   </head>
   <body>
     <div class="wrap">
-      <header class="nav">
-        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="24" cy="50" r="9" fill="currentColor" stroke="none" />
-          <path d="M42 26L56 50L42 74" />
-          <path d="M66 26L80 50L66 74" />
-        </svg>
-        <a href="/">RELAY</a>
-      </header>
       <slot />
     </div>
     <footer class="foot">

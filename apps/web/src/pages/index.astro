@@ -5,9 +5,9 @@ const listen = "https://relay.matari-audio.com";
 const download = "https://matari-audio.com/relay";
 
 const paths = [
-  { to: "Another RELAY on your LAN", how: "Lossless float PCM over UDP", spec: "No codec, no added latency" },
-  { to: "Another RELAY over the internet", how: "WebRTC, peer to peer", spec: "Opus 510 kbps, adaptive jitter buffer" },
-  { to: "Anyone's browser", how: "A link: relay.matari-audio.com/<room>", spec: "Opus 510 kbps, nothing to install" },
+  ["LAN", "lossless float PCM"],
+  ["Internet", "WebRTC, Opus 510 kbps"],
+  ["Browser", "a link, nothing to install"],
 ];
 ---
 
@@ -15,85 +15,91 @@ const paths = [
   title="RELAY: share your track peer to peer"
   description="RELAY is a CLAP and VST3 insert that shares the track it sits on, peer to peer, to another RELAY or to anyone's browser. No account, no server in the audio path."
 >
-  <main>
-    <h1>Share your track, peer to peer.</h1>
-    <p class="lede">
-      Put RELAY on a track, name a room, press Share. The audio goes straight from your machine to
-      the listener. No account, and no server in the audio path.
-    </p>
-    <div class="actions">
-      <a class="primary" href={download}>Download</a>
-      <a class="secondary" href={listen}>Open a room</a>
-    </div>
-
-    <table aria-label="Where RELAY sends audio">
-      <thead><tr><th>To</th><th>How</th><th>Audio</th></tr></thead>
-      <tbody>
-        {paths.map((p) => (
-          <tr><td>{p.to}</td><td>{p.how}</td><td>{p.spec}</td></tr>
-        ))}
-      </tbody>
-    </table>
-
-    <p class="note">
-      Rooms take an optional password. Cloudflare only introduces the two ends; it never sees the
-      audio or the password. Up to 16 listeners per room, each streamed directly from your machine.
-      CLAP and VST3.
-    </p>
+  <main class="card">
+    <header>
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="24" cy="50" r="9" fill="currentColor" stroke="none" />
+        <path d="M42 26L56 50L42 74" /><path d="M66 26L80 50L66 74" />
+      </svg>
+      <h1>RELAY</h1>
+    </header>
+    <form class="controls" id="join" action={listen}>
+      <label class="field">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 2.5l-2 11M11.5 2.5l-2 11M2.5 6h11M2 10h11" /></svg>
+        <input name="room" aria-label="Room" autocomplete="off" spellcheck="false" placeholder="room-name" enterkeyhint="go" />
+      </label>
+      <button>
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z" /></svg>
+        Join
+      </button>
+      <p>Share a track from your DAW, peer to peer, to another RELAY or any browser. <a href={download}>Get the plugin</a></p>
+    </form>
+    <div class="meters" aria-hidden="true"><i></i><i></i></div>
   </main>
+
+  <dl>
+    {paths.map(([to, how]) => (<div><dt>{to}</dt><dd>{how}</dd></div>))}
+  </dl>
 </Base>
 
+<script>
+  // Same rule as relay_core::slug, so the link lands on a valid room.
+  const form = document.getElementById("join") as HTMLFormElement;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const room = String(new FormData(form).get("room") ?? "")
+      .trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+    location.assign(room ? `${form.action}/${room}` : form.action);
+  });
+</script>
+
 <style>
-  main { padding-top: 40px; }
-
-  h1 {
-    margin: 0;
-    font-size: clamp(30px, 6vw, 44px);
-    font-weight: 700;
-    line-height: 1.05;
-    letter-spacing: -0.02em;
+  .card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
   }
 
-  .lede { margin: 12px 0 0; max-width: 50ch; font-size: 16px; color: var(--dim); }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; height: 20px; }
+  h1 { margin: 0; font-size: 15px; letter-spacing: 0.06em; }
+  .mark { width: 18px; height: 18px; color: var(--accent); stroke: currentColor; stroke-width: 13; stroke-linecap: round; stroke-linejoin: round; fill: none; }
 
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .controls { display: grid; gap: 8px; min-width: 0; }
+  .field { display: flex; align-items: center; height: 36px; border-radius: var(--r); background: var(--field); }
+  .field:hover { background: var(--hover); }
+  .field:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+  .field svg { flex: none; width: 36px; height: 36px; padding: 10px; color: var(--dim); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  input { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
+  input::placeholder { color: var(--dim); }
 
-  .actions a {
-    display: inline-flex;
+  button {
+    height: 36px;
+    display: flex;
     align-items: center;
-    height: 40px;
-    padding: 0 16px;
+    justify-content: center;
+    gap: 8px;
+    border: 0;
     border-radius: var(--r);
-    font-weight: 700;
-    letter-spacing: 0.14em;
+    background: var(--accent);
+    color: var(--ink);
+    font: 700 14px Barlow, sans-serif;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    text-decoration: none;
+    cursor: pointer;
   }
+  button svg { width: 12px; height: 12px; fill: currentColor; }
+  button:hover { filter: brightness(1.1); }
 
-  .primary { background: var(--accent); color: var(--ink); }
-  .secondary { background: var(--field); color: var(--text); }
-  .primary:hover { filter: brightness(1.1); }
-  .secondary:hover { background: var(--hover); }
+  p { margin: 0; color: var(--dim); }
 
-  table {
-    width: 100%;
-    margin-top: 40px;
-    border-collapse: collapse;
-    background: var(--field);
-    border-radius: var(--r);
-    overflow: hidden;
-  }
+  .meters { display: flex; gap: 1px; }
+  .meters i { width: 16px; border-radius: 2px; background: #0a0a0a; }
 
-  th, td { padding: 10px 12px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
-  th { color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-
-  .note { margin: 12px 0 0; max-width: 70ch; color: var(--dim); }
-
-  @media (max-width: 640px) {
-    thead { display: none; }
-    tr { display: grid; padding: 10px 12px; border-top: 1px solid var(--line); gap: 2px; }
-    tr:first-child { border-top: 0; }
-    td { padding: 0; border: 0; }
-    td:nth-child(2) { color: var(--dim); }
-  }
+  dl { margin: 16px 0 0; display: grid; gap: 4px; }
+  dl div { display: flex; justify-content: space-between; gap: 12px; }
+  dt { color: var(--dim); }
+  dd { margin: 0; }
 </style>
