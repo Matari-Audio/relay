@@ -5,6 +5,7 @@
 
 mod ui;
 
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, RwLock};
 
 use relay_core::{Link, Playout, Role, Shared};
@@ -27,21 +28,17 @@ pub enum Mode {
 pub struct RelayParams {
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
-    /// Host blocks of audio a joiner holds before playing: 1 is tightest,
-    /// raise it on Wi-Fi.
-    #[param(name = "Buffer", range = "discrete(1, 8)", default = 2)]
-    pub buffer: IntParam,
+    /// Peak of what is shared (Share) or received (Join), per side.
     #[meter]
-    pub level: MeterSlot,
-    /// Share: listeners / 16. Join: 1 while audio arrives.
+    pub left: MeterSlot,
     #[meter]
-    pub peers: MeterSlot,
+    pub right: MeterSlot,
     #[persist = "session"]
     pub link: Session,
 }
 
-/// The editor's and link's handle on [`Shared`]; saves room, password and
-/// host with the project.
+/// The editor's and link's handle on [`Shared`]; saves room, password,
+/// direct host and the room's host key with the project.
 #[derive(Clone)]
 pub struct Session(pub Arc<Shared>);
 
@@ -49,6 +46,7 @@ impl Default for Session {
     fn default() -> Self {
         let shared = Shared::new();
         shared.set_text(&shared.room, &relay_core::room_name());
+        shared.set_text(&shared.host_key, &relay_core::random_key());
         Self(shared)
     }
 }
@@ -58,6 +56,7 @@ struct Saved {
     room: String,
     password: String,
     peer: String,
+    host_key: String,
 }
 
 impl PersistField for Session {
@@ -67,6 +66,7 @@ impl PersistField for Session {
             room: Shared::text(&s.room),
             password: Shared::text(&s.password),
             peer: Shared::text(&s.peer),
+            host_key: Shared::text(&s.host_key),
         })
         .persist_write(buf);
     }
@@ -81,6 +81,9 @@ impl PersistField for Session {
         }
         s.set_text(&s.password, &saved.password);
         s.set_text(&s.peer, &saved.peer);
+        if !saved.host_key.is_empty() {
+            s.set_text(&s.host_key, &saved.host_key);
+        }
     }
 }
 
@@ -129,10 +132,7 @@ impl PluginLogic for Relay {
 
     fn reset(state: &mut Dsp, _params: &RelayParams, config: &AudioConfig) {
         let rate = config.sample_rate.round().clamp(8_000.0, 384_000.0) as u32;
-        state
-            .shared
-            .rate
-            .store(rate, std::sync::atomic::Ordering::Relaxed);
+        state.shared.rate.store(rate, Relaxed);
         state.left.resize(config.max_block_size, 0.0);
         state.right.resize(config.max_block_size, 0.0);
     }
@@ -151,10 +151,7 @@ impl PluginLogic for Relay {
         };
         state.shared.set_role(role);
         let n = buffer.num_samples().min(state.left.len());
-        state
-            .shared
-            .block
-            .store(n as u32, std::sync::atomic::Ordering::Relaxed);
+        state.shared.block.store(n as u32, Relaxed);
         let outs = buffer.num_output_channels().min(2);
         for ch in 0..outs {
             let (input, output) = buffer.io(ch);
@@ -175,8 +172,11 @@ impl PluginLogic for Relay {
             Role::Join => {
                 l.fill(0.0);
                 r.fill(0.0);
-                let target = n * params.buffer.value().clamp(1, 8) as usize;
-                state.playout.render(l, r, target);
+                state.playout.render(l, r);
+                state
+                    .shared
+                    .latency
+                    .store(state.playout.target() as u32, Relaxed);
                 for (ch, src) in [&*l, &*r].into_iter().enumerate().take(outs) {
                     for (o, s) in buffer.output(ch)[..n].iter_mut().zip(src) {
                         *o += s;
@@ -185,13 +185,9 @@ impl PluginLogic for Relay {
             }
             Role::Off => l.fill(0.0),
         }
-        let peak = l.iter().chain(r.iter()).fold(0.0f32, |m, s| m.max(s.abs()));
-        context.set_meter(params.level.id(), peak.min(1.0));
-        let peers = state
-            .shared
-            .peers
-            .load(std::sync::atomic::Ordering::Relaxed);
-        context.set_meter(params.peers.id(), (peers as f32 / 16.0).min(1.0));
+        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs())).min(1.0);
+        context.set_meter(params.left.id(), peak(l));
+        context.set_meter(params.right.id(), peak(r));
         ProcessStatus::Normal
     }
 
