@@ -24,8 +24,13 @@ const HELLO_EVERY: Duration = Duration::from_secs(1);
 const MAX_PEERS: usize = 16;
 /// Join: how long mDNS gets before we go to the internet.
 const LAN_FIRST: Duration = Duration::from_millis(1_500);
-/// Poll period: the most the link adds to latency.
+/// Poll period while audio flows: the most the link adds to latency.
 const TICK: Duration = Duration::from_micros(500);
+/// Poll period while nobody listens: 20x fewer wakeups.
+const IDLE: Duration = Duration::from_millis(10);
+/// Share: the longest a part-filled datagram waits for more samples. Small
+/// host blocks then travel as full datagrams, not one tiny one each.
+const COALESCE: Duration = Duration::from_millis(2);
 
 /// Owns the network thread; dropping it stops and joins the thread.
 pub struct Link {
@@ -81,7 +86,8 @@ fn run(shared: &Shared, mut tx: Consumer<f32>, mut rx: Producer<f32>) {
                 continue;
             }
         }
-        thread::sleep(TICK);
+        let live = shared.peers.load(Relaxed) > 0;
+        thread::sleep(if live { TICK } else { IDLE });
     }
 }
 
@@ -108,6 +114,8 @@ struct Session {
     synced: bool,
     buf: Vec<u8>,
     samples: Vec<f32>,
+    /// Share: since when a part-filled datagram has been waiting.
+    waiting: Option<Instant>,
     /// Share: advertises the room. Join: browses for it.
     mdns: Option<Mdns>,
     /// Join: the host came from mDNS, so drop it when it goes quiet.
@@ -217,6 +225,7 @@ impl Session {
             synced: false,
             buf: vec![0; 2048],
             samples: vec![0.0; wire::MAX_FRAMES * CHANNELS],
+            waiting: None,
             mdns,
             found: false,
             signal: None,
@@ -403,14 +412,20 @@ impl Session {
         }
     }
 
-    /// Share: drain the tx ring into datagrams, one copy per peer.
+    /// Share: drain the tx ring into full datagrams, one copy per peer. A
+    /// part-filled one goes once it has waited [`COALESCE`].
     fn send(&mut self, shared: &Shared, tx: &mut Consumer<f32>, now: Instant) {
         let rate = shared.rate.load(Relaxed);
         loop {
             let n = (tx.slots() / CHANNELS).min(wire::MAX_FRAMES);
             if n == 0 {
+                self.waiting = None;
                 return;
             }
+            if n < wire::MAX_FRAMES && now - *self.waiting.get_or_insert(now) < COALESCE {
+                return;
+            }
+            self.waiting = None;
             let Ok(chunk) = tx.read_chunk(n * CHANNELS) else {
                 return;
             };

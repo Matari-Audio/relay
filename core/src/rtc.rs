@@ -292,7 +292,6 @@ impl Host {
     pub fn new(map: bool) -> Option<Self> {
         let mut enc = OpusEncoder::new(48_000, CHANNELS, Application::RestrictedLowDelay).ok()?;
         enc.bitrate_bps = 510_000;
-        enc.use_inband_fec = true;
         let ice = Ice::open(map)?;
         Some(Self {
             ice,
