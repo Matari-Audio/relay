@@ -100,6 +100,9 @@ impl Rail {
 
 /// What only the editor remembers.
 struct View {
+    about: bool,
+    /// When the editor opened: the clock for the mark's motion.
+    born: Instant,
     show_password: bool,
     show_address: bool,
     copied: bool,
@@ -119,6 +122,8 @@ impl Default for View {
             held: now,
         };
         Self {
+            about: false,
+            born: now,
             show_password: false,
             show_address: false,
             copied: false,
@@ -275,18 +280,29 @@ fn build(
     let peers = shared.peers.load(Relaxed);
     let tail = if picked == 1 {
         let slug = relay_core::slug(&room);
+        let url = format!("https://{}/{slug}", relay_core::SITE);
         let icon = if view.copied { CHECK } else { COPY };
         let (copy, clicked) = action(ui, fonts, "copy", icon, "Copy link");
         if clicked {
-            ui.set_clipboard(format!("https://{}/{slug}", relay_core::SITE));
+            ui.set_clipboard(url.clone());
             view.copied = true;
+        }
+        let r = ui.get("link");
+        if r.clicked_with(Button::Primary) {
+            open(&url);
         }
         let link = row![
             text(format!("{}/", relay_core::SITE))
                 .text_size(11.0)
                 .fill(DIM),
-            text(slug).text_size(11.0).fill(TEXT),
-        ];
+            text(slug)
+                .text_size(11.0)
+                .fill(if r.hovered { GREEN } else { TEXT }),
+        ]
+        .role(Kind::Button)
+        .label("Open the listen page")
+        .focusable()
+        .id("link");
         rows.push(field(fonts, LINK, link, copy));
 
         // The LAN address rides in the status line, hidden until asked.
@@ -330,29 +346,44 @@ fn build(
         _ => (TEXT, "Searching".into()),
     };
 
-    let left = column([
-        row![
-            text("RELAY")
-                .font(fonts.bold.clone())
-                .text_size(14.0)
-                .fill(TEXT),
+    // The mark and wordmark open the about panel.
+    view.about ^= ui.get("about").clicked_with(Button::Primary);
+    let t = view.born.elapsed().as_secs_f64();
+    let live = lit == GREEN;
+    let brand = row![
+        canvas(move |_| mark(t, live)).size(18.0, 18.0),
+        text("RELAY")
+            .font(fonts.bold.clone())
+            .text_size(14.0)
+            .fill(TEXT),
+    ]
+    .gap(5.0)
+    .center()
+    .role(Kind::Button)
+    .label("About RELAY")
+    .focusable()
+    .id("about");
+    let body = if view.about {
+        about(ui)
+    } else {
+        column([
+            column(rows).gap(4.0),
             spacer().grow(1.0),
-            mode,
-        ]
-        .center(),
-        column(rows).gap(4.0),
-        spacer().grow(1.0),
-        row![
-            leaf(6.0, 6.0).radius(3.0).fill(lit),
-            text(status).text_size(10.5).fill(TEXT),
-            spacer().grow(1.0),
-            tail,
-        ]
+            row![
+                leaf(6.0, 6.0).radius(3.0).fill(lit),
+                text(status).text_size(10.5).fill(TEXT),
+                spacer().grow(1.0),
+                tail,
+            ]
+            .gap(6.0)
+            .center(),
+        ])
         .gap(6.0)
-        .center(),
-    ])
-    .gap(6.0)
-    .grow(1.0);
+        .grow(1.0)
+    };
+    let left = column([row![brand, spacer().grow(1.0), mode].center(), body])
+        .gap(6.0)
+        .grow(1.0);
 
     let meters = meters(ui, bridge, shared, fonts, view);
     row([left, meters]).gap(12.0).pad(10.0).fill(BG)
@@ -462,6 +493,88 @@ fn meters(
     .h(Len::Pct(100.0))
 }
 
+/// The RELAY mark, a dot sending two chevrons. While live the chevrons
+/// ripple out of the dot on a damped spring, one after the other.
+fn mark(t: f64, live: bool) -> Vec<Draw> {
+    let ink = if live { GREEN } else { TEXT };
+    let kick = |delay: f64| {
+        let s = (t % 1.8 - delay).max(0.0);
+        if live {
+            (-5.0 * s).exp() * (11.0 * s).sin()
+        } else {
+            0.0
+        }
+    };
+    let dot = 1.7 * (1.0 + 0.3 * kick(0.0));
+    let circle = (0..16).map(|i| {
+        let a = f64::from(i) * std::f64::consts::TAU / 16.0;
+        Point::new(4.3 + dot * a.cos(), 9.0 + dot * a.sin())
+    });
+    let mut shapes = vec![Draw::fill(Path::polyline(circle, true), ink)];
+    for (i, x) in [7.6, 11.9].into_iter().enumerate() {
+        let k = kick(0.08 + 0.1 * i as f64);
+        let x = x + 1.6 * k;
+        let chevron = [(x, 4.6), (x + 2.5, 9.0), (x, 13.4)].map(|(x, y)| Point::new(x, y));
+        let fade = ink.with_alpha(1.0 - 0.35 * k.abs() as f32);
+        shapes.push(Draw::stroke(Path::polyline(chevron, false), fade, 2.3));
+    }
+    shapes
+}
+
+/// Version, licence and the newest changelog entries.
+fn about(ui: &Ui) -> El {
+    const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
+    const FULL: &str = "https://github.com/Matari-Audio/relay/blob/main/CHANGELOG.md";
+    let notes: Vec<El> = CHANGELOG
+        .split("\n## ")
+        .nth(1)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.strip_prefix("- "))
+        .map(|l| text(format!("·  {l}")).text_size(10.0).fill(DIM))
+        .collect();
+    let r = ui.get("changelog");
+    if r.clicked_with(Button::Primary) {
+        open(FULL);
+    }
+    column([
+        row![
+            text(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                .text_size(11.0)
+                .fill(TEXT),
+            spacer().grow(1.0),
+            text("Matari Audio · MPL-2.0").text_size(10.0).fill(DIM),
+        ]
+        .w(Len::Pct(100.0)),
+        column(notes).gap(2.0).align(Align::Start),
+        spacer().grow(1.0),
+        text("Full changelog")
+            .text_size(10.0)
+            .fill(if r.hovered { GREEN } else { TEXT })
+            .role(Kind::Button)
+            .label("Open the full changelog")
+            .focusable()
+            .id("changelog"),
+    ])
+    .gap(6.0)
+    .align(Align::Start)
+    .pad(8.0)
+    .radius(R)
+    .fill(FIELD)
+    .grow(1.0)
+}
+
+/// Opens `url` in the default browser.
+fn open(url: &str) {
+    #[cfg(target_os = "windows")]
+    let (cmd, args) = ("cmd", ["/C", "start", ""].as_slice());
+    #[cfg(target_os = "macos")]
+    let (cmd, args): (_, &[&str]) = ("open", &[]);
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let (cmd, args): (_, &[&str]) = ("xdg-open", &[]);
+    let _ = std::process::Command::new(cmd).args(args).arg(url).spawn();
+}
+
 /// `el` placed `t` of the way down a full-height column.
 fn at(t: f32, el: El) -> El {
     column([
@@ -552,7 +665,7 @@ mod snapshot {
     use mui::vello::{Cache, Cpu};
     use truce_params::Params;
 
-    fn render(mode: f64, net: Net, name: &str) {
+    fn render(mode: f64, net: Net, name: &str, about: bool) {
         let params = Arc::new(RelayParams::new());
         params.set_normalized(P::Mode.into(), mode);
         let shared = Arc::clone(&params.link.0);
@@ -574,7 +687,10 @@ mod snapshot {
         ] {
             shared.note_peak(p, v);
         }
-        let mut view = View::default();
+        let mut view = View {
+            about,
+            ..View::default()
+        };
         let (w, h) = (SIZE.0 * 2, SIZE.1 * 2);
         ui.scale = Some(2.0);
         let root = build(&mut ui, &mut bridge, &shared, &fonts, &mut view);
@@ -610,7 +726,8 @@ mod snapshot {
 
     #[test]
     fn editor_renders() {
-        render(0.5, Net::Internet, "share");
-        render(1.0, Net::Lan, "join");
+        render(0.5, Net::Internet, "share", false);
+        render(1.0, Net::Lan, "join", false);
+        render(0.5, Net::Internet, "about", true);
     }
 }
