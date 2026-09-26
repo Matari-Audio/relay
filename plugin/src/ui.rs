@@ -377,8 +377,13 @@ fn build(
     let talking = shared.talking.load(Relaxed);
     let talk = if picked == 1 && talking > 0 {
         row![
-            icon(MIC).font(fonts.icons.clone()).text_size(11.0).fill(GREEN),
-            text(format!("{talking} talking")).text_size(10.5).fill(TEXT),
+            icon(MIC)
+                .font(fonts.icons.clone())
+                .text_size(11.0)
+                .fill(GREEN),
+            text(format!("{talking} talking"))
+                .text_size(10.5)
+                .fill(TEXT),
         ]
         .gap(3.0)
         .center()
@@ -487,11 +492,7 @@ fn meters(
     col([
         readouts,
         row![input, scale, output].grow(1.0),
-        row![
-            under(P::Input),
-            spacer().w(SCALE),
-            under(P::Output)
-        ],
+        row![under(P::Input), spacer().w(SCALE), under(P::Output)],
     ])
     .gap(4.0)
     .w(PAIR * 2.0 + SCALE)
