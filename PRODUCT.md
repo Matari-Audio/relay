@@ -34,7 +34,7 @@ Audiomovers' link, and free to run: the operator hosts signaling only.
 ## Brand Commitments
 
 - Vendor **Matari Audio**, product **RELAY**.
-- Visual authority: **BUFFR**. Dark charcoal, high contrast, orange for action.
+- Visual authority: **BUFFR**. Neutral charcoal, high contrast, meter green for action.
 - Voice: direct, technical. A studio tool, not a marketing surface.
 
 ## Product Principles

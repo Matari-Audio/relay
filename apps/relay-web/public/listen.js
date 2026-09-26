@@ -108,9 +108,8 @@ function draw(now) {
       if (db >= holds[i]) held[i] = now;
     }
     const lr = i ? "R" : "L";
-    $(`m${lr}`).style.transform = `scaleY(${frac(db)})`;
+    $(`m${lr}`).style.clipPath = `inset(${frac(db) * 100}% 0 0 0)`;
     $(`h${lr}`).style.transform = `translateY(${frac(holds[i]) * 100}%)`;
-    $(`c${lr}`).classList.toggle("on", holds[i] > -0.05);
   });
   if (now - shown > 100) {
     shown = now;

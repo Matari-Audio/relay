@@ -11,8 +11,8 @@
 @font-face { font-family: Barlow; font-weight: 700; font-display: swap; src: url(/fonts/Barlow-Bold.woff2) format("woff2"); }
 @font-face { font-family: "Martian Mono"; font-display: swap; src: url(/fonts/MartianMono.woff2) format("woff2"); }
 :root {
-  --bg: #0e1014; --field: #1b1f27; --hover: #262b36; --line: #2c313d; --well: #07080a;
-  --text: #f4f6fa; --dim: #8b93a4; --accent: #ff6b1a; --ink: #140700;
+  --bg: #121212; --field: #1e1e1e; --hover: #292929; --line: #2e2e2e; --well: #0a0a0a;
+  --text: #f2f2f2; --dim: #8c8c8c; --accent: #1fe06a; --ink: #04140a;
   --green: #1fe06a; --yellow: #ffd21a; --red: #ff2d46; --r: 4px;
   --mono: "Martian Mono", ui-monospace, monospace;
 }
@@ -25,16 +25,17 @@ header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font
 .lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .lamp.ok { background: var(--green); } .lamp.warn { background: var(--yellow); } .lamp.bad { background: var(--red); }
 .controls { display: grid; gap: 8px; align-content: start; min-width: 0; }
-.field { display: flex; align-items: center; height: 36px; padding-left: 10px; border-radius: var(--r); background: var(--field); }
+.field { display: flex; align-items: center; height: 36px; border-radius: var(--r); background: var(--field); }
 .field:hover { background: var(--hover); }
 .field:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
-.field > svg { flex: none; color: var(--dim); }
-.field input { flex: 1; min-width: 0; height: 100%; padding: 0 8px; border: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
+.field > svg { flex: none; width: 36px; height: 36px; padding: 10px; color: var(--dim); }
+.field input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 15px; outline: none; }
 .field input::placeholder { color: var(--dim); }
+.field button svg { width: 16px; height: 16px; }
 .field button { flex: none; width: 36px; height: 100%; border: 0; border-radius: var(--r); background: none; color: var(--dim); display: grid; place-items: center; cursor: pointer; }
 .field button:hover, .field button:focus-visible { color: var(--text); outline: none; }
 .field button:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
-.field svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.field svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #listen { height: 40px; border: 0; border-radius: var(--r); background: var(--accent); color: var(--ink); font: 700 14px Barlow, sans-serif;
   letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
 #listen:hover { filter: brightness(1.1); } #listen:active { transform: translateY(1px); }
@@ -44,20 +45,15 @@ header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font
 #status { color: var(--dim); min-height: 17px; }
 #db { font: 400 20px var(--mono); font-variant-numeric: tabular-nums; }
 #db small { font: 600 11px Barlow, sans-serif; color: var(--dim); letter-spacing: .06em; }
-/* Meters: -60..0 dB, green to -12, yellow to -3, red above. Ticks at -6, -12, -24, -48. */
-.meters { display: grid; grid-template-columns: auto 18px 18px; grid-template-rows: 6px 1fr auto; column-gap: 1px; row-gap: 2px;
+/* Meters: -60..0 dB, one gradient in a well, clipped to the level. */
+.meters { display: grid; grid-template-columns: auto 18px 18px; grid-template-rows: 1fr auto; column-gap: 1px; row-gap: 4px;
   color: var(--dim); font-size: 11px; min-height: 200px; }
-.scale { grid-row: 2; position: relative; width: 24px; margin-right: 4px; font: 400 9px/1 var(--mono); }
+.scale { position: relative; width: 24px; margin-right: 4px; font: 400 9px/1 var(--mono); }
 .scale span { position: absolute; right: 0; transform: translateY(-50%); }
-.clip { background: var(--well); } .clip.on { background: var(--red); }
-.rail { grid-row: 2; position: relative; overflow: hidden;
-  background: linear-gradient(to top, var(--green) 0 80%, var(--yellow) 80% 95%, var(--red) 95%); }
-.rail::after { content: ""; position: absolute; inset: 0;
-  background: linear-gradient(var(--bg) 0 0) 0 10% / 100% 1px no-repeat, linear-gradient(var(--bg) 0 0) 0 20% / 100% 1px no-repeat,
-    linear-gradient(var(--bg) 0 0) 0 40% / 100% 1px no-repeat, linear-gradient(var(--bg) 0 0) 0 80% / 100% 1px no-repeat; }
-.cover { position: absolute; inset: 0; background: var(--well); transform-origin: top; will-change: transform; }
-.hold { position: absolute; inset: 0; border-top: 2px solid var(--text); will-change: transform; }
-.ch { grid-row: 3; text-align: center; }
+.rail { position: relative; overflow: hidden; border-radius: 2px; background: var(--well); }
+.level { position: absolute; inset: 0; background: linear-gradient(var(--red), var(--yellow) 15%, var(--green) 35%); clip-path: inset(100% 0 0 0); }
+.hold { position: absolute; inset: 0; border-top: 1px solid var(--text); will-change: transform; }
+.ch { text-align: center; }
 @media (prefers-reduced-motion: reduce) { #listen:active { transform: none; } }
 </style>
 </head>
@@ -85,9 +81,8 @@ header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font
   </form>
   <div class="meters" aria-hidden="true">
     <div class="scale"><span style="top:0">0</span><span style="top:10%">-6</span><span style="top:20%">-12</span><span style="top:40%">-24</span><span style="top:80%">-48</span></div>
-    <div class="clip" id="cL" style="grid-area:1/2"></div><div class="clip" id="cR" style="grid-area:1/3"></div>
-    <div class="rail"><div class="cover" id="mL"></div><div class="hold" id="hL"></div></div>
-    <div class="rail"><div class="cover" id="mR"></div><div class="hold" id="hR"></div></div>
+    <div class="rail"><div class="level" id="mL"></div><div class="hold" id="hL"></div></div>
+    <div class="rail"><div class="level" id="mR"></div><div class="hold" id="hR"></div></div>
     <div class="ch" style="grid-column:2">L</div><div class="ch" style="grid-column:3">R</div>
   </div>
 </main>
