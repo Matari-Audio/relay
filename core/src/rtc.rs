@@ -33,6 +33,12 @@ const BACKLOG: usize = 9_600 * CHANNELS;
 /// Adaptive bitrate: the most Opus is asked for, and the least it falls to.
 pub const MAX_BPS: u32 = 510_000;
 const MIN_BPS: u32 = 32_000;
+/// Silence gate: after this many silent 10 ms frames (300 ms, room for a
+/// reverb tail) nothing is sent until sound returns. Relayed (TURN) traffic
+/// is billed per byte, and silence is most of a session.
+const GATE_AFTER: u32 = 30;
+/// Below this a sample counts as silent: -80 dBFS.
+const SILENT: f32 = 1e-4;
 const PT: Pt = Pt::new_with_value(111);
 const STUN: &str = "stun.cloudflare.com:3478";
 
@@ -354,6 +360,8 @@ pub struct Host {
     /// The user's ceiling, bits/s. The encoder runs at the lowest peer
     /// estimate under it.
     pub cap: u32,
+    /// Silent frames in a row; at [`GATE_AFTER`] the sender goes quiet.
+    silent: u32,
 }
 
 impl Host {
@@ -374,6 +382,7 @@ impl Host {
             down: None,
             talk: Vec::new(),
             cap: MAX_BPS,
+            silent: 0,
         })
     }
 
@@ -553,10 +562,23 @@ impl Host {
                 .enc
                 .encode(&self.pcm[..FRAME * CHANNELS], FRAME, &mut self.packet)
                 .unwrap_or(0);
+            let quiet = self.pcm[..FRAME * CHANNELS].iter().all(|s| s.abs() < SILENT);
             self.pcm.drain(..FRAME * CHANNELS);
             let at = MediaTime::new(self.time, Frequency::FORTY_EIGHT_KHZ);
             self.time += FRAME as u64;
-            if n == 0 {
+            // Still encoded while gated, so the codec state is warm when
+            // sound returns; the receiver hears the gap as DTX silence.
+            let was = self.silent >= GATE_AFTER;
+            self.silent = if quiet { self.silent.saturating_add(1) } else { 0 };
+            let gated = self.silent >= GATE_AFTER;
+            if gated != was {
+                // No bandwidth probing (padding bytes) while there is nothing to send.
+                let want = if gated { MIN_BPS } else { self.cap };
+                for p in &mut self.peers {
+                    p.rtc.bwe().set_desired_bitrate(Bitrate::bps(want.into()));
+                }
+            }
+            if n == 0 || self.silent >= GATE_AFTER {
                 continue;
             }
             let data: Arc<[u8]> = self.packet[..n].into();

@@ -618,13 +618,15 @@ mod tests {
                 let fwd = json!({"t": "offer", "sdp": v["sdp"]});
                 to_join.send(Msg::Text(fwd.to_string())).unwrap();
             }
-            // Real time: a 1 kHz sine at 0.5.
+            // Real time: half a second of silence (the gate closes), then
+            // a 1 kHz sine at 0.5 that must come through.
             let due = (start.elapsed().as_secs_f64() * 44_100.0) as usize;
             if due > pushed {
                 let n = (due - pushed).min(send.slots() / 2);
                 let chunk = send.write_chunk_uninit(n * 2).unwrap();
                 chunk.fill_from_iter((pushed..pushed + n).flat_map(|i| {
                     let x = (i as f32 * 1_000.0 * std::f32::consts::TAU / 44_100.0).sin() * 0.5;
+                    let x = if i < 22_050 { 0.0 } else { x };
                     [x, x]
                 }));
                 pushed += n;
