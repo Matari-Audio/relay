@@ -210,7 +210,10 @@ impl PluginLogic for Relay {
                 l.fill(0.0);
                 r.fill(0.0);
                 state.playout.render(l, r);
-                state.shared.latency.store(state.playout.target() as u32, Relaxed);
+                state
+                    .shared
+                    .latency
+                    .store(state.playout.target() as u32, Relaxed);
                 ramp(l, state.gain[0], gain[0]);
                 ramp(r, state.gain[0], gain[0]);
                 add(buffer, l, r, outs);
@@ -228,10 +231,10 @@ impl PluginLogic for Relay {
             add(buffer, l, r, outs);
         }
         let mut out = [0.0; 2];
-        for ch in 0..outs {
+        for (ch, rail) in out.iter_mut().enumerate().take(outs) {
             let o = &mut buffer.output(ch)[..n];
             ramp(o, state.gain[1], gain[1]);
-            out[ch] = peak(o);
+            *rail = peak(o);
         }
         // A mono output shows on both rails.
         shared.note_peak(Peak::OutL, out[0]);
