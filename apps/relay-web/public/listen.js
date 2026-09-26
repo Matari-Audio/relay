@@ -6,7 +6,21 @@ const room = slug(decodeURIComponent(location.pathname.slice(1)));
 const out = $("out");
 $("room").value = room;
 
-let ws, pc, ctx, analysers = [], servers = [], tries = 0, retry, on = false;
+let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, on = false;
+
+// The volume fader, dB; the bottom stop mutes. Remembered per browser.
+const vol = $("vol");
+const linear = () => (+vol.value <= +vol.min ? 0 : 10 ** (vol.value / 20));
+function volume() {
+  const db = +vol.value;
+  $("gain").textContent = db <= +vol.min ? "−∞" : `${db >= 0 ? "+" : ""}${db.toFixed(1).replace("-", "−")}`;
+  gain?.gain.setTargetAtTime(linear(), ctx.currentTime, 0.02);
+  try { localStorage.volume = vol.value; } catch {}
+}
+try { if (localStorage.volume) vol.value = localStorage.volume; } catch {}
+vol.oninput = volume;
+vol.ondblclick = () => { vol.value = 0; volume(); };
+volume();
 
 function status(text, lamp = "") {
   $("status").textContent = text;
@@ -90,9 +104,19 @@ async function answer(sdp) {
   if (conn === pc) ws?.send(JSON.stringify({ t: "answer", sdp: conn.localDescription.sdp }));
 }
 
+// Play through Web Audio so the fader works everywhere (iOS ignores
+// <audio>.volume). The element stays attached, muted: Chrome only feeds a
+// remote stream to Web Audio while an element holds it. Meters read after
+// the fader, like the plugin's OUT.
 function meter(stream) {
+  src?.disconnect();
+  out.muted = true;
+  src = ctx.createMediaStreamSource(stream);
+  gain ??= ctx.createGain();
+  gain.gain.value = linear();
+  gain.connect(ctx.destination);
   const split = ctx.createChannelSplitter(2);
-  ctx.createMediaStreamSource(stream).connect(split);
+  src.connect(gain).connect(split);
   analysers = [0, 1].map((ch) => {
     const a = ctx.createAnalyser();
     a.fftSize = 1024;
@@ -144,6 +168,8 @@ function stop() {
   pc?.close();
   pc = undefined;
   out.srcObject = null;
+  src?.disconnect();
+  src = undefined;
   analysers = [];
   peaks.fill(0);
   roster({ peers: [] });

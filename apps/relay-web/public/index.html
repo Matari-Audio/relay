@@ -69,7 +69,15 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .rail { position: relative; overflow: hidden; border-radius: 2px; background: var(--well); }
 .level { position: absolute; inset: 0; background: linear-gradient(var(--red), var(--yellow) 15%, var(--green) 35%); clip-path: inset(100% 0 0 0); }
 .hold { position: absolute; inset: 0; border-top: 1px solid var(--text); will-change: transform; transform: translateY(100%); }
-.ch { text-align: center; }
+.ch { grid-column: 2 / 4; text-align: center; font: 400 10px var(--mono); color: var(--text); }
+/* The volume fader rides the rails, like the plugin's: a white handle, drag anywhere. */
+#vol { grid-column: 2 / 4; grid-row: 1; z-index: 1; margin: 0; width: 100%; height: 100%; writing-mode: vertical-lr; direction: rtl;
+  appearance: none; background: none; cursor: ns-resize; touch-action: none; }
+#vol::-webkit-slider-runnable-track { background: none; }
+#vol::-moz-range-track { background: none; }
+#vol::-webkit-slider-thumb { appearance: none; width: 33px; height: 5px; border: 1px solid var(--bg); border-radius: 2px; background: var(--text); }
+#vol::-moz-range-thumb { width: 31px; height: 3px; border: 1px solid var(--bg); border-radius: 2px; background: var(--text); }
+#vol:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 /* Live: the chevrons ripple out from the dot on a spring. */
 .live #mark .c { animation: ripple 1.8s var(--spring) infinite; }
 .live #mark .c2 { animation-delay: .14s; }
@@ -113,11 +121,12 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
     <ul class="who room-only" id="who" hidden><li><span>In the room</span><span class="n" id="count"></span></li></ul>
     <p class="about home-only">Audio from a DAW to your browser, peer to peer. <a href="https://matari-audio.com/relay">Get the plugin</a></p>
   </form>
-  <div class="meters" aria-hidden="true">
-    <div class="scale"><span style="top:0">0</span><span style="top:10%">-6</span><span style="top:20%">-12</span><span style="top:40%">-24</span><span style="top:80%">-48</span></div>
-    <div class="rail"><div class="level" id="mL"></div><div class="hold" id="hL"></div></div>
-    <div class="rail"><div class="level" id="mR"></div><div class="hold" id="hR"></div></div>
-    <div class="ch" style="grid-column:2">L</div><div class="ch" style="grid-column:3">R</div>
+  <div class="meters">
+    <div class="scale" style="grid-area:1/1" aria-hidden="true"><span style="top:0">0</span><span style="top:10%">-6</span><span style="top:20%">-12</span><span style="top:40%">-24</span><span style="top:80%">-48</span></div>
+    <div class="rail" style="grid-area:1/2"><div class="level" id="mL"></div><div class="hold" id="hL"></div></div>
+    <div class="rail" style="grid-area:1/3"><div class="level" id="mR"></div><div class="hold" id="hR"></div></div>
+    <input id="vol" type="range" min="-60" max="12" step="0.5" value="0" aria-label="Volume" title="Volume · double-click for 0 dB">
+    <div class="ch" id="gain"></div>
   </div>
 </main>
 <audio id="out" autoplay playsinline></audio>
