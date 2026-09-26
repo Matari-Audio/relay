@@ -1,0 +1,11 @@
+[workspace]
+members = ["core"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MPL-2.0"
+repository = "https://github.com/Matari-Audio/relay"
+
+[profile.release]
+lto = "thin"
