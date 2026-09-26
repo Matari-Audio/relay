@@ -1,240 +1,99 @@
 ---
 import Base from "../layouts/Base.astro";
 
-const listenOrigin = "https://relay.matari-audio.com";
+const listen = "https://relay.matari-audio.com";
 const download = "https://matari-audio.com/relay";
 
-const specs = [
-  { label: "Wire", value: "48 kHz stereo. Opus 192 kbps, FLAC 16-bit, or PCM 16-bit." },
-  { label: "LAN", value: "5 ms uncompressed PCM between two RELAY instances." },
-  { label: "Listen", value: "Browser playback over P2P WebRTC, up to 10 listeners." },
-  { label: "Formats", value: "CLAP, VST3, VST2, LV2, AU v2/v3, standalone." },
+const paths = [
+  { to: "Another RELAY on your LAN", how: "Lossless float PCM over UDP", spec: "No codec, no added latency" },
+  { to: "Another RELAY over the internet", how: "WebRTC, peer to peer", spec: "Opus 510 kbps, adaptive jitter buffer" },
+  { to: "Anyone's browser", how: "A link: relay.matari-audio.com/<room>", spec: "Opus 510 kbps, nothing to install" },
 ];
 ---
 
 <Base
-  title="RELAY — send the track you are playing"
-  description="RELAY is a DAW insert that streams the track you are playing to a listener in the browser. Name a session, go live, send the link."
+  title="RELAY: share your track peer to peer"
+  description="RELAY is a CLAP and VST3 insert that shares the track it sits on, peer to peer, to another RELAY or to anyone's browser. No account, no server in the audio path."
 >
   <main>
-    <section class="hero">
-      <div class="pitch">
-        <h1>Send the track you are playing.</h1>
-        <p class="lede">
-          RELAY is an insert for your DAW. Name a session, go live, and whoever has the
-          link hears that track in a browser — no account, no upload, no bounce.
-        </p>
-        <div class="actions">
-          <a class="primary" href={download}>Download RELAY</a>
-          <a class="secondary" href={listenOrigin}>Open a listen page</a>
-        </div>
-        <p class="address">
-          A session is a name: <code>{listenOrigin.replace("https://", "")}/&lt;session&gt;</code>
-        </p>
-      </div>
+    <h1>Share your track, peer to peer.</h1>
+    <p class="lede">
+      Put RELAY on a track, name a room, press Share. The audio goes straight from your machine to
+      the listener. No account, and no server in the audio path.
+    </p>
+    <div class="actions">
+      <a class="primary" href={download}>Download</a>
+      <a class="secondary" href={listen}>Open a room</a>
+    </div>
 
-      <figure class="shot">
-        <div class="frame">
-          <picture>
-            <source srcset="/relay-editor.webp" type="image/webp" />
-            <img
-              src="/relay-editor.png"
-              width="1360"
-              height="960"
-              alt="The RELAY plugin editor: session name, password, format, send fader, spectrum, and stereo level meters."
-              fetchpriority="high"
-            />
-          </picture>
-        </div>
-        <figcaption>The editor in Share, live on a named session.</figcaption>
-      </figure>
-    </section>
+    <table aria-label="Where RELAY sends audio">
+      <thead><tr><th>To</th><th>How</th><th>Audio</th></tr></thead>
+      <tbody>
+        {paths.map((p) => (
+          <tr><td>{p.to}</td><td>{p.how}</td><td class="spec">{p.spec}</td></tr>
+        ))}
+      </tbody>
+    </table>
 
-    <section class="specs" aria-label="Specification">
-      {
-        specs.map((spec) => (
-          <div class="spec">
-            <span class="spec-label">{spec.label}</span>
-            <span class="spec-value">{spec.value}</span>
-          </div>
-        ))
-      }
-    </section>
+    <p class="note">
+      Rooms take an optional password. Cloudflare only introduces the two ends; it never sees the
+      audio or the password. Up to 16 listeners per room, each streamed directly from your machine.
+      CLAP and VST3.
+    </p>
   </main>
 </Base>
 
 <style>
-  main {
-    padding-top: 44px;
-  }
-
-  .hero {
-    display: grid;
-    gap: 28px;
-  }
+  main { padding-top: 40px; }
 
   h1 {
     margin: 0;
     font-size: clamp(30px, 6vw, 44px);
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.05;
     letter-spacing: -0.02em;
   }
 
-  .lede {
-    margin: 14px 0 0;
-    max-width: 46ch;
-    font-size: 16px;
-    line-height: 1.45;
-    color: var(--muted);
-  }
+  .lede { margin: 12px 0 0; max-width: 50ch; font-size: 16px; color: var(--dim); }
 
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 16px;
-    margin-top: 24px;
-  }
+  .actions { display: inline-flex; margin-top: 20px; }
 
-  .primary {
+  .actions a {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    min-height: 48px;
-    padding: 0 22px;
-    border-radius: var(--r-hardware);
-    background: var(--studio-blue);
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    text-decoration: none;
-  }
-
-  .primary:hover {
-    background: #2bbaff;
-    text-decoration: none;
-  }
-
-  .primary:active {
-    transform: translateY(1px);
-  }
-
-  .secondary {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-    padding: 0 4px;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--surface);
-  }
-
-  .secondary:hover {
-    color: var(--studio-blue);
-    border-bottom-color: var(--studio-blue);
-    text-decoration: none;
-  }
-
-  .address {
-    margin: 20px 0 0;
-    color: var(--muted);
-  }
-
-  code {
-    display: inline-block;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    padding: 3px 6px;
-    border-radius: var(--r-well);
-    background: var(--well);
-    color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-  }
-
-  @media (max-width: 520px) {
-    .address code {
-      display: block;
-      margin-top: 6px;
-    }
-  }
-
-  .shot {
-    margin: 0;
-  }
-
-  .frame {
-    padding: 8px;
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-hardware);
-    background: var(--chassis);
-  }
-
-  .frame img {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: var(--r-well);
-  }
-
-  figcaption {
-    margin-top: 10px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-
-  .specs {
-    display: grid;
-    gap: 1px;
-    margin-top: 44px;
-    background: var(--hairline);
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-hardware);
-    overflow: hidden;
-  }
-
-  .spec {
-    padding: 14px 16px;
-    background: var(--chassis);
-  }
-
-  .spec-label {
-    display: block;
-    margin-bottom: 6px;
-    color: var(--muted);
-    font-size: 11px;
+    height: 40px;
+    padding: 0 16px;
+    border: 1px solid var(--accent);
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
+    text-decoration: none;
   }
 
-  .spec-value {
-    display: block;
-    max-width: 34ch;
+  .primary { background: var(--accent); color: var(--ink); border-radius: 3px 0 0 3px; }
+  .secondary { color: var(--text); border-left: 0 !important; border-radius: 0 3px 3px 0; }
+  .primary:hover { filter: brightness(1.12); }
+  .secondary:hover { background: var(--surface); }
+
+  table {
+    width: 100%;
+    margin-top: 40px;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--line);
   }
 
-  @media (min-width: 860px) {
-    main {
-      padding-top: 64px;
-    }
+  th, td { padding: 10px 12px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+  td.spec { font-family: var(--mono); font-size: 13px; font-weight: 500; }
 
-    .hero {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-      gap: 44px;
-      align-items: center;
-    }
+  .note { margin: 12px 0 0; max-width: 70ch; color: var(--dim); }
 
-    .specs {
-      grid-template-columns: repeat(4, 1fr);
-    }
+  @media (max-width: 640px) {
+    thead { display: none; }
+    tr { display: grid; padding: 10px 12px; border-top: 1px solid var(--line); gap: 2px; }
+    tr:first-child { border-top: 0; }
+    td { padding: 0; border: 0; }
+    td:nth-child(2) { color: var(--dim); }
   }
 </style>
