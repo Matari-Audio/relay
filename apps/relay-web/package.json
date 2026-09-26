@@ -1,0 +1,18 @@
+{
+  "name": "@relay/relay-web",
+  "private": true,
+  "license": "MPL-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.2.0",
+    "@cloudflare/workers-types": "5.20260919.1",
+    "vitest": "4.1.11",
+    "wrangler": "4.136.0"
+  }
+}

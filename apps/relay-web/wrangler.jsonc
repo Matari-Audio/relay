@@ -1,0 +1,19 @@
+{
+  "name": "relay-link",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "routes": [{ "pattern": "relay.matari-audio.com", "custom_domain": true }],
+  // /listen.* and / are served straight from here; /<room> goes through the worker.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+  },
+  // v2 replaces the old SessionRoom with Room. Deleting a class drops its storage.
+  "migrations": [
+    { "tag": "v1-session-room", "new_sqlite_classes": ["SessionRoom"] },
+    { "tag": "v2-room", "new_sqlite_classes": ["Room"], "deleted_classes": ["SessionRoom"] }
+  ],
+  // Secrets: TURN_KEY_ID, TURN_KEY_TOKEN (wrangler secret put). Optional var EXTRA_ICE (JSON).
+  "observability": { "enabled": true, "head_sampling_rate": 0.01 }
+}
