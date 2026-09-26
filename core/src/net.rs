@@ -283,7 +283,10 @@ impl Session {
                 } else {
                     self.trouble.unwrap_or(Net::Waiting)
                 });
-                self.send(shared, tx, now);
+                shared
+                    .talking
+                    .store(self.rtc.as_ref().map_or(0, Host::talking) as u32, Relaxed);
+                self.send(shared, tx, rx, now);
             }
             Role::Join => {
                 if self.host.is_none()
@@ -414,7 +417,13 @@ impl Session {
 
     /// Share: drain the tx ring into full datagrams, one copy per peer. A
     /// part-filled one goes once it has waited [`COALESCE`].
-    fn send(&mut self, shared: &Shared, tx: &mut Consumer<f32>, now: Instant) {
+    fn send(
+        &mut self,
+        shared: &Shared,
+        tx: &mut Consumer<f32>,
+        rx: &mut Producer<f32>,
+        now: Instant,
+    ) {
         let rate = shared.rate.load(Relaxed);
         loop {
             let n = (tx.slots() / CHANNELS).min(wire::MAX_FRAMES);
@@ -435,6 +444,7 @@ impl Session {
             chunk.commit_all();
             if let Some(h) = self.rtc.as_mut() {
                 h.audio(&self.samples[..n * CHANNELS], rate, now);
+                h.talk_back(n, rate, rx);
             }
             if !self.peers.is_empty() {
                 wire::encode(

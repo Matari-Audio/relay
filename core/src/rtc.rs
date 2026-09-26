@@ -1,6 +1,9 @@
 //! WebRTC with str0m, sans-IO, driven from the link thread. [`Host`] offers
-//! one sendonly Opus track to each peer and encodes once for all of them;
-//! [`Guest`] answers, decodes and feeds the rx ring.
+//! one Opus track to each peer and encodes once for all of them; the track
+//! is sendrecv so a browser can talk back with its mic. [`Guest`] answers,
+//! decodes and feeds the rx ring.
+
+use std::collections::VecDeque;
 
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex};
@@ -22,6 +25,10 @@ use crate::portmap::Mapping;
 
 /// 10 ms at 48 kHz.
 const FRAME: usize = 480;
+/// Talkback: a voice starts playing once this much is queued, 40 ms…
+const PRIME: usize = 1_920 * CHANNELS;
+/// …and a backlog past 200 ms is cut back to that.
+const BACKLOG: usize = 9_600 * CHANNELS;
 const PT: Pt = Pt::new_with_value(111);
 const STUN: &str = "stun.cloudflare.com:3478";
 
@@ -267,6 +274,49 @@ fn resampler(
     slot.as_mut().map(|(_, r)| r)
 }
 
+/// A browser's mic, decoded and queued at 48 kHz until the host's clock
+/// mixes it.
+struct Voice {
+    dec: OpusDecoder,
+    pcm: Vec<f32>,
+    queue: VecDeque<f32>,
+    primed: bool,
+}
+
+impl Voice {
+    fn new() -> Option<Self> {
+        Some(Self {
+            dec: OpusDecoder::new(48_000, CHANNELS).ok()?,
+            pcm: vec![0.0; 5_760 * CHANNELS],
+            queue: VecDeque::new(),
+            primed: false,
+        })
+    }
+
+    fn push(&mut self, packet: &[u8]) {
+        let Ok(n) = self.dec.decode(packet, 5_760, &mut self.pcm) else {
+            return;
+        };
+        self.queue.extend(&self.pcm[..n * CHANNELS]);
+        if self.queue.len() > BACKLOG {
+            self.queue.drain(..self.queue.len() - PRIME);
+        }
+        self.primed |= self.queue.len() >= PRIME;
+    }
+
+    /// Add what is due into `out`. Running dry re-primes.
+    fn mix_into(&mut self, out: &mut [f32]) {
+        if !self.primed {
+            return;
+        }
+        let n = out.len().min(self.queue.len());
+        for (o, s) in out.iter_mut().zip(self.queue.drain(..n)) {
+            *o += s;
+        }
+        self.primed = !self.queue.is_empty();
+    }
+}
+
 struct Peer {
     id: String,
     rtc: Rtc,
@@ -275,6 +325,7 @@ struct Peer {
     next: Instant,
     live: bool,
     dead: bool,
+    voice: Voice,
 }
 
 /// Share: every internet peer, one Opus encoder for all of them.
@@ -286,6 +337,11 @@ pub struct Host {
     pcm: Vec<f32>,
     time: u64,
     packet: Vec<u8>,
+    /// Talkback: 48 kHz frames owed, times the host rate.
+    owed: u64,
+    mix: Vec<f32>,
+    down: Option<((u32, u32), Resample)>,
+    talk: Vec<f32>,
 }
 
 impl Host {
@@ -301,6 +357,10 @@ impl Host {
             pcm: Vec::new(),
             time: 0,
             packet: vec![0; 1500],
+            owed: 0,
+            mix: Vec::new(),
+            down: None,
+            talk: Vec::new(),
         })
     }
 
@@ -330,7 +390,7 @@ impl Host {
         let stream = Some("relay".to_owned());
         let mid = api.add_media(
             MediaKind::Audio,
-            Direction::SendOnly,
+            Direction::SendRecv,
             stream.clone(),
             stream,
             None,
@@ -346,6 +406,7 @@ impl Host {
             next,
             live: false,
             dead: false,
+            voice: Voice::new()?,
         });
         // str0m has no fmtp field for it; the browser's encoder reads it.
         Some(sdp.replace("useinbandfec=1", "useinbandfec=1;maxaveragebitrate=510000"))
@@ -389,14 +450,48 @@ impl Host {
     }
 
     fn drain(p: &mut Peer, ice: &Ice) -> Instant {
-        let (live, dead) = (&mut p.live, &mut p.dead);
+        let (live, dead, voice) = (&mut p.live, &mut p.dead, &mut p.voice);
         let next = drain(&mut p.rtc, ice, |e| match e {
             Event::Connected => *live = true,
+            Event::MediaData(m) => voice.push(&m.data),
             Event::IceConnectionStateChange(IceConnectionState::Disconnected) => *dead = true,
             _ => {}
         });
         *dead |= next.is_none();
         next.unwrap_or_else(Instant::now)
+    }
+
+    /// Peers whose mic is playing.
+    pub fn talking(&self) -> usize {
+        self.peers.iter().filter(|p| p.voice.primed).count()
+    }
+
+    /// Talkback on the host's clock: `frames` at `rate` just went out, so
+    /// as many come back, every talking mic summed, to `rx`. Nothing is
+    /// written while nobody talks.
+    pub fn talk_back(&mut self, frames: usize, rate: u32, rx: &mut Producer<f32>) {
+        if rate == 0 {
+            return;
+        }
+        self.owed += frames as u64 * 48_000;
+        let n = (self.owed / u64::from(rate)) as usize;
+        self.owed %= u64::from(rate);
+        if self.talking() == 0 {
+            return;
+        }
+        self.mix.clear();
+        self.mix.resize(n * CHANNELS, 0.0);
+        for p in &mut self.peers {
+            p.voice.mix_into(&mut self.mix);
+        }
+        self.talk.clear();
+        match resampler(&mut self.down, 48_000, rate) {
+            Some(r) => r.run(&self.mix, &mut self.talk),
+            None => self.talk.extend_from_slice(&self.mix),
+        }
+        if let Ok(chunk) = rx.write_chunk_uninit(self.talk.len()) {
+            chunk.fill_from_iter(self.talk.iter().copied());
+        }
     }
 
     /// Shared audio at `rate`, interleaved stereo. Encoded only while

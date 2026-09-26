@@ -115,6 +115,8 @@ pub struct Shared {
     pub config: AtomicU32,
     /// Share: listeners, LAN and internet. Join: 1 while audio arrives.
     pub peers: AtomicU32,
+    /// Share: browser listeners whose mic is playing.
+    pub talking: AtomicU32,
     /// Share: the bound LAN port. 0 when not bound.
     pub port: AtomicU32,
     /// Share: this machine's LAN address, `192.168.1.20` or `…:17493`.

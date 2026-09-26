@@ -28,6 +28,7 @@ const HASH: char = '\u{E2A2}';
 const LINK: char = '\u{E2E6}';
 const LOCK: char = '\u{E308}';
 const WIFI: char = '\u{E4EA}';
+const MIC: char = '\u{E326}';
 
 const SIZE: (u32, u32) = (440, 156);
 /// Field height and corner.
@@ -350,6 +351,18 @@ fn build(
     view.about ^= ui.get("about").clicked_with(Button::Primary);
     let t = view.born.elapsed().as_secs_f64();
     let live = lit == GREEN;
+    // Share: browser listeners talking back through their mic.
+    let talking = shared.talking.load(Relaxed);
+    let talk = if picked == 1 && talking > 0 {
+        row![
+            icon(fonts.icons.clone(), MIC).text_size(11.0).fill(GREEN),
+            text(format!("{talking} talking")).text_size(10.5).fill(TEXT),
+        ]
+        .gap(3.0)
+        .center()
+    } else {
+        spacer().w(0.0)
+    };
     let brand = row![
         canvas(move |_| mark(t, live)).size(18.0, 18.0),
         text("RELAY")
@@ -372,6 +385,7 @@ fn build(
             row![
                 leaf(6.0, 6.0).radius(3.0).fill(lit),
                 text(status).text_size(10.5).fill(TEXT),
+                talk,
                 spacer().grow(1.0),
                 tail,
             ]
@@ -695,6 +709,7 @@ mod snapshot {
         shared.peers.store(2, Relaxed);
         shared.rate.store(48_000, Relaxed);
         shared.latency.store(512, Relaxed);
+        shared.talking.store(1, Relaxed);
         let mut bridge = Bridge::new(params);
         let (mut ui, fonts) = new_ui();
         for (p, v) in [

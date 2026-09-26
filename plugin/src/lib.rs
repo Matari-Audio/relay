@@ -182,17 +182,20 @@ impl PluginLogic for Relay {
                 state.shared.latency.store(state.playout.target() as u32, Relaxed);
                 ramp(l, state.gain[0], gain[0]);
                 ramp(r, state.gain[0], gain[0]);
-                for (ch, src) in [&*l, &*r].into_iter().enumerate().take(outs) {
-                    for (o, s) in buffer.output(ch)[..n].iter_mut().zip(src) {
-                        *o += s;
-                    }
-                }
+                add(buffer, l, r, outs);
             }
             Role::Off => {}
         }
         let shared = &state.shared;
         shared.note_peak(Peak::InL, peak(l));
         shared.note_peak(Peak::InR, peak(r));
+        if role == Role::Share {
+            // Browser mics talking back: straight to our output.
+            l.fill(0.0);
+            r.fill(0.0);
+            state.playout.render(l, r);
+            add(buffer, l, r, outs);
+        }
         let mut out = [0.0; 2];
         for ch in 0..outs {
             let o = &mut buffer.output(ch)[..n];
@@ -208,6 +211,15 @@ impl PluginLogic for Relay {
 
     fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
         ui::editor(params)
+    }
+}
+
+/// Mix a stereo pair into the first `outs` output channels.
+fn add(buffer: &mut AudioBuffer, l: &[f32], r: &[f32], outs: usize) {
+    for (ch, src) in [l, r].into_iter().enumerate().take(outs) {
+        for (o, s) in buffer.output(ch).iter_mut().zip(src) {
+            *o += s;
+        }
     }
 }
 
