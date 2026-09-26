@@ -355,10 +355,14 @@ impl Session {
                 ("error", ..) => match s("code") {
                     "taken" => self.trouble = Some(Net::Taken),
                     "denied" => self.trouble = Some(Net::Denied),
-                    // no-host, full: wait; the host's arrival or a reconnect
-                    // brings `host` or `ice`.
+                    // Hold the hello until `host`: one sent now would reach
+                    // a host that arrives meanwhile, and so would the one
+                    // after `host`, and two offers cross.
+                    "no-host" => self.up = false,
+                    // full: wait for a reconnect's `ice`.
                     _ => {}
                 },
+                ("hello", Some(h), _) if h.awaiting(&id) => {}
                 ("hello", Some(h), _) => {
                     let full = self.peers.len() + h.len() >= MAX_PEERS;
                     let offer = (s("auth") == auth && !full)
@@ -371,7 +375,7 @@ impl Session {
                 }
                 ("answer", Some(h), _) => h.answer(&id, s("sdp")),
                 ("leave", Some(h), _) => h.leave(&id),
-                ("host", ..) => self.hello_sent = false,
+                ("host", ..) => (self.up, self.hello_sent) = (true, false),
                 ("offer", _, Some(g)) if self.host.is_none() => {
                     if let Some(sdp) = g.offer(s("sdp"), now) {
                         signal.send(&json!({"t": "answer", "sdp": sdp}));
@@ -610,5 +614,44 @@ mod tests {
         let tail = &heard[heard.len() - 11_025..];
         let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
         assert!((0.3..0.4).contains(&rms), "rms {rms}, want 0.354");
+    }
+
+    /// Share → Join through the deployed signaling worker. Run with
+    /// `cargo test -p relay-core live -- --ignored` after a deploy.
+    #[test]
+    #[ignore = "needs the network and the deployed worker"]
+    fn live_share_to_join() {
+        let room = format!("live-{}", crate::random_key());
+        let side = |role, path: String| {
+            let shared = Shared::new();
+            shared.rate.store(48_000, Relaxed);
+            shared.set_text(&shared.room, &room);
+            shared.set_role(role);
+            let mut s = Session::build(&shared, role, false).unwrap();
+            s.signal = Some(Signal::connect(SITE, &path));
+            (shared, s)
+        };
+        let key = crate::random_key();
+        let (hs, mut host) = side(Role::Share, format!("/{room}/host?key={key}"));
+        let (js, mut join) = side(Role::Join, format!("/{room}/peer"));
+        join.opened -= LAN_FIRST;
+        let ((mut send, mut htx), (mut hrx, _)) = crate::rings();
+        let ((_, mut jtx), (mut jrx, mut hear)) = crate::rings();
+        let start = Instant::now();
+        let mut heard = 0;
+        while start.elapsed() < Duration::from_secs(30) && heard < 48_000 {
+            host.step(&hs, &mut htx, &mut hrx);
+            join.step(&js, &mut jtx, &mut jrx);
+            if let Ok(chunk) = send.write_chunk_uninit(send.slots().min(96)) {
+                chunk.fill_from_iter(std::iter::repeat(0.25));
+            }
+            if let Ok(chunk) = hear.read_chunk(hear.slots()) {
+                heard += chunk.len() / 2;
+                chunk.commit_all();
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!((hs.net(), js.net()), (Net::Internet, Net::Internet));
+        assert!(heard >= 48_000, "heard {heard} frames");
     }
 }

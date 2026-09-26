@@ -314,6 +314,12 @@ impl Host {
         self.peers.iter().filter(|p| p.live).count()
     }
 
+    /// An offer to `id` is out and unanswered: a second hello from it
+    /// crossed the first and must not replace it.
+    pub fn awaiting(&self, id: &str) -> bool {
+        self.peers.iter().any(|p| p.id == id && p.pending.is_some())
+    }
+
     /// A new peer said hello: its complete offer.
     pub fn offer(&mut self, id: &str, now: Instant) -> Option<String> {
         self.leave(id);
