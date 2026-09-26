@@ -13,3 +13,4 @@ proto/gen/
 *.tar.gz
 apps/plugin/target/
 .wrangler/
+__pycache__/
