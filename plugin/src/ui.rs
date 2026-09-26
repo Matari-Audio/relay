@@ -171,7 +171,7 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
 /// An icon centred in a field-high square, so its inset is the same on
 /// every side.
 fn glyph(fonts: &Fonts, c: char, ink: Color) -> El {
-    row([icon(fonts.icons.clone(), c).text_size(12.0).fill(ink)])
+    row([icon(c).font(fonts.icons.clone()).text_size(12.0).fill(ink)])
         .justify(Justify::Center)
         .center()
         .size(H, H)
@@ -181,8 +181,8 @@ fn glyph(fonts: &Fonts, c: char, ink: Color) -> El {
 fn action(ui: &Ui, fonts: &Fonts, id: &'static str, c: char, label: &str) -> (El, bool) {
     let r = ui.get(id);
     let el = glyph(fonts, c, if r.hovered { TEXT } else { DIM })
-        .role(Kind::Button)
-        .label(label)
+        .a11y(A11y::Button)
+        .named(label)
         .focusable()
         .id(id);
     (el, r.clicked_with(Button::Primary))
@@ -199,7 +199,7 @@ fn field(fonts: &Fonts, c: char, body: El, action: El) -> El {
 
 /// A text input with its own chrome stripped, to sit in a [`field`].
 fn bare(input: El) -> El {
-    input.fill(FIELD).radius(0.0).pad_xy(0.0, 0.0).h(H - 4.0)
+    input.fill(FIELD).radius(0.0).pad((0.0, 0.0)).h(H - 4.0)
 }
 
 fn mono(fonts: &Fonts, s: String, size: f64, ink: Color) -> El {
@@ -214,7 +214,7 @@ fn build(
     view: &mut View,
 ) -> El {
     let picked = (bridge.value(P::Mode) * 2.0).round() as usize;
-    let mode = bridge.bind(ui, "mode", P::Mode, |ui, v| {
+    let mode = bridge.bind(ui, P::Mode, |ui, _, v| {
         let segments: Vec<El> = ["Off", "Share", "Join"]
             .into_iter()
             .enumerate()
@@ -234,8 +234,8 @@ fn build(
                     .size(42.0, 18.0)
                     .radius(R - 1.0)
                     .fill(bg)
-                    .role(Kind::Button)
-                    .label(name)
+                    .a11y(A11y::Button)
+                    .named(name)
                     .focusable()
                     .id(name)
             })
@@ -244,7 +244,7 @@ fn build(
     });
 
     let mut room = Shared::text(&shared.room);
-    let (input, changed) = text_input(ui, "room", &mut room);
+    let Response { el: input, changed } = text_input(ui, "room", &mut room);
     if changed {
         shared.set_text(&shared.room, &room);
     }
@@ -256,7 +256,7 @@ fn build(
 
     let mut password = Shared::text(&shared.password);
     let show = view.show_password;
-    let (input, changed) = if show {
+    let Response { el: input, changed } = if show {
         text_input(ui, "pass", &mut password)
     } else {
         masked_input(ui, "pass", &mut password)
@@ -300,8 +300,8 @@ fn build(
                 .text_size(11.0)
                 .fill(if r.hovered { GREEN } else { TEXT }),
         ]
-        .role(Kind::Button)
-        .label("Open the listen page")
+        .a11y(A11y::Button)
+        .named("Open the listen page")
         .focusable()
         .id("link");
         rows.push(field(fonts, LINK, link, copy));
@@ -316,8 +316,8 @@ fn build(
         }
         // Internet bitrate: what Opus runs at, adapting to the listeners,
         // over the ceiling. A click steps the ceiling down, then round.
-        let quality = bridge.bind(ui, "quality", P::Quality, |ui, v| {
-            let r = ui.get("quality");
+        let quality = bridge.bind(ui, P::Quality, |ui, id, v| {
+            let r = ui.get(&id);
             let mut step = (*v * 3.0).round() as usize % 4;
             if r.clicked_with(Button::Primary) {
                 step = (step + 1) % 4;
@@ -330,10 +330,10 @@ fn build(
                 format!("{cap}k")
             };
             mono(fonts, label, 9.0, if r.hovered { TEXT } else { DIM })
-                .role(Kind::Button)
-                .label("Internet quality ceiling")
+                .a11y(A11y::Button)
+                .named("Internet quality ceiling")
                 .focusable()
-                .id("quality")
+                .id(id)
         });
         let r = ui.get("lan");
         view.show_address ^= r.clicked_with(Button::Primary);
@@ -342,8 +342,8 @@ fn build(
             mono(fonts, address, 9.0, if r.hovered { TEXT } else { DIM }),
         ]
         .center()
-        .role(Kind::Button)
-        .label("LAN address")
+        .a11y(A11y::Button)
+        .named("LAN address")
         .focusable()
         .id("lan");
         row![quality, lan].gap(8.0).center()
@@ -377,8 +377,13 @@ fn build(
     let talking = shared.talking.load(Relaxed);
     let talk = if picked == 1 && talking > 0 {
         row![
-            icon(fonts.icons.clone(), MIC).text_size(11.0).fill(GREEN),
-            text(format!("{talking} talking")).text_size(10.5).fill(TEXT),
+            icon(MIC)
+                .font(fonts.icons.clone())
+                .text_size(11.0)
+                .fill(GREEN),
+            text(format!("{talking} talking"))
+                .text_size(10.5)
+                .fill(TEXT),
         ]
         .gap(3.0)
         .center()
@@ -394,18 +399,18 @@ fn build(
     ]
     .gap(5.0)
     .center()
-    .role(Kind::Button)
-    .label("About RELAY")
+    .a11y(A11y::Button)
+    .named("About RELAY")
     .focusable()
     .id("about");
     let body = if view.about {
         about(ui)
     } else {
-        column([
-            column(rows).gap(4.0),
+        col([
+            col(rows).gap(4.0),
             spacer().grow(1.0),
             row![
-                leaf(6.0, 6.0).radius(3.0).fill(lit),
+                block(6.0, 6.0).radius(3.0).fill(lit),
                 text(status).text_size(10.5).fill(TEXT),
                 talk,
                 spacer().grow(1.0),
@@ -417,7 +422,7 @@ fn build(
         .gap(6.0)
         .grow(1.0)
     };
-    let left = column([row![brand, spacer().grow(1.0), mode].center(), body])
+    let left = col([row![brand, spacer().grow(1.0), mode].center(), body])
         .gap(6.0)
         .grow(1.0);
 
@@ -455,23 +460,23 @@ fn meters(
         } else {
             mono(fonts, format!("{:.1}", db(v)), 9.0, ink)
         };
-        column([text(label).text_size(8.0).fill(DIM), value])
+        col([text(label).text_size(8.0).fill(DIM), value])
             .align(Align::Center)
             .w(PAIR)
     });
     let readouts = row![max_in, spacer().w(SCALE), max_out]
-        .role(Kind::Button)
-        .label("Reset peaks")
+        .a11y(A11y::Button)
+        .named("Reset peaks")
         .id("peaks");
 
     let [il, ir, ol, or] = view.rails;
     let pair = |a: Rail, b: Rail| row![rail(a), rail(b)].gap(1.0).w(PAIR);
-    let input = fader(ui, bridge, "in", P::Input, "Input", pair(il, ir));
-    let output = fader(ui, bridge, "out", P::Output, "Output", pair(ol, or));
+    let input = fader(ui, bridge, P::Input, "Input", pair(il, ir));
+    let output = fader(ui, bridge, P::Output, "Output", pair(ol, or));
 
-    let scale = column(
+    let scale = col(
         [(0, 6.0), (-6, 6.0), (-12, 12.0), (-24, 24.0), (-48, 12.0)].map(|(d, span)| {
-            column([text(d.to_string()).text_size(7.5).fill(DIM)])
+            col([text(d.to_string()).text_size(7.5).fill(DIM)])
                 .align(Align::Center)
                 .grow(span)
         }),
@@ -480,18 +485,14 @@ fn meters(
 
     let under = |p: P| {
         let db = GAIN.0 + bridge.value(p) * (GAIN.1 - GAIN.0);
-        column([mono(fonts, format!("{db:+.1}"), 8.0, TEXT)])
+        col([mono(fonts, format!("{db:+.1}"), 8.0, TEXT)])
             .align(Align::Center)
             .w(PAIR)
     };
-    column([
+    col([
         readouts,
         row![input, scale, output].grow(1.0),
-        row![
-            under(P::Input),
-            spacer().w(SCALE),
-            under(P::Output)
-        ],
+        row![under(P::Input), spacer().w(SCALE), under(P::Output)],
     ])
     .gap(4.0)
     .w(PAIR * 2.0 + SCALE)
@@ -503,31 +504,30 @@ fn meters(
 fn fader(
     ui: &mut Ui,
     bridge: &mut Bridge<RelayParams>,
-    id: &'static str,
     param: P,
     label: &'static str,
     meter: El,
 ) -> El {
-    bridge.bind(ui, id, param, |ui, v| {
+    bridge.bind(ui, param, |ui, id, v| {
         let h = ui
             .scene()
-            .and_then(|s| s.surface(id))
+            .and_then(|s| s.surface(&id))
             .map_or(100.0, |s| s.frame.size.height);
-        ui.drag(id, v, 0.0..=1.0, h, true);
-        if ui.double_click(id) {
+        ui.drag(&id, v, 0.0..=1.0, h, true);
+        if ui.double_click(&id) {
             *v = -GAIN.0 / (GAIN.1 - GAIN.0);
         }
-        let handle = row([leaf(0.0, 3.0).grow(1.0).radius(1.5).fill(TEXT)])
+        let handle = row([block(0.0, 3.0).grow(1.0).radius(1.5).fill(TEXT)])
             .pad(1.0)
             .radius(2.5)
             .fill(BG);
-        overlay([meter, at(1.0 - *v as f32, handle)])
-            .role(Kind::Slider {
+        stack([meter, at(1.0 - *v as f32, handle)])
+            .a11y(A11y::Slider {
                 value: *v,
                 min: 0.0,
                 max: 1.0,
             })
-            .label(label)
+            .named(label)
             .focusable()
             .id(id)
     })
@@ -592,7 +592,7 @@ fn about(ui: &Ui) -> El {
     if r.clicked_with(Button::Primary) {
         open(FULL);
     }
-    column([
+    col([
         row![
             text(format!("Version {}", env!("CARGO_PKG_VERSION")))
                 .text_size(11.0)
@@ -601,13 +601,13 @@ fn about(ui: &Ui) -> El {
             text("Matari Audio · MPL-2.0").text_size(10.0).fill(DIM),
         ]
         .w(Len::Pct(100.0)),
-        column(notes).gap(2.0).align(Align::Start),
+        col(notes).gap(2.0).align(Align::Start),
         spacer().grow(1.0),
         text("Full changelog")
             .text_size(10.0)
             .fill(if r.hovered { GREEN } else { TEXT })
-            .role(Kind::Button)
-            .label("Open the full changelog")
+            .a11y(A11y::Button)
+            .named("Open the full changelog")
             .focusable()
             .id("changelog"),
     ])
@@ -632,7 +632,7 @@ fn open(url: &str) {
 
 /// `el` placed `t` of the way down a full-height column.
 fn at(t: f32, el: El) -> El {
-    column([
+    col([
         spacer().grow(f64::from(t)),
         el,
         spacer().grow(f64::from(1.0 - t)),
@@ -654,29 +654,29 @@ fn rail(r: Rail) -> El {
     let stops = [(0.0, WELL), (cover, WELL), (cover, edge)]
         .into_iter()
         .chain(RAMP.into_iter().filter(|s| s.0 > cover));
-    let bar = leaf(0.0, 0.0)
+    let bar = block(0.0, 0.0)
         .w(Len::Pct(100.0))
         .h(Len::Pct(100.0))
         .radius(2.0)
         .fill(Gradient::linear(180.0, stops));
-    let hold = leaf(0.0, 1.5).w(Len::Pct(100.0)).fill(TEXT);
+    let hold = block(0.0, 1.5).w(Len::Pct(100.0)).fill(TEXT);
     let mut layers = vec![bar];
     if r.hold > FLOOR {
         layers.push(at(depth(r.hold), hold));
     }
-    overlay(layers).grow(1.0)
+    stack(layers).grow(1.0)
 }
 
 /// A text input that shows `•` for every character. Typing and deleting go
 /// through: what changed among the dots is spliced into `value`.
-fn masked_input(ui: &mut Ui, id: &str, value: &mut String) -> (El, bool) {
+fn masked_input(ui: &mut Ui, id: &str, value: &mut String) -> Response {
     let old: Vec<char> = value.chars().collect();
     let mut shown = "•".repeat(old.len());
-    let (el, changed) = text_input(ui, id, &mut shown);
+    let Response { el, changed } = text_input(ui, id, &mut shown);
     if changed {
         *value = unmask(&old, &shown);
     }
-    (el, changed)
+    Response { el, changed }
 }
 
 /// `old` after the edit that turned its dots into `shown`.
@@ -752,7 +752,7 @@ mod snapshot {
             ..View::default()
         };
         let (w, h) = (SIZE.0 * 2, SIZE.1 * 2);
-        ui.scale = Some(2.0);
+        ui.set_scale(Some(2.0));
         let root = build(&mut ui, &mut bridge, &shared, &fonts, &mut view);
         let size = mui::layout::Size::new(f64::from(SIZE.0), f64::from(SIZE.1));
         ui.frame(root, Some(size), mui::input::Input::default(), 0.0)
