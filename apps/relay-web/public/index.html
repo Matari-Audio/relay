@@ -31,7 +31,7 @@ html, body { margin: 0; background: var(--bg); color: var(--text); font: 400 14p
 body { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 [hidden], .home .room-only, html:not(.home) .home-only { display: none !important; }
 a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
-main { width: fit-content; max-width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 10px 12px;
+main { width: min(400px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 10px 12px;
   padding: 12px; border: 1px solid var(--line); border-radius: var(--r); }
 header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; height: 20px; }
 header b { font: 400 15px var(--pixel); letter-spacing: .02em; }
