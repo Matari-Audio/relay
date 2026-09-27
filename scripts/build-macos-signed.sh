@@ -57,6 +57,9 @@ for bundle in $NAME.clap $NAME.vst3 $NAME.component; do
   lipo -create "$arm/$bundle/Contents/MacOS/$NAME" "$x86/$bundle/Contents/MacOS/$NAME" -output "$bin.tmp"
   mv -- "$bin.tmp" "$bin"
   lipo "$bin" -verify_arch arm64 x86_64
+  mkdir -p "$bundles/$bundle/Contents/Resources"
+  cp "$ROOT_DIR/plugin/assets/DepartureMono-OFL.txt" "$ROOT_DIR/plugin/assets/Silkscreen-OFL.txt" \
+    "$bundles/$bundle/Contents/Resources/"
 done
 
 echo "$APPLE_APPLICATION_CERTIFICATE_P12_BASE64" | base64 --decode > "$work_dir/application.p12"

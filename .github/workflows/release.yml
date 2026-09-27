@@ -62,7 +62,9 @@ jobs:
           mkdir -p target/dist
           out="$PWD/target/dist/relay-${{ matrix.os }}-${version}.zip"
           cd target/bundles/${{ matrix.target }}
-          ${{ matrix.py }} -m zipfile -c "$out" RELAY.clap RELAY.vst3
+          cp "$GITHUB_WORKSPACE/plugin/assets/DepartureMono-OFL.txt" .
+          cp "$GITHUB_WORKSPACE/plugin/assets/Silkscreen-OFL.txt" .
+          ${{ matrix.py }} -m zipfile -c "$out" RELAY.clap RELAY.vst3 DepartureMono-OFL.txt Silkscreen-OFL.txt
           ${{ matrix.py }} -m zipfile -l "$out"
       - uses: actions/upload-artifact@v4
         with:

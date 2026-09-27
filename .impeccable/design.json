@@ -1,112 +1,184 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-19T12:10:00Z",
-  "title": "Design System: RELAY",
+  "generatedAt": "2026-09-27T00:00:00Z",
+  "title": "RELAY Signal",
   "extensions": {
     "colorMeta": {
-      "polar-night": { "role": "neutral", "displayName": "Polar Night", "canonical": "#191919", "tonalRamp": ["#101010", "#191919", "#252525", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8", "#ffffff"] },
-      "chassis": { "role": "neutral", "displayName": "Chassis", "canonical": "#252525", "tonalRamp": ["#101010", "#191919", "#252525", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8", "#ffffff"] },
-      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "#353535", "tonalRamp": ["#101010", "#191919", "#252525", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8", "#ffffff"] },
-      "well": { "role": "neutral", "displayName": "Well", "canonical": "#101010", "tonalRamp": ["#070707", "#101010", "#191919", "#252525", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8"] },
-      "studio-blue": { "role": "primary", "displayName": "Studio Blue", "canonical": "#00aaff", "tonalRamp": ["#041018", "#003455", "#006699", "#00aaff", "#3dc0ff", "#7ad4ff", "#b3e7ff", "#e6f7ff"] },
-      "ok": { "role": "secondary", "displayName": "Live", "canonical": "#5be8b3", "tonalRamp": ["#0a2a20", "#1a5a40", "#3d8f6a", "#5be8b3", "#7eeec4", "#a5f4d6", "#c8f8e6", "#e8fcf4"] },
-      "warn": { "role": "secondary", "displayName": "Asleep", "canonical": "#ffc75c", "tonalRamp": ["#2a1c08", "#6a4a10", "#b07a20", "#ffc75c", "#ffd47d", "#ffe0a0", "#ffedc4", "#fff8e8"] },
-      "hot": { "role": "secondary", "displayName": "Clip", "canonical": "#ff7088", "tonalRamp": ["#2a1014", "#6a2030", "#b04050", "#ff7088", "#ff94a6", "#ffb6c2", "#ffd4da", "#ffeef0"] },
-      "text": { "role": "neutral", "displayName": "Text", "canonical": "#ffffff", "tonalRamp": ["#191919", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8", "#d5d8db", "#f0f0f0", "#ffffff"] },
-      "muted": { "role": "neutral", "displayName": "Muted", "canonical": "#b8b8b8", "tonalRamp": ["#191919", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8", "#d5d8db", "#f0f0f0", "#ffffff"] },
-      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#041018", "tonalRamp": ["#041018", "#0a2030", "#191919", "#252525", "#353535", "#5a5a5a", "#b8b8b8", "#ffffff"] },
-      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#2e2e2e", "tonalRamp": ["#101010", "#191919", "#252525", "#2e2e2e", "#353535", "#5a5a5a", "#8a8a8a", "#b8b8b8"] },
-      "gyr-floor": { "role": "secondary", "displayName": "GYR floor", "canonical": "#3d8f6a", "tonalRamp": ["#0a2a20", "#1a5a40", "#3d8f6a", "#5be8b3", "#7eeec4", "#a5f4d6", "#c8f8e6", "#e8fcf4"] }
+      "bg": {
+        "role": "neutral",
+        "displayName": "Bg",
+        "canonical": "#101011",
+        "tonalRamp": [
+          "#101011"
+        ]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field",
+        "canonical": "#1c1c1e",
+        "tonalRamp": [
+          "#1c1c1e"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover",
+        "canonical": "#28282b",
+        "tonalRamp": [
+          "#28282b"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line",
+        "canonical": "#3b3b3e",
+        "tonalRamp": [
+          "#3b3b3e"
+        ]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Well",
+        "canonical": "#0a0a0b",
+        "tonalRamp": [
+          "#0a0a0b"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "canonical": "#f2f2f2",
+        "tonalRamp": [
+          "#f2f2f2"
+        ]
+      },
+      "dim": {
+        "role": "neutral",
+        "displayName": "Dim",
+        "canonical": "#a4a4a9",
+        "tonalRamp": [
+          "#a4a4a9"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Accent",
+        "canonical": "#c6ff1f",
+        "tonalRamp": [
+          "#c6ff1f"
+        ]
+      },
+      "yellow": {
+        "role": "secondary",
+        "displayName": "Yellow",
+        "canonical": "#ffd21a",
+        "tonalRamp": [
+          "#ffd21a"
+        ]
+      },
+      "red": {
+        "role": "secondary",
+        "displayName": "Red",
+        "canonical": "#ff2d46",
+        "tonalRamp": [
+          "#ff2d46"
+        ]
+      }
     },
     "typographyMeta": {
-      "display": { "displayName": "Nameplate", "purpose": "Editable session name, 22px Barlow 600." },
-      "title": { "displayName": "Product", "purpose": "RELAY mark lockup, 13px tracked." },
-      "body": { "displayName": "Status", "purpose": "Who line under the nameplate." },
-      "label": { "displayName": "Silk-screen", "purpose": "L/R/MUTE labels." }
+      "pixel-heading": {
+        "displayName": "Silkscreen",
+        "purpose": "Default wordmark, modes, main actions."
+      },
+      "pixel-body": {
+        "displayName": "Departure Mono",
+        "purpose": "Default fields, roster, status and values."
+      },
+      "standard-ui": {
+        "displayName": "Barlow",
+        "purpose": "Optional smooth editor words."
+      },
+      "standard-values": {
+        "displayName": "Martian Mono",
+        "purpose": "Optional smooth editor values."
+      }
     },
-    "shadows": [
-      { "name": "chassis", "value": "inset 0 1px 0 #3f3f3f, 0 18px 40px #00000073", "purpose": "Listen plate on Polar Night." },
-      { "name": "well", "value": "inset 0 1px 4px #000000b3", "purpose": "Meter trough and tape log." },
-      { "name": "cap", "value": "0 2px 4px #000000b3, inset 0 1px 0 #fff8, inset 0 -1px 0 #0003", "purpose": "Fader thumb." }
-    ],
+    "shadows": [],
     "motion": [
-      { "name": "press", "value": "translateY(1px)", "purpose": "Primary button active. Disabled when prefers-reduced-motion." }
+      {
+        "name": "live ripple",
+        "value": "1.8s damped spring, two staggered chevrons",
+        "purpose": "Only while the room is live; reduced motion disables it."
+      }
     ],
     "breakpoints": [
-      { "name": "strip", "value": "420px" }
+      {
+        "name": "compact browser",
+        "value": "360px",
+        "purpose": "Shorter peak readout on very narrow screens."
+      }
     ]
   },
   "components": [
     {
-      "name": "Primary Button",
+      "name": "Listen",
       "kind": "button",
-      "refersTo": "button-primary",
-      "description": "Listen / Open. Studio Blue on ink, 4px, 44–48px tall.",
-      "html": "<button class=\"ds-btn-primary\" type=\"button\">Listen</button>",
-      "css": ".ds-btn-primary{font-family:Barlow,system-ui,sans-serif;font-weight:700;font-size:16px;min-height:48px;min-width:148px;padding:0 22px;border:0;border-radius:4px;background:#00aaff;color:#041018;cursor:pointer}.ds-btn-primary:hover{filter:brightness(1.07)}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid #00aaff;outline-offset:2px}"
+      "refersTo": "listen",
+      "description": "Primary lime action, pixel heading.",
+      "html": "<button class=\"ds-listen\">LISTEN</button>",
+      "css": ".ds-listen{height:36px;border:0;border-radius:1px;background:#c6ff1f;color:#101011;font:12px Silkscreen,monospace}.ds-listen:focus-visible{outline:2px solid #f2f2f2;outline-offset:2px}"
     },
     {
-      "name": "Mute",
-      "kind": "button",
-      "refersTo": "button-mute",
-      "description": "Channel-strip mute. Surface at rest, hot when on.",
-      "html": "<button class=\"ds-mute\" type=\"button\">Mute</button>",
-      "css": ".ds-mute{font-family:Barlow,system-ui,sans-serif;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;min-height:44px;min-width:52px;padding:0 8px;border:0;border-radius:3px;background:#353535;color:#b8b8b8;cursor:pointer}.ds-mute.on{background:#ff7088;color:#041018}.ds-mute:focus-visible{outline:2px solid #00aaff;outline-offset:2px}"
-    },
-    {
-      "name": "Session nameplate",
+      "name": "Room field",
       "kind": "input",
-      "refersTo": "input-session",
-      "description": "Typeable session title. Enter jumps to /{slug}.",
-      "html": "<input class=\"ds-title\" value=\"room-demo\" spellcheck=\"false\">",
-      "css": ".ds-title{display:block;width:100%;margin:0;padding:2px 0 8px;font-family:Barlow,system-ui,sans-serif;font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.15;color:#fff;background:transparent;border:0;border-bottom:1px solid #353535;caret-color:#00aaff;outline:none;border-radius:0}.ds-title:hover,.ds-title:focus{border-bottom-color:#00aaff}::selection{background:#00aaff;color:#041018}"
+      "refersTo": "room",
+      "description": "Single charcoal field with inline icon and action.",
+      "html": "<input class=\"ds-room\" placeholder=\"room-name\">",
+      "css": ".ds-room{height:36px;min-width:0;border:0;border-radius:1px;background:#1c1c1e;color:#f2f2f2;font:14px Departure,monospace}.ds-room:focus-visible{outline:1px solid #c6ff1f}"
     },
     {
-      "name": "Chassis",
-      "kind": "card",
-      "refersTo": "chassis",
-      "description": "The listen plate on Polar Night.",
-      "html": "<div class=\"ds-chassis\"><span class=\"ds-product\">RELAY</span><p class=\"ds-who\">Waiting for the host</p></div>",
-      "css": ".ds-chassis{width:min(400px,100%);padding:20px 18px 16px;background:#252525;border-radius:4px;box-shadow:inset 0 1px 0 #3f3f3f,0 18px 40px #00000073;font-family:Barlow,system-ui,sans-serif;color:#fff}.ds-product{font-size:13px;font-weight:700;letter-spacing:.16em}.ds-who{margin:10px 0 0;color:#b8b8b8;font-size:13px}"
-    },
-    {
-      "name": "GYR rail",
-      "kind": "custom",
-      "refersTo": "well",
-      "description": "Vertical flat GYR meter. Cover from the top; hold tick when live. No LED notches.",
-      "html": "<div class=\"ds-rail\" role=\"meter\" aria-label=\"Left\"><div class=\"ds-cover\" style=\"height:28%\"></div></div>",
-      "css": ".ds-rail{position:relative;width:8px;height:180px;border-radius:2px;overflow:hidden;background:linear-gradient(to top,#3d8f6a 0%,#5be8b3 42%,#ffc75c 78%,#ff7088 100%)}.ds-cover{position:absolute;left:0;right:0;top:0;background:#101010}"
+      "name": "Live mark",
+      "kind": "status",
+      "refersTo": "mark",
+      "description": "Circular dot and two chevrons, rippling while live.",
+      "html": "<span class=\"ds-mark\" aria-hidden=\"true\">\u25cf\u203a\u203a</span>",
+      "css": ".ds-mark{color:#c6ff1f;font:16px Silkscreen,monospace}"
     }
   ],
   "narrative": {
-    "northStar": "Polar Night chassis",
-    "overview": "RELAY listen is a small hardware unit on a studio wall, not a marketing page and not a WebRTC demo card. The visitor meets a BUFFR Studio Blue plate: Polar Night around it, a #252525 chassis, sunken #101010 wells, GYR LED rails, a metal fader cap, and one Studio Blue action (Listen / Open). Barlow carries every label. Corners stay 2–4px, the language of milled panels, not iOS cards.\n\nThe same tokens ship in the DAW editor. The website is a listen accessory for that insert: type the session name, tap Listen, watch L and R, pull the fader. Diagnostics live in a tape you open.",
+    "northStar": "A compact studio signal in Matari lime and pixel type.",
+    "overview": "RELAY carries the live Matari Audio Signal identity into its plugin and browser listener. Its tiny card and editor are instruments: readable fields, a clear action, honest meters and a live dot with two outgoing chevrons. Pixel is the default; the editor saves a Standard font and corner option.",
     "keyCharacteristics": [
-      "Polar Night ground, chassis plate, sunken wells — three neutrals, no glass",
-      "Studio Blue only on the primary action, caret, and focus",
-      "Vertical L / fader / R as the first-viewport object",
-      "Barlow 11 / 12 / 13 / 22px; tracked labels, tabular dB",
-      "Hardware radii 2–4px; 44px minimum on touch controls"
+      "Charcoal #101011, field #1c1c1e, lime #c6ff1f",
+      "Silkscreen headings with Departure Mono body and values",
+      "Saved Standard editor choice: Barlow and Martian Mono",
+      "Content-sized browser card that shrinks cleanly in Firefox",
+      "Original staggered spring logo motion with reduced-motion support"
     ],
     "rules": [
-      { "name": "The Accent Rule", "body": "Studio Blue is the action, the caret, and the focus ring. It is not a fill, a glow, or a meter.", "section": "colors" },
-      { "name": "The GYR Rule", "body": "Level is a bottom-up green–yellow–red rail. Never a single-hue bar and never a horizontal combined peak.", "section": "colors" },
-      { "name": "The Nameplate Rule", "body": "The session name is a text field with a 1px underline. It is how you jump rooms. Do not replace it with a static h1.", "section": "typography" },
-      { "name": "The One Plate Rule", "body": "One chassis, one drop. Nested cards are out.", "section": "elevation" }
+      {
+        "name": "One signal",
+        "body": "Lime marks action, selection, live status and the logo; yellow and red show hotter levels or errors.",
+        "section": "colors"
+      },
+      {
+        "name": "Readable pixels",
+        "body": "Use pixel type at readable sizes and shorten labels before shrinking the whole card.",
+        "section": "typography"
+      },
+      {
+        "name": "Keep the meters",
+        "body": "Do not let changelog, controls or long room labels push the fixed meter column out of the editor.",
+        "section": "layout"
+      }
     ],
     "dos": [
-      "Do keep L rail | fader | R rail as the first-viewport object.",
-      "Do let the session title be typed; slugify and redirect.",
-      "Do put diagnostics in the tape; put human status on the who line.",
-      "Do use Studio Blue only for action, caret, and focus.",
-      "Do match the plugin tokens (#191919 / #252525 / #101010 / #00aaff, Barlow, GYR)."
+      "Keep the dot and two chevrons in both plugin and browser.",
+      "Keep the listener list and per-listener sliders usable at 380\u00d7150."
     ],
     "donts": [
-      "Don't ship a horizontal combined meter or a native accent-color range.",
-      "Don't make the log the main content or an aria-live dump of ICE.",
-      "Don't use 12–16px card radii, glass, or a SaaS dashboard layout.",
-      "Don't invent a second typeface. Barlow is the product face.",
-      "Don't fill Polar Night with marketing sections; this surface is a listen box."
+      "Do not use the old green #1fe06a as the action color.",
+      "Do not stretch the listen card across the viewport."
     ]
   }
 }

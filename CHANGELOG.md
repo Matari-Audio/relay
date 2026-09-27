@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Browser listeners have separate talkback gain sliders in the plugin's mic view, with live indicators and a 0 dB reset.
+- The plugin and browser use Matari's Signal look: lime, Silkscreen headings, Departure Mono readouts and the animated dot and chevrons. The plugin's changelog and settings panel offers a saved Standard appearance too.
+- The listen page keeps a compact content-sized card when mic mode and the room roster are visible in Firefox.
+
 ## 0.4.0
 
 - Built on MOOSE 7 (Matari's truce fork) instead of truce 6.3. Sessions and presets from 0.2.0 load unchanged.

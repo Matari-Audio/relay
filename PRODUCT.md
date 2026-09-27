@@ -34,7 +34,7 @@ Audiomovers' link, and free to run: the operator hosts signaling only.
 ## Brand Commitments
 
 - Vendor **Matari Audio**, product **RELAY**.
-- Visual authority: **BUFFR**. Neutral charcoal, high contrast, meter green for action.
+- Visual authority: the live **Matari Audio** landing page. Signal uses charcoal, lime #c6ff1f, Silkscreen and Departure Mono; the plugin offers a saved smooth Standard appearance.
 - Voice: direct, technical. A studio tool, not a marketing surface.
 
 ## Product Principles

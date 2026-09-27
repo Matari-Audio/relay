@@ -1,90 +1,70 @@
 ---
 name: RELAY
 colors:
-  bg: "#121212"
-  field: "#1e1e1e"
-  hover: "#292929"
-  line: "#2e2e2e"
-  well: "#0a0a0a"
+  bg: "#101011"
+  field: "#1c1c1e"
+  hover: "#28282b"
+  line: "#3b3b3e"
+  well: "#0a0a0b"
   text: "#f2f2f2"
-  dim: "#8c8c8c"
-  accent: "#1fe06a"
-  ink: "#04140a"
-  green: "#1fe06a"
+  dim: "#a4a4a9"
+  accent: "#c6ff1f"
+  ink: "#101011"
   yellow: "#ffd21a"
   red: "#ff2d46"
-radius: 4px
+radius: 1px Pixel, 4px Standard
 fonts:
-  ui: Barlow 600
-  heading: Barlow 700
-  numbers: Martian Mono
+  pixel_heading: Silkscreen
+  pixel_body: Departure Mono
+  standard_ui: Barlow 600/700
+  standard_numbers: Martian Mono
   icons: Phosphor Bold
 ---
 
-# Design System: RELAY
+# Design System: RELAY Signal
 
-The plugin editor (`plugin/src/ui.rs`), the listen page (`apps/relay-web/public`)
-and the product page (`apps/web`) share one set of tokens, listed above.
-The look is colourful and high contrast, sporty but quiet: a neutral charcoal
-panel with no blue tint, the meter green as the one accent, and yellow and red
-kept for the meters and problems. No orange anywhere.
+The live Matari Audio landing page supplies RELAY's color and type. The
+plugin editor and browser listen page use the same dark charcoal, lime signal,
+and pixel typography. The plugin also offers a saved Standard appearance:
+Barlow and Martian Mono with 4px corners, retaining the Signal palette.
 
-## Palette
+## Type and surfaces
 
-- **Ground.** `bg` #121212 is the panel. `field` #1e1e1e fills every control,
-  `hover` #292929 when the pointer is on it. `line` #2e2e2e is the only hairline.
-  `well` #0a0a0a is the unlit part of a meter. All neutral grey.
-- **Text.** `text` #f2f2f2 for values, `dim` #8c8c8c for icons, labels and
-  scale numbers. Both pass AA on `bg` and `field`.
-- **Accent.** Green #1fe06a, the same green as the meters, is for action and
-  selection: the picked mode segment, the Listen and Download buttons, links, focus rings, text selection, the logo mark and the live
-  lamp. Anything on green uses `ink` #04140a, never white.
-- **Signal.** Yellow #ffd21a and red #ff2d46 appear in the meters and, outside
-  them, only for status: yellow is waiting or reconnecting, red is an error.
+- **Pixel, default.** Silkscreen carries the wordmark, mode labels and main
+  actions. Departure Mono carries fields, status, room roster and readouts.
+  Corners are 1px. Keep text large enough to read at the plugin's default
+  440×156 size and the browser card's content-sized width.
+- **Standard, plugin only.** Barlow 600/700 carries words and Martian Mono
+  carries values. Corners are 4px. The setting is saved with the DAW project.
+- **Color.** Charcoal `bg`, darker meter `well`, one `field` fill and one
+  `hover` fill. Lime `accent` marks primary action, selection, live status,
+  logo and the low meter range. Use dark `ink` on lime. Yellow and red belong
+  to hot meter levels and warning/error states.
+- **Fonts.** Departure Mono and Silkscreen use SIL OFL 1.1; their notices ship
+  beside the plugin and browser assets.
 
-## Rules
+## Editor
 
-- **Compact.** The plugin is a 440×156 panel. Nothing is nested; 8px padding,
-  4px corners on everything.
-- **Fields are one container.** A field is a single `field`-coloured box: a
-  dim leading icon (`#` room, lock password, link, wifi LAN), the value, and its
-  action button inside at the right end (roll, show/hide, copy). Each icon sits
-  centred in a square box as tall as the field, so its padding is equal on all
-  sides. No separate buttons beside a field, no caption column.
-- **Mode.** Off / Share / Join is a segmented control in one `field` box; the
-  picked segment is filled green with `ink` text.
-- **Type.** Barlow SemiBold for words, Bold for the RELAY mark and buttons.
-  Martian Mono only for numbers (dB, ms, IP, scale). Phosphor Bold icons.
-- **Quiet.** Motion and colour only where something changed.
+- One flat panel: room, password, link and status on the left; IN and OUT L/R
+  meters with gain handles on the right. The meter column remains visible at
+  the 380×150 minimum editor size.
+- The RELAY wordmark opens changelog and Appearance controls. Pixel and
+  Standard are the two explicit choices. The microphone icon stays in the
+  header while sharing and opens a scrollable listener list. Each browser
+  listener has a live indicator and an independent -24…+12 dB slider; double
+  click restores 0 dB.
+- The logo is a circular dot sending two chevrons. While live, they ripple
+  outward on the original damped spring, one behind the other. Pixel mode
+  snaps their drawn coordinates to the pixel grid; Standard draws smoothly.
+- The output fader remains a white bar over the OUT rails so it stays visible
+  across the lime, yellow and red meter gradient.
 
-## Meters
+## Browser listen page
 
-- Fat L/R rails, 1px apart, on a -60..0 dB scale. Dim scale numbers sit beside
-  the rails (0, -6, -12, -24, -48); nothing crosses the rails, no tick lines.
-- Each rail is a `well` with 2px corners holding one smooth vertical gradient:
-  red at the top (0 dB), yellow 15% down, green from 35% down to the bottom.
-  It is revealed only up to the level; above it the dark `well` shows.
-- A thin white peak-hold line rides each rail (holds 1.5 s, then falls 20 dB/s).
-- The plugin shows an IN pair and an OUT pair with the dB scale between them.
-  The listen page shows one L/R pair (what arrives) the same way.
-
-## Output fader
-
-- The output gain is a white bar riding over the OUT pair (green would vanish into the meter), like Pro-L:
-  drag anywhere on the OUT rails; double-click for 0 dB. The gain reads out
-  under the pair.
-- Above the meters sit three readouts: max IN, max OUT and max true peak since
-  the last reset. They turn red above 0 dB. Click them to reset.
-
-## Web player
-
-- `relay.matari-audio.com/<room>` is one compact card in the plugin's look:
-  mark and wordmark with the status lamp, room and password fields, a
-  play/stop button with the peak dB readout, the L/R meters, and a short
-  list of who is in the room (from the `roster` message, see
-  `docs/protocol.md`).
-- `/` and the product page use the same card empty: a room field, Join, one
-  line on what RELAY is, and a link to the plugin.
-- **Logo motion.** While live, the two chevrons ripple out from the dot and
-  back on a spring (`linear()` easing, CSS only), the second a beat behind
-  the first. Idle, the mark is still. `prefers-reduced-motion` turns it off.
+- The card sizes to its content and stops at the available width. Grid tracks
+  may shrink to zero minimum so the mic picker and roster do not expand past
+  the card in Firefox. At very narrow widths, compact the dB readout.
+- The logo keeps its dot and two chevrons, and the live ripple respects
+  `prefers-reduced-motion`. The browser page always uses the Pixel appearance.
+- Keep room and password in one-piece fields, a single Listen/Stop action,
+  mic button, L/R meter and room roster. No nested cards.

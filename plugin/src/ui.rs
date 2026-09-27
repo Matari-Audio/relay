@@ -2,8 +2,9 @@
 //! with their actions inside them on the left; input and output meters,
 //! each with its own fader, on the right.
 
-use std::sync::Arc;
+use std::cell::Cell;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use moose::mui::{Bridge, MuiEditor};
@@ -16,6 +17,8 @@ use crate::{P, RelayParams};
 const SEMIBOLD: &[u8] = include_bytes!("../assets/barlow-600.ttf");
 const BOLD: &[u8] = include_bytes!("../assets/barlow-700.ttf");
 const MONO: &[u8] = include_bytes!("../assets/martian-mono.ttf");
+const PIXEL: &[u8] = include_bytes!("../assets/silkscreen.ttf");
+const DEPARTURE: &[u8] = include_bytes!("../assets/departure-mono.ttf");
 /// Phosphor Bold, cut down to the glyphs below.
 const ICONS: &[u8] = include_bytes!("../assets/phosphor-bold-relay.ttf");
 
@@ -42,23 +45,23 @@ const GAIN: (f64, f64) = (-24.0, 12.0);
 const PAIR: f64 = 28.0;
 const SCALE: f64 = 24.0;
 
-// Neutral charcoal, Oklch. apps/relay-web and apps/web use the same values.
-const BG: Color = Color::oklch(0.182, 0.0, 0.0); // #121212
-const FIELD: Color = Color::oklch(0.235, 0.0, 0.0); // #1e1e1e
-const HOT: Color = Color::oklch(0.281, 0.0, 0.0); // #292929
-const WELL: Color = Color::oklch(0.145, 0.0, 0.0); // #0a0a0a
+// Matari's Signal palette, Oklch. The listen page uses the matching sRGB.
+const BG: Color = Color::oklch(0.1735, 0.002, 286.2); // #101011
+const FIELD: Color = Color::oklch(0.2273, 0.0038, 286.1); // #1c1c1e
+const HOT: Color = Color::oklch(0.278, 0.0055, 286.0); // #28282b
+const WELL: Color = Color::oklch(0.1452, 0.0021, 286.1); // #0a0a0b
 const TEXT: Color = Color::oklch(0.961, 0.0, 0.0); // #f2f2f2
-const DIM: Color = Color::oklch(0.64, 0.0, 0.0); // #8c8c8c
-const GREEN: Color = Color::oklch(0.795, 0.214, 149.6); // #1fe06a, also the accent
-const ON_GREEN: Color = Color::oklch(0.173, 0.032, 156.0); // #04140a
+const DIM: Color = Color::oklch(0.7202, 0.0072, 286.2); // #a4a4a9
+const LIME: Color = Color::oklch(0.9273, 0.2266, 124.65); // #c6ff1f
+const ON_LIME: Color = BG;
 const YELLOW: Color = Color::oklch(0.877, 0.176, 92.7); // #ffd21a
 const RED: Color = Color::oklch(0.647, 0.239, 22.0); // #ff2d46
 /// A meter's colour down its height, 0 dB at the top.
-const RAMP: [(f32, Color); 4] = [(0.0, RED), (0.15, YELLOW), (0.35, GREEN), (1.0, GREEN)];
+const RAMP: [(f32, Color); 4] = [(0.0, RED), (0.15, YELLOW), (0.35, LIME), (1.0, LIME)];
 
-const THEME: Theme = Theme {
+const STANDARD_THEME: Theme = Theme {
     palette: Palette {
-        primary: Pigment::new(150.0, 0.2),
+        primary: Pigment::new(125.0, 0.2),
         ..Palette::NEUTRAL
     },
     corners: Corners {
@@ -70,11 +73,24 @@ const THEME: Theme = Theme {
     text: 12.0,
     ..Theme::DEFAULT
 };
+const PIXEL_THEME: Theme = Theme {
+    corners: Corners {
+        selector: 1.0,
+        field: 1.0,
+        box_: 1.0,
+        concave: 1.0,
+    },
+    ..STANDARD_THEME
+};
 
 struct Fonts {
     bold: Font,
     mono: Font,
+    semibold: Font,
+    pixel_head: Font,
+    departure: Font,
     icons: Font,
+    pixel: Cell<bool>,
 }
 
 /// One meter rail's ballistics, in dB.
@@ -154,17 +170,29 @@ fn new_ui() -> (Ui, Fonts) {
     let fonts = Fonts {
         bold: load(BOLD),
         mono: load(MONO),
+        semibold: load(SEMIBOLD),
+        pixel_head: load(PIXEL),
+        departure: load(DEPARTURE),
         icons: load(ICONS),
+        pixel: Cell::new(true),
     };
-    (Ui::new(THEME).font(load(SEMIBOLD)), fonts)
+    (Ui::new(PIXEL_THEME).font(fonts.departure.clone()), fonts)
 }
 
 pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     let shared = Arc::clone(&params.link.0);
+    let settings = Arc::clone(&params);
     let (ui, fonts) = new_ui();
     let mut view = View::default();
     MuiEditor::new(params, ui, SIZE, move |ui, bridge| {
-        build(ui, bridge, &shared, &fonts, &mut view)
+        build(
+            ui,
+            bridge,
+            &shared,
+            &settings.standard_ui,
+            &fonts,
+            &mut view,
+        )
     })
     .resizable((380, 150))
     // Meters decay and the link status moves while nothing is touched.
@@ -197,7 +225,7 @@ fn field(fonts: &Fonts, c: char, body: El, action: El) -> El {
     row([glyph(fonts, c, DIM), body.grow(1.0), action])
         .center()
         .h(H)
-        .radius(R)
+        .radius(corner(fonts))
         .fill(FIELD)
 }
 
@@ -207,16 +235,34 @@ fn bare(input: El) -> El {
 }
 
 fn mono(fonts: &Fonts, s: String, size: f64, ink: Color) -> El {
-    text(s).font(fonts.mono.clone()).text_size(size).fill(ink)
+    let font = if fonts.pixel.get() {
+        &fonts.departure
+    } else {
+        &fonts.mono
+    };
+    text(s).font(font.clone()).text_size(size).fill(ink)
+}
+
+fn corner(fonts: &Fonts) -> f64 {
+    if fonts.pixel.get() { 1.0 } else { R }
 }
 
 fn build(
     ui: &mut Ui,
     bridge: &mut Bridge<RelayParams>,
     shared: &Shared,
+    standard_ui: &RwLock<bool>,
     fonts: &Fonts,
     view: &mut View,
 ) -> El {
+    let pixel = !*standard_ui.read().unwrap();
+    fonts.pixel.set(pixel);
+    ui.set_theme(if pixel { PIXEL_THEME } else { STANDARD_THEME });
+    ui.set_font(Some(if pixel {
+        fonts.departure.clone()
+    } else {
+        fonts.semibold.clone()
+    }));
     let picked = (bridge.value(P::Mode) * 2.0).round() as usize;
     let mode = bridge.bind(ui, P::Mode, |ui, _, v| {
         let segments: Vec<El> = ["Off", "Share", "Join"]
@@ -228,23 +274,34 @@ fn build(
                     *v = i as f64 / 2.0;
                 }
                 let (bg, fg) = match (i == picked, r.hovered) {
-                    (true, _) => (GREEN, ON_GREEN),
+                    (true, _) => (LIME, ON_LIME),
                     (false, true) => (HOT, TEXT),
                     (false, false) => (FIELD, DIM),
                 };
-                row([text(name).text_size(10.5).fill(fg)])
-                    .justify(Justify::Center)
-                    .center()
-                    .size(42.0, 18.0)
-                    .radius(R - 1.0)
-                    .fill(bg)
-                    .a11y(A11y::Button)
-                    .named(name)
-                    .focusable()
-                    .id(name)
+                row([text(name)
+                    .font(if pixel {
+                        fonts.pixel_head.clone()
+                    } else {
+                        fonts.semibold.clone()
+                    })
+                    .text_size(if pixel { 9.0 } else { 10.5 })
+                    .fill(fg)])
+                .justify(Justify::Center)
+                .center()
+                .size(42.0, 18.0)
+                .radius((corner(fonts) - 1.0).max(0.0))
+                .fill(bg)
+                .a11y(A11y::Button)
+                .named(name)
+                .focusable()
+                .id(name)
             })
             .collect();
-        row(segments).gap(2.0).pad(2.0).radius(R).fill(FIELD)
+        row(segments)
+            .gap(2.0)
+            .pad(2.0)
+            .radius(corner(fonts))
+            .fill(FIELD)
     });
 
     let mut room = Shared::text(&shared.room);
@@ -296,14 +353,21 @@ fn build(
         if r.clicked_with(Button::Primary) {
             open(&url);
         }
-        let link = row![
-            text(format!("{}/", relay_core::SITE))
-                .text_size(11.0)
-                .fill(DIM),
-            text(slug)
-                .text_size(11.0)
-                .fill(if r.hovered { GREEN } else { TEXT }),
-        ]
+        let link = if pixel {
+            text("OPEN LISTEN PAGE")
+                .font(fonts.pixel_head.clone())
+                .text_size(9.0)
+                .fill(if r.hovered { LIME } else { TEXT })
+        } else {
+            row![
+                text(format!("{}/", relay_core::SITE))
+                    .text_size(11.0)
+                    .fill(DIM),
+                text(slug)
+                    .text_size(11.0)
+                    .fill(if r.hovered { LIME } else { TEXT }),
+            ]
+        }
         .a11y(A11y::Button)
         .named("Open the listen page")
         .focusable()
@@ -366,9 +430,9 @@ fn build(
         (_, Net::RateMismatch) => (YELLOW, "Sample rates differ".into()),
         (1, Net::Offline) if peers == 0 => (YELLOW, "LAN only".into()),
         (1, _) if peers == 0 => (TEXT, "Waiting for listeners".into()),
-        (1, _) => (GREEN, format!("{peers} listening")),
-        (_, Net::Lan) => (GREEN, "Live · LAN".into()),
-        (_, Net::Internet) => (GREEN, "Live · Internet".into()),
+        (1, _) => (LIME, format!("{peers} listening")),
+        (_, Net::Lan) => (LIME, "Live · LAN".into()),
+        (_, Net::Internet) => (LIME, "Live · Internet".into()),
         (_, Net::Offline) => (YELLOW, "Searching LAN".into()),
         _ => (TEXT, "Searching".into()),
     };
@@ -379,7 +443,7 @@ fn build(
         view.mic_panel = false;
     }
     let t = view.born.elapsed().as_secs_f64();
-    let live = lit == GREEN;
+    let live = lit == LIME;
     // Share: browser listeners talking back through their mic.
     let talking = shared.talking.load(Relaxed);
     let talk = if picked == 1 {
@@ -390,7 +454,7 @@ fn build(
         row![
             icon(MIC).font(fonts.icons.clone()).text_size(12.0).fill(
                 if talking > 0 || view.mic_panel {
-                    GREEN
+                    LIME
                 } else {
                     DIM
                 }
@@ -414,20 +478,24 @@ fn build(
         spacer().w(0.0)
     };
     let brand = row![
-        canvas(move |_| mark(t, live)).size(18.0, 18.0),
+        canvas(move |_| mark(t, live, pixel)).size(18.0, 18.0),
         text("RELAY")
-            .font(fonts.bold.clone())
-            .text_size(14.0)
+            .font(if pixel {
+                fonts.pixel_head.clone()
+            } else {
+                fonts.bold.clone()
+            })
+            .text_size(if pixel { 12.0 } else { 14.0 })
             .fill(TEXT),
     ]
     .gap(5.0)
     .center()
     .a11y(A11y::Button)
-    .named("About RELAY")
+    .named("RELAY changelog and settings")
     .focusable()
     .id("about");
     let body = if view.about {
-        about(ui)
+        about(ui, standard_ui, fonts)
     } else if picked == 1 && view.mic_panel {
         microphones(ui, shared)
     } else {
@@ -453,7 +521,10 @@ fn build(
         body,
     ])
     .gap(6.0)
-    .grow(1.0);
+    .min_w(0.0)
+    .basis(0.0)
+    .grow(1.0)
+    .clip();
 
     let meters = meters(ui, bridge, shared, fonts, view);
     row([left, meters]).gap(12.0).pad(10.0).fill(BG)
@@ -478,7 +549,7 @@ fn microphones(ui: &mut Ui, shared: &Shared) -> El {
             row![
                 block(6.0, 6.0)
                     .radius(3.0)
-                    .fill(if t.active { GREEN } else { DIM }),
+                    .fill(if t.active { LIME } else { DIM }),
                 slider
                     .el
                     .px(18.0)
@@ -572,6 +643,7 @@ fn meters(
     .gap(4.0)
     .w(PAIR * 2.0 + SCALE)
     .h(Len::Pct(100.0))
+    .id("meters")
 }
 
 /// A gain fader over a meter pair: drag anywhere on it, double-click for
@@ -625,8 +697,9 @@ fn minus_infinity(fonts: &Fonts, ink: Color) -> El {
 
 /// The RELAY mark, a dot sending two chevrons. While live the chevrons
 /// ripple out of the dot on a damped spring, one after the other.
-fn mark(t: f64, live: bool) -> Vec<Draw> {
-    let ink = if live { GREEN } else { TEXT };
+fn mark(t: f64, live: bool, pixel: bool) -> Vec<Draw> {
+    let ink = if live { LIME } else { TEXT };
+    let snap = |v: f64| if pixel { v.round() } else { v };
     let kick = |delay: f64| {
         let s = (t % 1.8 - delay).max(0.0);
         if live {
@@ -638,21 +711,22 @@ fn mark(t: f64, live: bool) -> Vec<Draw> {
     let dot = 1.7 * (1.0 + 0.3 * kick(0.0));
     let circle = (0..16).map(|i| {
         let a = f64::from(i) * std::f64::consts::TAU / 16.0;
-        Point::new(4.3 + dot * a.cos(), 9.0 + dot * a.sin())
+        Point::new(snap(4.3 + dot * a.cos()), snap(9.0 + dot * a.sin()))
     });
     let mut shapes = vec![Draw::fill(Path::polyline(circle, true), ink)];
     for (i, x) in [7.6, 11.9].into_iter().enumerate() {
         let k = kick(0.08 + 0.1 * i as f64);
         let x = x + 1.6 * k;
-        let chevron = [(x, 4.6), (x + 2.5, 9.0), (x, 13.4)].map(|(x, y)| Point::new(x, y));
+        let chevron =
+            [(x, 4.6), (x + 2.5, 9.0), (x, 13.4)].map(|(x, y)| Point::new(snap(x), snap(y)));
         let fade = ink.with_alpha(1.0 - 0.35 * k.abs() as f32);
         shapes.push(Draw::stroke(Path::polyline(chevron, false), fade, 2.3));
     }
     shapes
 }
 
-/// Version, licence and the newest changelog entries.
-fn about(ui: &Ui) -> El {
+/// Changelog and the editor's saved appearance preference.
+fn about(ui: &Ui, standard_ui: &RwLock<bool>, fonts: &Fonts) -> El {
     const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
     const FULL: &str = "https://github.com/Matari-Audio/relay/blob/main/CHANGELOG.md";
     let notes: Vec<El> = CHANGELOG
@@ -674,14 +748,59 @@ fn about(ui: &Ui) -> El {
     if r.clicked_with(Button::Primary) {
         open(FULL);
     }
+    let standard = *standard_ui.read().unwrap();
+    let choice = |name: &'static str, selected: bool| {
+        let r = ui.get(name);
+        if r.clicked_with(Button::Primary) {
+            *standard_ui.write().unwrap() = name == "standard-ui";
+        }
+        row([text(if name == "pixel-ui" {
+            "Pixel"
+        } else {
+            "Standard"
+        })
+        .font(if fonts.pixel.get() {
+            fonts.pixel_head.clone()
+        } else {
+            fonts.semibold.clone()
+        })
+        .text_size(if fonts.pixel.get() { 9.0 } else { 10.0 })
+        .fill(if selected { ON_LIME } else { TEXT })])
+        .justify(Justify::Center)
+        .center()
+        .size(if name == "pixel-ui" { 52.0 } else { 70.0 }, 19.0)
+        .radius(corner(fonts))
+        .fill(if selected {
+            LIME
+        } else if r.hovered {
+            HOT
+        } else {
+            BG
+        })
+        .a11y(A11y::Button)
+        .named(if name == "pixel-ui" {
+            "Pixel appearance"
+        } else {
+            "Standard appearance"
+        })
+        .focusable()
+        .id(name)
+    };
     col([
         row![
             text(format!("Version {}", env!("CARGO_PKG_VERSION")))
                 .text_size(11.0)
-                .fill(TEXT),
-            spacer().grow(1.0),
-            text("Matari Audio · MPL-2.0").text_size(10.0).fill(DIM),
+                .fill(TEXT)
         ]
+        .w(Len::Pct(100.0)),
+        row![
+            text("Appearance").text_size(10.0).fill(DIM),
+            spacer().grow(1.0),
+            choice("pixel-ui", !standard),
+            choice("standard-ui", standard),
+        ]
+        .gap(3.0)
+        .center()
         .w(Len::Pct(100.0)),
         // Scrolls when the notes outgrow the window; the link stays below.
         col(notes)
@@ -693,7 +812,7 @@ fn about(ui: &Ui) -> El {
             .id("notes"),
         text("Full changelog")
             .text_size(10.0)
-            .fill(if r.hovered { GREEN } else { TEXT })
+            .fill(if r.hovered { LIME } else { TEXT })
             .a11y(A11y::Button)
             .named("Open the full changelog")
             .focusable()
@@ -702,8 +821,9 @@ fn about(ui: &Ui) -> El {
     .gap(6.0)
     .align(Align::Start)
     .pad(8.0)
-    .radius(R)
+    .radius(corner(fonts))
     .fill(FIELD)
+    .w(Len::Pct(100.0))
     .grow(1.0)
 }
 
@@ -733,12 +853,9 @@ fn at(t: f32, el: El) -> El {
 /// thin peak-hold line.
 fn rail(r: Rail) -> El {
     let cover = depth(r.shown);
-    let edge = RAMP
-        .windows(2)
-        .find(|w| cover <= w[1].0)
-        .map_or(GREEN, |w| {
-            w[0].1.mix(w[1].1, (cover - w[0].0) / (w[1].0 - w[0].0))
-        });
+    let edge = RAMP.windows(2).find(|w| cover <= w[1].0).map_or(LIME, |w| {
+        w[0].1.mix(w[1].1, (cover - w[0].0) / (w[1].0 - w[0].0))
+    });
     let stops = [(0.0, WELL), (cover, WELL), (cover, edge)]
         .into_iter()
         .chain(RAMP.into_iter().filter(|s| s.0 > cover));
@@ -789,6 +906,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mark_keeps_dot_and_two_moving_chevrons() {
+        let still = mark(0.0, true, true);
+        let moving = mark(0.3, true, true);
+        assert_eq!(still.len(), 3);
+        assert_ne!(format!("{still:?}"), format!("{moving:?}"));
+    }
+
+    #[test]
     fn unmask_splices_edits() {
         let old: Vec<char> = "secret".chars().collect();
         assert_eq!(unmask(&old, "••••••x"), "secretx");
@@ -811,6 +936,8 @@ mod snapshot {
     fn render(mode: f64, net: Net, name: &str, about: bool) {
         let params = Arc::new(RelayParams::new());
         params.set_normalized(P::Mode.into(), mode);
+        *params.standard_ui.write().unwrap() = name == "standard";
+        let settings = Arc::clone(&params);
         let shared = Arc::clone(&params.link.0);
         shared.set_text(&shared.room, "quiet-dusty-papaya");
         shared.set_text(&shared.password, "hunter2");
@@ -820,7 +947,7 @@ mod snapshot {
         shared.rate.store(48_000, Relaxed);
         shared.latency.store(512, Relaxed);
         shared.talking.store(1, Relaxed);
-        if name == "mics" {
+        if name == "mics" || name == "compact-mics" {
             shared.talkers.lock().unwrap().extend([
                 relay_core::Talker {
                     id: "1".into(),
@@ -853,15 +980,30 @@ mod snapshot {
         }
         let mut view = View {
             about,
-            mic_panel: name == "mics",
+            mic_panel: name == "mics" || name == "compact-mics",
             ..View::default()
         };
-        let (w, h) = (SIZE.0 * 2, SIZE.1 * 2);
+        let logical = if name == "compact-mics" {
+            (380, 150)
+        } else {
+            SIZE
+        };
+        let (w, h) = (logical.0 * 2, logical.1 * 2);
         ui.set_scale(Some(2.0));
-        let root = build(&mut ui, &mut bridge, &shared, &fonts, &mut view);
-        let size = mui::layout::Size::new(f64::from(SIZE.0), f64::from(SIZE.1));
+        let root = build(
+            &mut ui,
+            &mut bridge,
+            &shared,
+            &settings.standard_ui,
+            &fonts,
+            &mut view,
+        );
+        let size = mui::layout::Size::new(f64::from(logical.0), f64::from(logical.1));
         ui.frame(root, Some(size), mui::input::Input::default(), 0.0)
             .unwrap();
+        assert!(
+            ui.scene().unwrap().layout.frame("meters").unwrap().right() <= f64::from(logical.0)
+        );
         if about {
             assert!(
                 ui.scene()
@@ -874,7 +1016,7 @@ mod snapshot {
                     > 15.0
             );
         }
-        if name == "mics" {
+        if name == "mics" || name == "compact-mics" {
             assert!(ui.scene().unwrap().layout.frame("mic-1").is_some());
         }
         let mut ctx = RenderContext::new(w as u16, h as u16);
@@ -907,8 +1049,10 @@ mod snapshot {
     #[test]
     fn editor_renders() {
         render(0.5, Net::Internet, "share", false);
+        render(0.5, Net::Internet, "standard", false);
         render(1.0, Net::Lan, "join", false);
         render(0.5, Net::Internet, "about", true);
         render(0.5, Net::Internet, "mics", false);
+        render(0.5, Net::Internet, "compact-mics", false);
     }
 }
