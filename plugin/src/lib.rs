@@ -8,9 +8,9 @@ mod ui;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, RwLock};
 
+use moose::prelude::*;
+use moose_core::custom_state::{PersistField, StateCursor};
 use relay_core::{Link, Peak, Playout, Role, Shared};
-use truce::prelude::*;
-use truce_core::custom_state::{PersistField, StateCursor};
 
 pub(crate) use RelayParamsParamId as P;
 
@@ -144,7 +144,7 @@ impl Dsp {
     }
 }
 
-/// Unlinked: what truce holds before `init`.
+/// Unlinked: what moose holds before `init`.
 impl Default for Dsp {
     fn default() -> Self {
         Self::new(Shared::new(), false)
@@ -270,7 +270,66 @@ fn ramp(x: &mut [f32], from: f32, to: f32) {
     }
 }
 
-truce::plugin! {
+moose::plugin! {
     logic: Relay,
     params: RelayParams,
+}
+
+#[cfg(test)]
+mod state {
+    use super::*;
+    use moose_core::export::PluginExport;
+    use moose_core::state::{restore_plugin, snapshot_plugin};
+    use moose_params::Params;
+
+    /// Saved by RELAY 0.2.0 on truce 6.3: Share, Output 0.25, Input 0.75,
+    /// 64 kbps, and the session below.
+    const TRUCE_STATE: &[u8] = include_bytes!("../tests/fixtures/relay-0.2.0-truce.state");
+
+    fn texts(p: &Plugin) -> [String; 4] {
+        let s = &p.params().link.0;
+        [&s.room, &s.password, &s.peer, &s.host_key].map(Shared::text)
+    }
+
+    fn values(p: &Plugin) -> [f64; 4] {
+        [P::Mode, P::Output, P::Input, P::Quality]
+            .map(|id| p.params().get_normalized(id.into()).unwrap())
+    }
+
+    #[test]
+    fn truce_session_loads() {
+        let mut p = Plugin::create();
+        restore_plugin(&mut p, TRUCE_STATE).unwrap();
+        assert_eq!(values(&p), [0.5, 0.25, 0.75, 1.0]);
+        assert_eq!(
+            texts(&p),
+            [
+                "quiet-dusty-papaya",
+                "hunter2",
+                "192.168.1.20",
+                "fixture-host-key"
+            ]
+            .map(String::from)
+        );
+    }
+
+    #[test]
+    fn round_trips() {
+        let mut a = Plugin::create();
+        restore_plugin(&mut a, TRUCE_STATE).unwrap();
+        let mut b = Plugin::create();
+        restore_plugin(&mut b, &snapshot_plugin(&a)).unwrap();
+        assert_eq!(values(&b), values(&a));
+        assert_eq!(texts(&b), texts(&a));
+        // Same envelope bytes as truce wrote.
+        assert_eq!(snapshot_plugin(&b), TRUCE_STATE);
+    }
+
+    #[test]
+    fn empty_state_is_rejected() {
+        let mut p = Plugin::create();
+        let before = texts(&p);
+        assert!(restore_plugin(&mut p, &[]).is_err());
+        assert_eq!(texts(&p), before);
+    }
 }

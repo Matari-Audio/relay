@@ -19,7 +19,7 @@ Open source under [MPL-2.0](LICENSE).
 
 ```text
 core/            relay-core: shared state, LAN link, WebRTC, mDNS, port mapping, playout
-plugin/          relay-plugin: truce 6.3 CLAP/VST3 insert, MUI editor
+plugin/          relay-plugin: MOOSE CLAP/VST3/AU insert, MUI editor
 apps/relay-web/  signaling worker (Durable Object) and the browser listen page
 apps/web/        matari-audio.com/relay product page (Astro)
 ```
@@ -29,12 +29,13 @@ apps/web/        matari-audio.com/relay product page (Astro)
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo truce install --clap --vst3        # from plugin/
+cargo install --git https://github.com/Matari-Audio/moose cargo-moose --locked
+cargo moose install --clap --vst3        # from plugin/; add --au2 on macOS
 pnpm install && pnpm -r test && pnpm -r build
 ```
 
 `cargo test -p relay-plugin` also renders the editor to
-`$TMPDIR/relay-editor-{share,join}.png`, so you can look at it without a DAW.
+`$TMPDIR/relay-editor-{share,join,about}.png`, so you can look at it without a DAW.
 
 ## Deploying signaling
 

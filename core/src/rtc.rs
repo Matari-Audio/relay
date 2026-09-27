@@ -14,11 +14,11 @@ use opus_rs::{Application, OpusDecoder, OpusEncoder};
 use rtrb::Producer;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Async, FixedAsync, Resampler, SincInterpolationParameters};
+use str0m::bwe::{Bitrate, BweKind};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::format::{Codec, FormatParams};
 use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid, Pt};
 use str0m::net::{Protocol, Receive, Transmit};
-use str0m::bwe::{Bitrate, BweKind};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 
 use crate::CHANNELS;
@@ -496,7 +496,12 @@ impl Host {
     /// What Opus encodes at, bits/s: the slowest listener's path, less a
     /// margin for headers and cross traffic, under the user's cap.
     pub fn bitrate(&self) -> u32 {
-        let path = self.peers.iter().filter(|p| p.live).map(|p| p.estimate).min();
+        let path = self
+            .peers
+            .iter()
+            .filter(|p| p.live)
+            .map(|p| p.estimate)
+            .min();
         path.map_or(self.cap, |b| b / 10 * 8)
             .min(self.cap)
             .max(MIN_BPS)
@@ -562,14 +567,20 @@ impl Host {
                 .enc
                 .encode(&self.pcm[..FRAME * CHANNELS], FRAME, &mut self.packet)
                 .unwrap_or(0);
-            let quiet = self.pcm[..FRAME * CHANNELS].iter().all(|s| s.abs() < SILENT);
+            let quiet = self.pcm[..FRAME * CHANNELS]
+                .iter()
+                .all(|s| s.abs() < SILENT);
             self.pcm.drain(..FRAME * CHANNELS);
             let at = MediaTime::new(self.time, Frequency::FORTY_EIGHT_KHZ);
             self.time += FRAME as u64;
             // Still encoded while gated, so the codec state is warm when
             // sound returns; the receiver hears the gap as DTX silence.
             let was = self.silent >= GATE_AFTER;
-            self.silent = if quiet { self.silent.saturating_add(1) } else { 0 };
+            self.silent = if quiet {
+                self.silent.saturating_add(1)
+            } else {
+                0
+            };
             let gated = self.silent >= GATE_AFTER;
             if gated != was {
                 // No bandwidth probing (padding bytes) while there is nothing to send.

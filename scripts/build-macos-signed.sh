@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Universal (arm64 + x86_64) RELAY CLAP/VST3, signed, packaged as a .pkg,
+# Universal (arm64 + x86_64) RELAY CLAP/VST3/AU, signed, packaged as a .pkg,
 # notarized and stapled. Same flow and secret names as KURV's
 # scripts/build-macos-signed.sh. Runs on a macOS runner.
 set -euo pipefail
@@ -27,9 +27,9 @@ version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/plugin/Cargo.toml" 
 build_bundle() {
   local target="$1" target_dir="$ROOT_DIR/target/macos-$1"
   rm -rf -- "$target_dir"
-  (cd "$ROOT_DIR/plugin" && CARGO_TARGET_DIR="$target_dir" cargo truce build \
-    --clap --vst3 --target "$target" --target-cpu baseline)
-  for bundle in $NAME.clap $NAME.vst3; do
+  (cd "$ROOT_DIR/plugin" && CARGO_TARGET_DIR="$target_dir" cargo moose build \
+    --clap --vst3 --au2 --target "$target" --target-cpu baseline)
+  for bundle in $NAME.clap $NAME.vst3 $NAME.component; do
     [[ -f "$target_dir/bundles/$target/$bundle/Contents/MacOS/$NAME" ]] || {
       echo "Missing $target $bundle binary" >&2; exit 1; }
   done
@@ -51,7 +51,7 @@ bundles="$work_dir/bundled"
 arm="$ROOT_DIR/target/macos-aarch64-apple-darwin/bundles/aarch64-apple-darwin"
 x86="$ROOT_DIR/target/macos-x86_64-apple-darwin/bundles/x86_64-apple-darwin"
 mkdir -p -- "$bundles"
-for bundle in $NAME.clap $NAME.vst3; do
+for bundle in $NAME.clap $NAME.vst3 $NAME.component; do
   ditto "$arm/$bundle" "$bundles/$bundle"
   bin="$bundles/$bundle/Contents/MacOS/$NAME"
   lipo -create "$arm/$bundle/Contents/MacOS/$NAME" "$x86/$bundle/Contents/MacOS/$NAME" -output "$bin.tmp"
@@ -70,16 +70,18 @@ security import "$work_dir/installer.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_
 security list-keychains -d user -s "$keychain"
 security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
 
-for bundle in $NAME.clap $NAME.vst3; do
+for bundle in $NAME.clap $NAME.vst3 $NAME.component; do
   codesign --force --sign "$APPLE_DEVELOPER_ID_APPLICATION" \
     --keychain "$keychain" --options runtime --timestamp "$bundles/$bundle"
   codesign --verify --deep --strict --verbose=2 "$bundles/$bundle"
 done
 
 pkgroot="$work_dir/pkgroot"
-mkdir -p "$pkgroot/Library/Audio/Plug-Ins/CLAP" "$pkgroot/Library/Audio/Plug-Ins/VST3"
+mkdir -p "$pkgroot/Library/Audio/Plug-Ins/CLAP" "$pkgroot/Library/Audio/Plug-Ins/VST3" \
+  "$pkgroot/Library/Audio/Plug-Ins/Components"
 ditto "$bundles/$NAME.clap" "$pkgroot/Library/Audio/Plug-Ins/CLAP/$NAME.clap"
 ditto "$bundles/$NAME.vst3" "$pkgroot/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+ditto "$bundles/$NAME.component" "$pkgroot/Library/Audio/Plug-Ins/Components/$NAME.component"
 
 mkdir -p -- "$OUTPUT_DIR"
 pkg="$OUTPUT_DIR/$NAME-${version}-macos.pkg"

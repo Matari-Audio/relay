@@ -460,26 +460,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
-name = "baseview-truce"
-version = "0.1.1-truce.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dc830ece0415c778e700c97d38bb28f4d8af0280f9d140f50ea094d0fed3e27"
-dependencies = [
- "keyboard-types",
- "nix",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-foundation",
- "raw-window-handle 0.5.2",
- "windows 0.61.3",
- "windows-core 0.61.2",
- "windows-sys 0.61.2",
- "x11-dl",
- "x11rb",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -589,6 +569,19 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
+name = "calloop"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dbf9978365bac10f54d1d4b04f7ce4427e51f71d61f2fe15e3fed5166474df7"
+dependencies = [
+ "bitflags 2.13.2",
+ "polling",
+ "rustix",
+ "slab",
+ "tracing",
+]
 
 [[package]]
 name = "cc"
@@ -1038,6 +1031,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dpi"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1118,7 +1117,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1339,7 +1338,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
 dependencies = [
  "rustix",
- "windows-link 0.2.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -1446,7 +1445,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror",
- "windows 0.62.2",
+ "windows",
 ]
 
 [[package]]
@@ -1840,11 +1839,12 @@ dependencies = [
 
 [[package]]
 name = "keyboard-types"
-version = "0.7.0"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b750dcadc39a09dbadd74e118f6dd6598df77fa01df0cfcdc52c28dece74528a"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
+ "serde",
 ]
 
 [[package]]
@@ -1895,7 +1895,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
 dependencies = [
  "cfg-if",
- "windows-link 0.2.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -1980,15 +1980,6 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memoffset"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
-name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
@@ -2035,9 +2026,189 @@ dependencies = [
 ]
 
 [[package]]
+name = "moose"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "moose-au",
+ "moose-clap",
+ "moose-core",
+ "moose-derive",
+ "moose-gui-types",
+ "moose-loader",
+ "moose-mui",
+ "moose-params",
+ "moose-plugin",
+ "moose-vst3",
+]
+
+[[package]]
+name = "moose-au"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "cc",
+ "crossbeam-queue",
+ "moose-core",
+ "moose-params",
+ "moose-shim-types",
+]
+
+[[package]]
+name = "moose-baseview"
+version = "0.3.4-moose.1"
+source = "git+https://github.com/Matari-Audio/moose#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "block2",
+ "bytemuck",
+ "calloop",
+ "dispatch2",
+ "dpi",
+ "keyboard-types",
+ "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-quartz-core",
+ "percent-encoding",
+ "raw-window-handle",
+ "windows",
+ "windows-core",
+ "windows-sys 0.61.2",
+ "x11-dl",
+ "x11rb",
+ "xkbcommon-dl",
+]
+
+[[package]]
+name = "moose-build"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "base64 0.22.1",
+ "moose-utils",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "moose-clap"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "clap-sys",
+ "crossbeam-queue",
+ "log",
+ "moose-core",
+ "moose-params",
+ "objc",
+]
+
+[[package]]
+name = "moose-core"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "crossbeam-queue",
+ "crossbeam-utils",
+ "moose-params",
+ "moose-utils",
+ "png 0.18.1",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "moose-derive"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "moose-build",
+ "moose-params",
+ "moose-utils",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "toml",
+]
+
+[[package]]
+name = "moose-gui-types"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "moose-core",
+ "objc2",
+]
+
+[[package]]
+name = "moose-loader"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "crc32fast",
+ "log",
+ "moose-core",
+ "moose-gui-types",
+ "moose-params",
+ "moose-plugin",
+]
+
+[[package]]
+name = "moose-mui"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "moose-core",
+ "moose-params",
+ "mui",
+ "mui-baseview",
+ "raw-window-handle",
+]
+
+[[package]]
+name = "moose-params"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "bitflags 2.13.2",
+]
+
+[[package]]
+name = "moose-plugin"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "moose-core",
+ "moose-gui-types",
+ "moose-params",
+]
+
+[[package]]
+name = "moose-shim-types"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+
+[[package]]
+name = "moose-utils"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+
+[[package]]
+name = "moose-vst3"
+version = "7.0.0"
+source = "git+https://github.com/Matari-Audio/moose?rev=f8f4b79125f8ed61153eeb66a99d31b6b9817182#f8f4b79125f8ed61153eeb66a99d31b6b9817182"
+dependencies = [
+ "cc",
+ "crossbeam-queue",
+ "moose-core",
+ "moose-params",
+]
+
+[[package]]
 name = "mui"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "color",
  "mui-geometry",
@@ -2055,7 +2226,7 @@ dependencies = [
 [[package]]
 name = "mui-access"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "accesskit",
  "mui-scene",
@@ -2064,23 +2235,23 @@ dependencies = [
 [[package]]
 name = "mui-baseview"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "accesskit_unix",
  "arboard",
- "baseview-truce",
  "keyboard-types",
+ "moose-baseview",
  "mui",
  "mui-access",
- "raw-window-handle 0.5.2",
- "truce-gui-utils",
+ "objc",
+ "raw-window-handle",
  "wgpu",
 ]
 
 [[package]]
 name = "mui-geometry"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "i_overlay",
  "kurbo",
@@ -2090,7 +2261,7 @@ dependencies = [
 [[package]]
 name = "mui-input"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "mui-geometry",
  "mui-layout",
@@ -2100,7 +2271,7 @@ dependencies = [
 [[package]]
 name = "mui-layout"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "rustc-hash 2.1.3",
 ]
@@ -2108,7 +2279,7 @@ dependencies = [
 [[package]]
 name = "mui-material"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "mui-scene",
 ]
@@ -2116,12 +2287,12 @@ dependencies = [
 [[package]]
 name = "mui-motion"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 
 [[package]]
 name = "mui-scene"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "mui-geometry",
  "mui-layout",
@@ -2136,7 +2307,7 @@ dependencies = [
 [[package]]
 name = "mui-style"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "color",
  "mui-geometry",
@@ -2147,12 +2318,12 @@ dependencies = [
 [[package]]
 name = "mui-symbols"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 
 [[package]]
 name = "mui-text"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "harfrust",
  "mui-geometry",
@@ -2163,22 +2334,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "mui-truce"
-version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
-dependencies = [
- "baseview-truce",
- "mui",
- "mui-baseview",
- "raw-window-handle 0.5.2",
- "truce-core",
- "truce-params",
-]
-
-[[package]]
 name = "mui-vello"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "glifo",
  "mui-geometry",
@@ -2195,7 +2353,7 @@ dependencies = [
 [[package]]
 name = "mui-weld"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "color",
  "kurbo",
@@ -2327,19 +2485,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nix"
-version = "0.22.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4916f159ed8e5de0082076562152a76b7a1f64a01fd9d1e0fea002c37624faf"
-dependencies = [
- "bitflags 1.3.2",
- "cc",
- "cfg-if",
- "libc",
- "memoffset 0.6.5",
-]
-
-[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2464,6 +2609,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.13.2",
+ "block2",
  "objc2",
  "objc2-core-foundation",
 ]
@@ -2610,7 +2756,7 @@ dependencies = [
  "libc",
  "redox_syscall",
  "smallvec",
- "windows-link 0.2.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -2979,12 +3125,6 @@ checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
 
 [[package]]
 name = "raw-window-handle"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ff9a1f06a88b01621b7ae906ef0211290d1c8a168a15542486a8f61c0833b9"
-
-[[package]]
-name = "raw-window-handle"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
@@ -3047,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "relay-core"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "igd-next",
  "mdns-sd",
@@ -3064,19 +3204,19 @@ dependencies = [
 
 [[package]]
 name = "relay-plugin"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "clap-sys",
+ "moose",
+ "moose-au",
+ "moose-clap",
+ "moose-core",
+ "moose-params",
+ "moose-vst3",
  "mui",
- "mui-truce",
  "mui-vello",
  "png 0.17.16",
  "relay-core",
- "truce",
- "truce-clap",
- "truce-core",
- "truce-params",
- "truce-vst3",
 ]
 
 [[package]]
@@ -3169,7 +3309,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3605,10 +3745,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3737,6 +3877,7 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
+ "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
@@ -3760,149 +3901,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "truce"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "487e318553a5b064b8538d0db29d758f49381c40e78aa4862766bca276219ef5"
-dependencies = [
- "truce-clap",
- "truce-core",
- "truce-derive",
- "truce-gui-types",
- "truce-loader",
- "truce-params",
- "truce-plugin",
- "truce-vst3",
-]
-
-[[package]]
-name = "truce-build"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e366bf85ae85548d710dd3e58d802daf1a8363efc78c0037cdc160fe3b6f987"
-dependencies = [
- "base64 0.22.1",
- "serde",
- "toml",
- "truce-utils",
-]
-
-[[package]]
-name = "truce-clap"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0bda9bd8173818a46b34ba72fe03be0e1dcc17df1d6a21447a712c311d7809f"
-dependencies = [
- "clap-sys",
- "crossbeam-queue",
- "log",
- "objc",
- "truce-core",
- "truce-params",
-]
-
-[[package]]
-name = "truce-core"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ecd892fb0f82fdfbf801b4aab7f443f3c51deac572366b8bebfbda49117f1df"
-dependencies = [
- "crossbeam-queue",
- "crossbeam-utils",
- "png 0.18.1",
- "truce-params",
- "truce-utils",
-]
-
-[[package]]
-name = "truce-derive"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b68393cabbfd1b9d8cbb28d99e93172a8074c422422e5e999403c108673fe848"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "toml",
- "truce-build",
- "truce-params",
- "truce-utils",
-]
-
-[[package]]
-name = "truce-gui-types"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8417497c62104ff9737ff59e15d5f3a1ba415e2b8ec88c74f04f88436144586"
-dependencies = [
- "objc2",
- "truce-core",
-]
-
-[[package]]
-name = "truce-gui-utils"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ab60ef3a723bc0e1e94778bc36443b25d8613b31809856daeaf58b706bb806"
-dependencies = [
- "objc",
- "raw-window-handle 0.5.2",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "truce-loader"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae4060004de3078a884160e8c8328e881893e731900911cd43a495ba0b7dc1c"
-dependencies = [
- "crc32fast",
- "log",
- "truce-core",
- "truce-gui-types",
- "truce-params",
- "truce-plugin",
-]
-
-[[package]]
-name = "truce-params"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee6182c88d6f844a169c9f6ad84461071df15f325da1b954649b6b407260484"
-dependencies = [
- "bitflags 2.13.2",
-]
-
-[[package]]
-name = "truce-plugin"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7860aff3a9914ae2cbd8c812f36b8cf664b3cf223ed7f1110c842c8e0b086e3d"
-dependencies = [
- "truce-core",
- "truce-gui-types",
- "truce-params",
-]
-
-[[package]]
-name = "truce-utils"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c16c39b3d4b34d50004d7e0e752344bb0c048207528adc72ca7118391eb3140e"
-
-[[package]]
-name = "truce-vst3"
-version = "6.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfd5cc181c93370a99a684def63f1c80241f07945a2b2a11205e4de259cdbc63"
-dependencies = [
- "cc",
- "crossbeam-queue",
- "truce-core",
- "truce-params",
 ]
 
 [[package]]
@@ -3936,7 +3934,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
- "memoffset 0.9.1",
+ "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -4025,7 +4023,7 @@ dependencies = [
 [[package]]
 name = "vello"
 version = "0.10.0"
-source = "git+https://github.com/Matari-Audio/MUI#37a81930a37fd12716c62178181dbcb8d5e365d6"
+source = "git+https://github.com/Matari-Audio/MUI#2587a19d62ac0675d0a60ad2fe58e076f1eb5765"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
@@ -4239,7 +4237,7 @@ dependencies = [
  "log",
  "portable-atomic",
  "profiling",
- "raw-window-handle 0.6.2",
+ "raw-window-handle",
  "smallvec",
  "static_assertions",
  "wasm-bindgen",
@@ -4272,7 +4270,7 @@ dependencies = [
  "parking_lot",
  "portable-atomic",
  "profiling",
- "raw-window-handle 0.6.2",
+ "raw-window-handle",
  "rustc-hash 1.1.0",
  "smallvec",
  "thiserror",
@@ -4351,7 +4349,7 @@ dependencies = [
  "portable-atomic-util",
  "profiling",
  "range-alloc",
- "raw-window-handle 0.6.2",
+ "raw-window-handle",
  "raw-window-metal",
  "renderdoc-sys",
  "smallvec",
@@ -4362,9 +4360,9 @@ dependencies = [
  "web-sys",
  "wgpu-naga-bridge",
  "wgpu-types",
- "windows 0.62.2",
- "windows-core 0.62.2",
- "windows-result 0.4.1",
+ "windows",
+ "windows-core",
+ "windows-result",
 ]
 
 [[package]]
@@ -4388,7 +4386,7 @@ dependencies = [
  "js-sys",
  "log",
  "naga-types",
- "raw-window-handle 0.6.2",
+ "raw-window-handle",
  "static_assertions",
  "web-sys",
 ]
@@ -4426,36 +4424,14 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.61.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
-dependencies = [
- "windows-collections 0.2.0",
- "windows-core 0.61.2",
- "windows-future 0.2.1",
- "windows-link 0.1.3",
- "windows-numerics 0.2.0",
-]
-
-[[package]]
-name = "windows"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
 dependencies = [
- "windows-collections 0.3.2",
- "windows-core 0.62.2",
- "windows-future 0.3.2",
- "windows-numerics 0.3.1",
-]
-
-[[package]]
-name = "windows-collections"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
-dependencies = [
- "windows-core 0.61.2",
+ "windows-collections",
+ "windows-core",
+ "windows-future",
+ "windows-numerics",
 ]
 
 [[package]]
@@ -4464,20 +4440,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
 dependencies = [
- "windows-core 0.62.2",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.61.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
- "windows-strings 0.4.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -4488,20 +4451,9 @@ checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
 dependencies = [
  "windows-implement",
  "windows-interface",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
-]
-
-[[package]]
-name = "windows-future"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
-dependencies = [
- "windows-core 0.61.2",
- "windows-link 0.1.3",
- "windows-threading 0.1.0",
+ "windows-link",
+ "windows-result",
+ "windows-strings",
 ]
 
 [[package]]
@@ -4510,9 +4462,9 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
 dependencies = [
- "windows-core 0.62.2",
- "windows-link 0.2.1",
- "windows-threading 0.2.1",
+ "windows-core",
+ "windows-link",
+ "windows-threading",
 ]
 
 [[package]]
@@ -4539,25 +4491,9 @@ dependencies = [
 
 [[package]]
 name = "windows-link"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e6ad25900d524eaabdbbb96d20b4311e1e7ae1699af4fb28c17ae66c80d798a"
-
-[[package]]
-name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
-
-[[package]]
-name = "windows-numerics"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
-dependencies = [
- "windows-core 0.61.2",
- "windows-link 0.1.3",
-]
 
 [[package]]
 name = "windows-numerics"
@@ -4565,17 +4501,8 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
- "windows-core 0.62.2",
- "windows-link 0.2.1",
-]
-
-[[package]]
-name = "windows-result"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56f42bd332cc6c8eac5af113fc0c1fd6a8fd2aa08a0119358686e5160d0586c6"
-dependencies = [
- "windows-link 0.1.3",
+ "windows-core",
+ "windows-link",
 ]
 
 [[package]]
@@ -4584,16 +4511,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
 dependencies = [
- "windows-link 0.2.1",
-]
-
-[[package]]
-name = "windows-strings"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
-dependencies = [
- "windows-link 0.1.3",
+ "windows-link",
 ]
 
 [[package]]
@@ -4602,7 +4520,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
 dependencies = [
- "windows-link 0.2.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -4620,7 +4538,7 @@ version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
- "windows-link 0.2.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -4641,20 +4559,11 @@ dependencies = [
 
 [[package]]
 name = "windows-threading"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66463ad2e0ea3bbf808b7f1d371311c80e115c0b71d60efc142cafbcfb057a6"
-dependencies = [
- "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-threading"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
 dependencies = [
- "windows-link 0.2.1",
+ "windows-link",
 ]
 
 [[package]]
@@ -4805,6 +4714,25 @@ name = "xcursor"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "163b33ed8786455e2fa5d72f554057ce3f3182425434f756cd39c99839d88e23"
+
+[[package]]
+name = "xkbcommon-dl"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d039de8032a9a8856a6be89cea3e5d12fdd82306ab7c94d74e6deab2460651c5"
+dependencies = [
+ "bitflags 2.13.2",
+ "dlib",
+ "log",
+ "once_cell",
+ "xkeysym",
+]
+
+[[package]]
+name = "xkeysym"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xml-rs"

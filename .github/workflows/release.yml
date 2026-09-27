@@ -1,7 +1,8 @@
 name: Release
 
-# Modeled on KURV's release.yml. Builds CLAP + VST3 for Linux, Windows and
-# universal macOS (signed, notarized .pkg via scripts/build-macos-signed.sh).
+# Modeled on KURV's release.yml. Builds CLAP + VST3 for Linux and Windows, and
+# CLAP + VST3 + AU for universal macOS (signed, notarized .pkg via
+# scripts/build-macos-signed.sh).
 # A manual run only builds and uploads workflow artifacts. Pushing a v* tag
 # also creates the GitHub Release and publishes to the R2 manifest that drives
 # the matari-audio.com download panel (scripts/publish-release.py).
@@ -21,7 +22,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_TRUCE_VERSION: 6.3.0
 
 jobs:
   build:
@@ -49,12 +49,12 @@ jobs:
           persist-credentials: false
       - uses: Swatinem/rust-cache@v2
         with:
-          key: cargo-truce-${{ env.CARGO_TRUCE_VERSION }}
-      - name: Install cargo-truce
-        run: cargo install cargo-truce --version "$CARGO_TRUCE_VERSION" --locked
+          key: cargo-moose
+      - name: Install cargo-moose
+        run: cargo install --git https://github.com/Matari-Audio/moose --rev f8f4b79125f8ed61153eeb66a99d31b6b9817182 cargo-moose --locked
       - name: Build bundles
         working-directory: plugin
-        run: cargo truce build --clap --vst3 --target ${{ matrix.target }} --target-cpu baseline
+        run: cargo moose build --clap --vst3 --target ${{ matrix.target }} --target-cpu baseline
       - name: Package zip
         run: |
           set -euo pipefail
@@ -82,13 +82,13 @@ jobs:
           persist-credentials: false
       - name: Add Apple targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      # build-macos-signed.sh uses its own target dirs, so only cache the registry and cargo-truce.
+      # build-macos-signed.sh uses its own target dirs, so only cache the registry and cargo-moose.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
-          key: cargo-truce-${{ env.CARGO_TRUCE_VERSION }}
-      - name: Install cargo-truce
-        run: cargo install cargo-truce --version "$CARGO_TRUCE_VERSION" --locked
+          key: cargo-moose
+      - name: Install cargo-moose
+        run: cargo install --git https://github.com/Matari-Audio/moose --rev f8f4b79125f8ed61153eeb66a99d31b6b9817182 cargo-moose --locked
       - name: Build, sign, notarize, and staple
         env:
           APPLE_APPLICATION_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_APPLICATION_CERTIFICATE_P12_BASE64 }}
