@@ -2,9 +2,10 @@
 import { auth, slug } from "/tag.js";
 
 const $ = (id) => document.getElementById(id);
-const room = slug(decodeURIComponent(location.pathname.slice(1)));
+let room = slug(decodeURIComponent(location.pathname.slice(1)));
 const out = $("out");
 $("room").value = room;
+window.onpopstate = () => location.reload();
 
 let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, on = false;
 // Talk: the mic stream while on, its level meter, and whether this room's
@@ -203,7 +204,14 @@ function stop() {
 $("form").onsubmit = (e) => {
   e.preventDefault();
   const want = slug($("room").value);
-  if (want !== room) return want && location.assign(`/${want}`);
+  if (want !== room) {
+    if (!want) return $("room").focus();
+    if (on) stop();
+    room = want;
+    $("room").value = room;
+    history.pushState(null, "", `/${room}`);
+    document.documentElement.classList.remove("home");
+  }
   if (on) return stop();
   if (!room) return $("room").focus();
   // Inside the click: unlock audio before any await.
