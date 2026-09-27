@@ -7,9 +7,9 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 use mui::prelude::*;
-use mui_truce::{Bridge, MuiEditor};
+use moose::mui::{Bridge, MuiEditor};
 use relay_core::{Net, Peak, Shared};
-use truce_core::editor::{Editor, IntoEditor};
+use moose_core::editor::{Editor, IntoEditor};
 
 use crate::{P, RelayParams};
 
@@ -165,6 +165,8 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
         build(ui, bridge, &shared, &fonts, &mut view)
     })
     .resizable((380, 150))
+    // Meters decay and the link status moves while nothing is touched.
+    .changed(|| true)
     .into_editor()
 }
 
@@ -601,8 +603,14 @@ fn about(ui: &Ui) -> El {
             text("Matari Audio · MPL-2.0").text_size(10.0).fill(DIM),
         ]
         .w(Len::Pct(100.0)),
-        col(notes).gap(2.0).align(Align::Start),
-        spacer().grow(1.0),
+        // Scrolls when the notes outgrow the window; the link stays below.
+        col(notes)
+            .gap(2.0)
+            .align(Align::Start)
+            .w(Len::Pct(100.0))
+            .scroll()
+            .grow(1.0)
+            .id("notes"),
         text("Full changelog")
             .text_size(10.0)
             .fill(if r.hovered { GREEN } else { TEXT })
@@ -718,7 +726,7 @@ mod snapshot {
     use super::*;
     use mui::vello::vello_cpu::{Pixmap, RenderContext, Resources};
     use mui::vello::{Cache, Cpu};
-    use truce_params::Params;
+    use moose_params::Params;
 
     fn render(mode: f64, net: Net, name: &str, about: bool) {
         let params = Arc::new(RelayParams::new());

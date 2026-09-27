@@ -9,8 +9,8 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, RwLock};
 
 use relay_core::{Link, Peak, Playout, Role, Shared};
-use truce::prelude::*;
-use truce_core::custom_state::{PersistField, StateCursor};
+use moose::prelude::*;
+use moose_core::custom_state::{PersistField, StateCursor};
 
 pub(crate) use RelayParamsParamId as P;
 
@@ -144,7 +144,7 @@ impl Dsp {
     }
 }
 
-/// Unlinked: what truce holds before `init`.
+/// Unlinked: what moose holds before `init`.
 impl Default for Dsp {
     fn default() -> Self {
         Self::new(Shared::new(), false)
@@ -270,7 +270,7 @@ fn ramp(x: &mut [f32], from: f32, to: f32) {
     }
 }
 
-truce::plugin! {
+moose::plugin! {
     logic: Relay,
     params: RelayParams,
 }
