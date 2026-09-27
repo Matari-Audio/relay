@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- The browser listen page shows the optional room password before joining and sends it with the first join request.
+- The RELAY product page now matches the plugin's Signal look, with clearer downloads, comparison and help sections.
+
 ## 0.4.1
 
 - Browser listeners have separate talkback gain sliders in the plugin's mic view, with live indicators and a 0 dB reset.
