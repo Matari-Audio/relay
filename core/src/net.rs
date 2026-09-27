@@ -271,11 +271,15 @@ impl Session {
                 self.peers.retain(|(_, seen)| now - *seen < PEER_TIMEOUT);
                 let internet = self.rtc.as_mut().map_or(0, |h| {
                     h.poll(now);
+                    h.sync_talkers(&mut shared.talkers.lock().unwrap());
                     let cap = shared.bitrate_cap.load(Relaxed);
                     h.set_cap(if cap == 0 { crate::MAX_BPS } else { cap });
                     shared.bitrate.store(h.bitrate(), Relaxed);
                     h.live()
                 });
+                if self.rtc.is_none() {
+                    shared.talkers.lock().unwrap().clear();
+                }
                 shared
                     .peers
                     .store((self.peers.len() + internet) as u32, Relaxed);
@@ -378,10 +382,22 @@ impl Session {
                     _ => {}
                 },
                 ("hello", Some(h), _) if h.awaiting(&id) => {}
+                ("roster", Some(h), _) => {
+                    let slots = v["peers"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .enumerate()
+                        .filter_map(|(slot, peer)| {
+                            peer["id"].as_u64().map(|id| (id.to_string(), slot))
+                        })
+                        .collect::<Vec<_>>();
+                    h.roster(&slots);
+                }
                 ("hello", Some(h), _) => {
                     let full = self.peers.len() + h.len() >= MAX_PEERS;
                     let offer = (s("auth") == auth && !full)
-                        .then(|| h.offer(&id, now))
+                        .then(|| h.offer(&id, s("kind") == "web", now))
                         .flatten();
                     signal.send(&match offer {
                         Some(sdp) => json!({"t": "offer", "to": v["id"], "sdp": sdp}),

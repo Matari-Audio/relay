@@ -61,6 +61,9 @@ pub struct RelayParams {
     pub input: FloatParam,
     #[param(name = "Internet quality")]
     pub quality: EnumParam<Quality>,
+    /// False: Matari's pixel style. True: the smooth Barlow style.
+    #[persist = "standard_ui"]
+    pub standard_ui: RwLock<bool>,
     #[persist = "session"]
     pub link: Session,
 }
@@ -321,8 +324,13 @@ mod state {
         restore_plugin(&mut b, &snapshot_plugin(&a)).unwrap();
         assert_eq!(values(&b), values(&a));
         assert_eq!(texts(&b), texts(&a));
-        // Same envelope bytes as truce wrote.
-        assert_eq!(snapshot_plugin(&b), TRUCE_STATE);
+        assert!(!*b.params().standard_ui.read().unwrap());
+        *b.params().standard_ui.write().unwrap() = true;
+        let mut c = Plugin::create();
+        restore_plugin(&mut c, &snapshot_plugin(&b)).unwrap();
+        assert!(*c.params().standard_ui.read().unwrap());
+        assert_eq!(values(&c), values(&a));
+        assert_eq!(texts(&c), texts(&a));
     }
 
     #[test]
