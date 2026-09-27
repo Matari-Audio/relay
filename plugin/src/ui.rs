@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
-use mui::prelude::*;
 use moose::mui::{Bridge, MuiEditor};
-use relay_core::{Net, Peak, Shared};
 use moose_core::editor::{Editor, IntoEditor};
+use mui::prelude::*;
+use relay_core::{Net, Peak, Shared};
 
 use crate::{P, RelayParams};
 
@@ -588,7 +588,14 @@ fn about(ui: &Ui) -> El {
         .unwrap_or_default()
         .lines()
         .filter_map(|l| l.strip_prefix("- "))
-        .map(|l| text(format!("·  {l}")).text_size(10.0).fill(DIM))
+        .enumerate()
+        .map(|(i, l)| {
+            text(format!("·  {l}"))
+                .text_size(10.0)
+                .fill(DIM)
+                .w(Len::Pct(100.0))
+                .id(format!("note-{i}"))
+        })
         .collect();
     let r = ui.get("changelog");
     if r.clicked_with(Button::Primary) {
@@ -724,9 +731,9 @@ mod tests {
 #[cfg(test)]
 mod snapshot {
     use super::*;
+    use moose_params::Params;
     use mui::vello::vello_cpu::{Pixmap, RenderContext, Resources};
     use mui::vello::{Cache, Cpu};
-    use moose_params::Params;
 
     fn render(mode: f64, net: Net, name: &str, about: bool) {
         let params = Arc::new(RelayParams::new());
@@ -765,6 +772,18 @@ mod snapshot {
         let size = mui::layout::Size::new(f64::from(SIZE.0), f64::from(SIZE.1));
         ui.frame(root, Some(size), mui::input::Input::default(), 0.0)
             .unwrap();
+        if about {
+            assert!(
+                ui.scene()
+                    .unwrap()
+                    .layout
+                    .frame("note-0")
+                    .unwrap()
+                    .size
+                    .height
+                    > 15.0
+            );
+        }
         let mut ctx = RenderContext::new(w as u16, h as u16);
         let mut resources = Resources::default();
         let cpu = &mut Cpu {

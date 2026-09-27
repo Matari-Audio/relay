@@ -120,7 +120,7 @@ def main() -> int:
             "signature_status": TRUST[p][0],
             "notarization_status": TRUST[p][1],
             "provenance_url": args.provenance_url,
-            "formats": ["CLAP", "VST3"],
+            "formats": ["CLAP", "VST3", "AU"] if p == "macos" else ["CLAP", "VST3"],
         } for p, a in archives.items()],
     }
     print(json.dumps(release, indent=2))

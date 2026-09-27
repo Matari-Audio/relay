@@ -8,9 +8,9 @@ mod ui;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, RwLock};
 
-use relay_core::{Link, Peak, Playout, Role, Shared};
 use moose::prelude::*;
 use moose_core::custom_state::{PersistField, StateCursor};
+use relay_core::{Link, Peak, Playout, Role, Shared};
 
 pub(crate) use RelayParamsParamId as P;
 
@@ -288,11 +288,12 @@ mod state {
 
     fn texts(p: &Plugin) -> [String; 4] {
         let s = &p.params().link.0;
-        [&s.room, &s.password, &s.peer, &s.host_key].map(|t| Shared::text(t))
+        [&s.room, &s.password, &s.peer, &s.host_key].map(Shared::text)
     }
 
     fn values(p: &Plugin) -> [f64; 4] {
-        [P::Mode, P::Output, P::Input, P::Quality].map(|id| p.params().get_normalized(id.into()).unwrap())
+        [P::Mode, P::Output, P::Input, P::Quality]
+            .map(|id| p.params().get_normalized(id.into()).unwrap())
     }
 
     #[test]
@@ -302,7 +303,13 @@ mod state {
         assert_eq!(values(&p), [0.5, 0.25, 0.75, 1.0]);
         assert_eq!(
             texts(&p),
-            ["quiet-dusty-papaya", "hunter2", "192.168.1.20", "fixture-host-key"].map(String::from)
+            [
+                "quiet-dusty-papaya",
+                "hunter2",
+                "192.168.1.20",
+                "fixture-host-key"
+            ]
+            .map(String::from)
         );
     }
 
