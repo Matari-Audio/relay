@@ -28,6 +28,15 @@ pub const RING: usize = 48_000 * CHANNELS;
 /// Signaling and the browser listen page: `https://{SITE}/{room}`.
 pub const SITE: &str = "relay.matari-audio.com";
 
+/// A browser listener whose microphone can talk back to the sharing plugin.
+#[derive(Clone, Debug)]
+pub struct Talker {
+    pub id: String,
+    pub slot: usize,
+    pub active: bool,
+    pub gain_db: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Role {
@@ -118,6 +127,8 @@ pub struct Shared {
     pub peers: AtomicU32,
     /// Share: browser listeners whose mic is playing.
     pub talking: AtomicU32,
+    /// Share: browser microphones and their individual monitor gains.
+    pub talkers: Mutex<Vec<Talker>>,
     /// Share: the internet bitrate ceiling the user picked, bits/s. 0: the
     /// most, [`MAX_BPS`].
     pub bitrate_cap: AtomicU32,

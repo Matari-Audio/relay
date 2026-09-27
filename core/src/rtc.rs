@@ -21,8 +21,8 @@ use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid, Pt};
 use str0m::net::{Protocol, Receive, Transmit};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 
-use crate::CHANNELS;
 use crate::portmap::Mapping;
+use crate::{CHANNELS, Talker};
 
 /// 10 ms at 48 kHz.
 const FRAME: usize = 480;
@@ -318,13 +318,13 @@ impl Voice {
     }
 
     /// Add what is due into `out`. Running dry re-primes.
-    fn mix_into(&mut self, out: &mut [f32]) {
+    fn mix_into(&mut self, out: &mut [f32], gain: f32) {
         if !self.primed {
             return;
         }
         let n = out.len().min(self.queue.len());
         for (o, s) in out.iter_mut().zip(self.queue.drain(..n)) {
-            *o += s;
+            *o += s * gain;
         }
         self.primed = !self.queue.is_empty();
     }
@@ -332,6 +332,8 @@ impl Voice {
 
 struct Peer {
     id: String,
+    web: bool,
+    slot: usize,
     rtc: Rtc,
     mid: Mid,
     pending: Option<SdpPendingOffer>,
@@ -339,6 +341,7 @@ struct Peer {
     live: bool,
     dead: bool,
     voice: Voice,
+    gain: f32,
     /// What the path to this peer carries, bits/s, from TWCC or REMB.
     estimate: u32,
 }
@@ -402,8 +405,9 @@ impl Host {
     }
 
     /// A new peer said hello: its complete offer.
-    pub fn offer(&mut self, id: &str, now: Instant) -> Option<String> {
+    pub fn offer(&mut self, id: &str, web: bool, now: Instant) -> Option<String> {
         self.leave(id);
+        let slot = self.peers.len() + 1;
         let mut rtc = new_rtc(now, true);
         rtc.bwe().set_desired_bitrate(Bitrate::bps(self.cap.into()));
         for c in self.ice.candidates() {
@@ -423,6 +427,8 @@ impl Host {
         let sdp = offer.to_sdp_string();
         self.peers.push(Peer {
             id: id.to_owned(),
+            web,
+            slot,
             rtc,
             mid,
             pending: Some(pending),
@@ -430,6 +436,7 @@ impl Host {
             live: false,
             dead: false,
             voice: Voice::new()?,
+            gain: 1.0,
             estimate: MAX_BPS,
         });
         // str0m has no fmtp fields for these. A browser reads usedtx as
@@ -519,7 +526,45 @@ impl Host {
 
     /// Peers whose mic is playing.
     pub fn talking(&self) -> usize {
-        self.peers.iter().filter(|p| p.voice.primed).count()
+        self.peers
+            .iter()
+            .filter(|p| p.web && p.voice.primed)
+            .count()
+    }
+
+    /// The worker's roster order is what browser listeners see on their page.
+    pub fn roster(&mut self, slots: &[(String, usize)]) {
+        for p in &mut self.peers {
+            if let Some((_, slot)) = slots.iter().find(|(id, _)| id == &p.id) {
+                p.slot = *slot;
+            }
+        }
+    }
+
+    /// Keep the editor's browser mic list in peer order, retaining its gain edits.
+    pub fn sync_talkers(&mut self, talkers: &mut Vec<Talker>) {
+        talkers.retain(|t| self.peers.iter().any(|p| p.web && p.live && p.id == t.id));
+        for p in self.peers.iter_mut().filter(|p| p.web && p.live) {
+            let t = match talkers.iter_mut().find(|t| t.id == p.id) {
+                Some(t) => t,
+                None => {
+                    talkers.push(Talker {
+                        id: p.id.clone(),
+                        slot: p.slot,
+                        active: false,
+                        gain_db: 0.0,
+                    });
+                    talkers.last_mut().unwrap()
+                }
+            };
+            t.slot = p.slot;
+            t.active = p.voice.primed;
+            p.gain = if t.gain_db.is_finite() {
+                10.0_f32.powf(t.gain_db.clamp(-24.0, 12.0) / 20.0)
+            } else {
+                1.0
+            };
+        }
     }
 
     /// Talkback on the host's clock: `frames` at `rate` just went out, so
@@ -537,8 +582,8 @@ impl Host {
         }
         self.mix.clear();
         self.mix.resize(n * CHANNELS, 0.0);
-        for p in &mut self.peers {
-            p.voice.mix_into(&mut self.mix);
+        for p in self.peers.iter_mut().filter(|p| p.web) {
+            p.voice.mix_into(&mut self.mix, p.gain);
         }
         self.talk.clear();
         match resampler(&mut self.down, 48_000, rate) {
@@ -714,5 +759,45 @@ mod tests {
             Some(SocketAddr::from(([203, 0, 113, 7], 40_000)))
         );
         assert_eq!(stun_response(&p, [4; 12]), None);
+    }
+
+    #[test]
+    fn browser_voice_gain_applies_per_source() {
+        let mut loud = Voice::new().unwrap();
+        let mut quiet = Voice::new().unwrap();
+        loud.queue.extend([0.4, -0.4]);
+        quiet.queue.extend([0.4, -0.4]);
+        loud.primed = true;
+        quiet.primed = true;
+        let mut out = [0.0; 2];
+        loud.mix_into(&mut out, 2.0);
+        quiet.mix_into(&mut out, 0.5);
+        assert_eq!(out, [1.0, -1.0]);
+    }
+
+    #[test]
+    fn talkers_follow_browser_peers_and_keep_gain() {
+        let mut host = Host::new(false).unwrap();
+        let now = Instant::now();
+        host.offer("plugin", false, now).unwrap();
+        host.offer("browser", true, now).unwrap();
+        for peer in &mut host.peers {
+            peer.live = true;
+            peer.voice.primed = true;
+        }
+        let mut talkers = Vec::new();
+        host.sync_talkers(&mut talkers);
+        assert_eq!(talkers.len(), 1);
+        assert_eq!(talkers[0].slot, 2);
+        assert_eq!(host.talking(), 1);
+        host.roster(&[("browser".into(), 1), ("plugin".into(), 2)]);
+        host.sync_talkers(&mut talkers);
+        assert_eq!(talkers[0].slot, 1);
+        talkers[0].gain_db = -6.0;
+        host.sync_talkers(&mut talkers);
+        assert!((host.peers[1].gain - 0.501_187_2).abs() < 1e-6);
+        host.leave("browser");
+        host.sync_talkers(&mut talkers);
+        assert!(talkers.is_empty());
     }
 }

@@ -102,6 +102,7 @@ impl Rail {
 /// What only the editor remembers.
 struct View {
     about: bool,
+    mic_panel: bool,
     /// When the editor opened: the clock for the mark's motion.
     born: Instant,
     show_password: bool,
@@ -124,6 +125,7 @@ impl Default for View {
         };
         Self {
             about: false,
+            mic_panel: false,
             born: now,
             show_password: false,
             show_address: false,
@@ -372,23 +374,42 @@ fn build(
     };
 
     // The mark and wordmark open the about panel.
-    view.about ^= ui.get("about").clicked_with(Button::Primary);
+    if ui.get("about").clicked_with(Button::Primary) {
+        view.about = !view.about;
+        view.mic_panel = false;
+    }
     let t = view.born.elapsed().as_secs_f64();
     let live = lit == GREEN;
     // Share: browser listeners talking back through their mic.
     let talking = shared.talking.load(Relaxed);
-    let talk = if picked == 1 && talking > 0 {
+    let talk = if picked == 1 {
+        if ui.get("mics").clicked_with(Button::Primary) {
+            view.mic_panel = !view.mic_panel;
+            view.about = false;
+        }
         row![
-            icon(MIC)
-                .font(fonts.icons.clone())
-                .text_size(11.0)
-                .fill(GREEN),
-            text(format!("{talking} talking"))
-                .text_size(10.5)
-                .fill(TEXT),
+            icon(MIC).font(fonts.icons.clone()).text_size(12.0).fill(
+                if talking > 0 || view.mic_panel {
+                    GREEN
+                } else {
+                    DIM
+                }
+            ),
+            text(if talking > 0 {
+                talking.to_string()
+            } else {
+                String::new()
+            })
+            .text_size(10.0)
+            .fill(TEXT),
         ]
-        .gap(3.0)
+        .gap(2.0)
         .center()
+        .h(H)
+        .a11y(A11y::Button)
+        .named("Browser microphone levels")
+        .focusable()
+        .id("mics")
     } else {
         spacer().w(0.0)
     };
@@ -407,6 +428,8 @@ fn build(
     .id("about");
     let body = if view.about {
         about(ui)
+    } else if picked == 1 && view.mic_panel {
+        microphones(ui, shared)
     } else {
         col([
             col(rows).gap(4.0),
@@ -414,7 +437,6 @@ fn build(
             row![
                 block(6.0, 6.0).radius(3.0).fill(lit),
                 text(status).text_size(10.5).fill(TEXT),
-                talk,
                 spacer().grow(1.0),
                 tail,
             ]
@@ -424,12 +446,63 @@ fn build(
         .gap(6.0)
         .grow(1.0)
     };
-    let left = col([row![brand, spacer().grow(1.0), mode].center(), body])
-        .gap(6.0)
-        .grow(1.0);
+    let left = col([
+        row![brand, spacer().grow(1.0), talk, mode]
+            .gap(6.0)
+            .center(),
+        body,
+    ])
+    .gap(6.0)
+    .grow(1.0);
 
     let meters = meters(ui, bridge, shared, fonts, view);
     row([left, meters]).gap(12.0).pad(10.0).fill(BG)
+}
+
+/// Browser microphones are mixed on the network thread before the audio ring.
+fn microphones(ui: &mut Ui, shared: &Shared) -> El {
+    let mut talkers = shared.talkers.lock().unwrap();
+    let rows: Vec<El> = talkers
+        .iter_mut()
+        .map(|t| {
+            let id = format!("mic-{}", t.id);
+            let label = format!("Listener {}", t.slot);
+            let mut gain = f64::from(t.gain_db);
+            let slider = slider(ui, id.clone(), &label, &mut gain, GAIN.0..=GAIN.1);
+            if ui.double_click(&id) {
+                gain = 0.0;
+            }
+            if slider.changed || gain != f64::from(t.gain_db) {
+                t.gain_db = gain as f32;
+            }
+            row![
+                block(6.0, 6.0)
+                    .radius(3.0)
+                    .fill(if t.active { GREEN } else { DIM }),
+                slider
+                    .el
+                    .px(18.0)
+                    .value_text(format!("{gain:+.1} dB"))
+                    .el()
+                    .grow(1.0),
+            ]
+            .gap(6.0)
+            .center()
+            .w(Len::Pct(100.0))
+        })
+        .collect();
+    if rows.is_empty() {
+        return text("Browser microphones appear when listeners connect.")
+            .text_size(10.5)
+            .fill(DIM)
+            .grow(1.0);
+    }
+    col(rows)
+        .gap(5.0)
+        .w(Len::Pct(100.0))
+        .scroll()
+        .grow(1.0)
+        .id("microphones")
 }
 
 /// IN and OUT pairs with a fader riding each, the scale between them,
@@ -747,6 +820,22 @@ mod snapshot {
         shared.rate.store(48_000, Relaxed);
         shared.latency.store(512, Relaxed);
         shared.talking.store(1, Relaxed);
+        if name == "mics" {
+            shared.talkers.lock().unwrap().extend([
+                relay_core::Talker {
+                    id: "1".into(),
+                    slot: 1,
+                    active: true,
+                    gain_db: 3.0,
+                },
+                relay_core::Talker {
+                    id: "2".into(),
+                    slot: 2,
+                    active: false,
+                    gain_db: -6.0,
+                },
+            ]);
+        }
         shared.bitrate.store(312_000, Relaxed);
         let mut bridge = Bridge::new(params);
         let (mut ui, fonts) = new_ui();
@@ -764,6 +853,7 @@ mod snapshot {
         }
         let mut view = View {
             about,
+            mic_panel: name == "mics",
             ..View::default()
         };
         let (w, h) = (SIZE.0 * 2, SIZE.1 * 2);
@@ -783,6 +873,9 @@ mod snapshot {
                     .height
                     > 15.0
             );
+        }
+        if name == "mics" {
+            assert!(ui.scene().unwrap().layout.frame("mic-1").is_some());
         }
         let mut ctx = RenderContext::new(w as u16, h as u16);
         let mut resources = Resources::default();
@@ -816,5 +909,6 @@ mod snapshot {
         render(0.5, Net::Internet, "share", false);
         render(1.0, Net::Lan, "join", false);
         render(0.5, Net::Internet, "about", true);
+        render(0.5, Net::Internet, "mics", false);
     }
 }
