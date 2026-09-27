@@ -41,7 +41,7 @@ header b { font-size: 15px; letter-spacing: .06em; }
 #kbps { font: 400 10px var(--mono); color: var(--dim); }
 .lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .lamp.ok { background: var(--green); } .lamp.warn { background: var(--yellow); } .lamp.bad { background: var(--red); }
-.controls { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-content: start; min-width: 0; }
 .field { display: flex; align-items: center; height: 36px; border-radius: var(--r); background: var(--field); }
 .field:hover { background: var(--hover); }
 .field:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
