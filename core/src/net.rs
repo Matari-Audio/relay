@@ -4,6 +4,7 @@
 //! HELLO it once a second and write its audio into the rx ring by frame
 //! index; with no LAN host after 1.5 s, answer its WebRTC offer instead.
 
+use std::collections::VecDeque;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
@@ -16,7 +17,7 @@ use serde_json::{Value, json};
 use crate::mdns::{Mdns, hex};
 use crate::rtc::{Guest, Host};
 use crate::signal::{Msg, Signal};
-use crate::{CHANNELS, Net, PORT, Role, SITE, Shared, tag, wire};
+use crate::{CHANNELS, Net, PORT, Role, SITE, Shared, Talker, tag, wire};
 
 /// A peer that has not said HELLO for this long is dropped.
 const PEER_TIMEOUT: Duration = Duration::from_secs(3);
@@ -104,16 +105,19 @@ struct Session {
     role: Role,
     tag: [u8; 8],
     /// Share: listeners and when each last said HELLO.
-    peers: Vec<(SocketAddr, Instant)>,
+    peers: Vec<LanPeer>,
     /// Join: the host.
     host: Option<SocketAddr>,
     last_hello: Option<Instant>,
     last_audio: Option<Instant>,
-    /// Share: frames sent. Join: next frame expected.
+    /// Outgoing packet clock.
     frame: u64,
+    /// Join: next host frame expected.
+    received: u64,
     synced: bool,
     buf: Vec<u8>,
     samples: Vec<f32>,
+    lan_mix: Vec<f32>,
     /// Share: since when a part-filled datagram has been waiting.
     waiting: Option<Instant>,
     /// Share: advertises the room. Join: browses for it.
@@ -130,6 +134,13 @@ struct Session {
     /// Signaling trouble, shown while no audio flows.
     trouble: Option<Net>,
     opened: Instant,
+}
+
+struct LanPeer {
+    addr: SocketAddr,
+    seen: Instant,
+    voice: VecDeque<f32>,
+    primed: bool,
 }
 
 impl Session {
@@ -222,9 +233,11 @@ impl Session {
             last_hello: None,
             last_audio: None,
             frame: 0,
+            received: 0,
             synced: false,
             buf: vec![0; 2048],
             samples: vec![0.0; wire::MAX_FRAMES * CHANNELS],
+            lan_mix: Vec::new(),
             waiting: None,
             mdns,
             found: false,
@@ -250,14 +263,35 @@ impl Session {
             }
             match (self.role, p.kind) {
                 (Role::Share, wire::HELLO) => {
-                    if let Some(peer) = self.peers.iter_mut().find(|(a, _)| *a == from) {
-                        peer.1 = now;
+                    if let Some(peer) = self.peers.iter_mut().find(|p| p.addr == from) {
+                        peer.seen = now;
                     } else if self.peers.len() + self.rtc.as_ref().map_or(0, Host::len) < MAX_PEERS
                     {
-                        self.peers.push((from, now));
+                        self.peers.push(LanPeer {
+                            addr: from,
+                            seen: now,
+                            voice: VecDeque::new(),
+                            primed: false,
+                        });
                     }
                 }
-                (Role::Share, wire::BYE) => self.peers.retain(|(a, _)| *a != from),
+                (Role::Share, wire::BYE) => self.peers.retain(|p| p.addr != from),
+                (Role::Share, wire::AUDIO) if p.rate == shared.rate.load(Relaxed) => {
+                    if let Some(peer) = self.peers.iter_mut().find(|p| p.addr == from) {
+                        peer.voice.extend(wire::samples(p.samples).map(|s| {
+                            if s.is_finite() {
+                                s.clamp(-8.0, 8.0)
+                            } else {
+                                0.0
+                            }
+                        }));
+                        if peer.voice.len() > p.rate as usize * CHANNELS / 5 {
+                            peer.voice
+                                .drain(..peer.voice.len() - p.rate as usize * CHANNELS / 25);
+                        }
+                        peer.primed |= peer.voice.len() >= p.rate as usize * CHANNELS / 25;
+                    }
+                }
                 (Role::Join, wire::AUDIO) if Some(from) == self.host => {
                     self.last_audio = Some(now);
                     self.receive(shared, p.rate, p.frame, p.samples, rx);
@@ -268,18 +302,40 @@ impl Session {
         self.signaling(now);
         match self.role {
             Role::Share => {
-                self.peers.retain(|(_, seen)| now - *seen < PEER_TIMEOUT);
+                self.peers.retain(|p| now - p.seen < PEER_TIMEOUT);
+                let mut talkers = shared.talkers.lock().unwrap();
+                talkers.retain(|t| {
+                    !t.id.starts_with("lan:")
+                        || self.peers.iter().any(|p| t.id == format!("lan:{}", p.addr))
+                });
+                for (slot, peer) in self.peers.iter().enumerate() {
+                    let id = format!("lan:{}", peer.addr);
+                    if !talkers.iter().any(|t| t.id == id) {
+                        talkers.push(Talker {
+                            id,
+                            slot: slot + 1,
+                            name: format!("Plugin {}", peer.addr),
+                            plugin: true,
+                            stereo: false,
+                            active: false,
+                            peak: [0.0; CHANNELS],
+                            gain_db: 0.0,
+                            muted: false,
+                        });
+                    }
+                }
                 let internet = self.rtc.as_mut().map_or(0, |h| {
                     h.poll(now);
-                    h.sync_talkers(&mut shared.talkers.lock().unwrap());
+                    h.sync_talkers(&mut talkers);
                     let cap = shared.bitrate_cap.load(Relaxed);
                     h.set_cap(if cap == 0 { crate::MAX_BPS } else { cap });
                     shared.bitrate.store(h.bitrate(), Relaxed);
                     h.live()
                 });
                 if self.rtc.is_none() {
-                    shared.talkers.lock().unwrap().clear();
+                    talkers.retain(|t| t.id.starts_with("lan:"));
                 }
+                drop(talkers);
                 shared
                     .peers
                     .store((self.peers.len() + internet) as u32, Relaxed);
@@ -333,10 +389,7 @@ impl Session {
                         self.trouble.unwrap_or(Net::Waiting)
                     });
                 }
-                // Nothing to share while joined.
-                if let Ok(chunk) = tx.read_chunk(tx.slots()) {
-                    chunk.commit_all();
-                }
+                self.send(shared, tx, rx, now);
             }
             Role::Off => {}
         }
@@ -389,7 +442,13 @@ impl Session {
                         .flatten()
                         .enumerate()
                         .filter_map(|(slot, peer)| {
-                            peer["id"].as_u64().map(|id| (id.to_string(), slot))
+                            peer["id"].as_u64().map(|id| {
+                                (
+                                    id.to_string(),
+                                    slot,
+                                    peer["name"].as_str().unwrap_or_default().to_string(),
+                                )
+                            })
                         })
                         .collect::<Vec<_>>();
                     h.roster(&slots);
@@ -434,8 +493,7 @@ impl Session {
         }
     }
 
-    /// Share: drain the tx ring into full datagrams, one copy per peer. A
-    /// part-filled one goes once it has waited [`COALESCE`].
+    /// Drain the plugin's input; Share broadcasts, Join sends upstream.
     fn send(
         &mut self,
         shared: &Shared,
@@ -461,11 +519,61 @@ impl Session {
             self.samples[..a.len()].copy_from_slice(a);
             self.samples[a.len()..a.len() + b.len()].copy_from_slice(b);
             chunk.commit_all();
-            if let Some(h) = self.rtc.as_mut() {
-                h.audio(&self.samples[..n * CHANNELS], rate, now);
-                h.talk_back(n, rate, rx);
+            if self.role == Role::Share {
+                self.lan_mix.resize(n * CHANNELS, 0.0);
+                self.lan_mix.fill(0.0);
+                let mut talkers = shared.talkers.lock().unwrap();
+                for peer in &mut self.peers {
+                    let Some(t) = talkers
+                        .iter_mut()
+                        .find(|t| t.id == format!("lan:{}", peer.addr))
+                    else {
+                        continue;
+                    };
+                    t.active = peer.primed;
+                    if !peer.primed {
+                        continue;
+                    }
+                    let gain = if t.muted {
+                        0.0
+                    } else {
+                        10.0_f32.powf(t.gain_db.clamp(-24.0, 12.0) / 20.0)
+                    };
+                    let due = (n * CHANNELS).min(peer.voice.len());
+                    let mut left = 0.0;
+                    for (i, (dst, sample)) in self
+                        .lan_mix
+                        .iter_mut()
+                        .zip(peer.voice.drain(..due))
+                        .enumerate()
+                    {
+                        if i % CHANNELS == 0 {
+                            left = sample;
+                        } else {
+                            t.stereo |= (sample - left).abs() > 1e-4;
+                        }
+                        t.peak[i % CHANNELS] = t.peak[i % CHANNELS].max(sample.abs());
+                        *dst += sample * gain;
+                    }
+                    peer.primed = !peer.voice.is_empty();
+                }
+                drop(talkers);
+                if let Some(h) = self.rtc.as_mut() {
+                    h.talk_back(n, rate, rx, &self.lan_mix);
+                    h.audio(&self.samples[..n * CHANNELS], &self.lan_mix, rate, now);
+                } else if self.lan_mix.iter().any(|s| *s != 0.0)
+                    && let Ok(chunk) = rx.write_chunk_uninit(self.lan_mix.len())
+                {
+                    chunk.fill_from_iter(self.lan_mix.iter().copied());
+                }
+            } else if self.host.is_none()
+                && let Some(g) = self.guest.as_mut()
+            {
+                g.audio(&self.samples[..n * CHANNELS], rate, now);
             }
-            if !self.peers.is_empty() {
+            if self.role == Role::Share && !self.peers.is_empty()
+                || self.role == Role::Join && self.host.is_some()
+            {
                 wire::encode(
                     &mut self.buf,
                     wire::AUDIO,
@@ -474,8 +582,12 @@ impl Session {
                     self.frame,
                     &self.samples[..n * CHANNELS],
                 );
-                for (peer, _) in &self.peers {
-                    let _ = self.sock.send_to(&self.buf, peer);
+                if let Some(host) = self.host {
+                    let _ = self.sock.send_to(&self.buf, host);
+                } else {
+                    for peer in &self.peers {
+                        let _ = self.sock.send_to(&self.buf, peer.addr);
+                    }
                 }
             }
             self.frame += n as u64;
@@ -502,22 +614,31 @@ impl Session {
         }
         let n = (bytes.len() / (4 * CHANNELS)) as u64;
         let max_gap = u64::from(rate / 10);
-        if !self.synced || frame > self.frame + max_gap || frame + u64::from(rate) < self.frame {
+        if !self.synced
+            || frame > self.received + max_gap
+            || frame + u64::from(rate) < self.received
+        {
             self.synced = true;
-            self.frame = frame;
+            self.received = frame;
         }
-        if frame + n <= self.frame {
+        if frame + n <= self.received {
             return;
         }
-        let gap = frame.saturating_sub(self.frame) as usize * CHANNELS;
-        let skip = self.frame.saturating_sub(frame) as usize * CHANNELS;
-        let fresh = wire::samples(bytes).skip(skip);
+        let gap = frame.saturating_sub(self.received) as usize * CHANNELS;
+        let skip = self.received.saturating_sub(frame) as usize * CHANNELS;
+        let fresh = wire::samples(bytes).skip(skip).map(|s| {
+            if s.is_finite() {
+                s.clamp(-8.0, 8.0)
+            } else {
+                0.0
+            }
+        });
         let len = gap + (n as usize * CHANNELS - skip);
         // A full ring means playout is stalled; it trims itself when it resumes.
         if let Ok(chunk) = rx.write_chunk_uninit(len) {
             chunk.fill_from_iter(std::iter::repeat_n(0.0, gap).chain(fresh));
         }
-        self.frame = frame + n;
+        self.received = frame + n;
     }
 }
 
@@ -563,10 +684,11 @@ mod tests {
     /// stranger with the wrong room gets nothing.
     #[test]
     fn share_to_join_on_loopback() {
-        let (host, _h, mut send, _) = link(Role::Share, "room-a", "");
+        let (host, _h, mut send, mut host_hear) = link(Role::Share, "room-a", "");
         assert!(wait(|| host.port.load(Relaxed) != 0));
         let port = host.port.load(Relaxed);
-        let (_, _j, _, mut hear) = link(Role::Join, "room-a", &format!("127.0.0.1:{port}"));
+        let (_, _j, mut return_audio, mut hear) =
+            link(Role::Join, "room-a", &format!("127.0.0.1:{port}"));
         let (_, _x, _, stranger) = link(Role::Join, "room-b", &format!("127.0.0.1:{port}"));
         assert!(
             wait(|| host.peers.load(Relaxed) == 1),
@@ -581,6 +703,23 @@ mod tests {
         let (a, b) = got.as_slices();
         assert_eq!([a, b].concat(), sent);
         assert_eq!(stranger.slots(), 0);
+        let chunk = return_audio.write_chunk_uninit(sent.len()).unwrap();
+        chunk.fill_from_iter(std::iter::repeat(0.25));
+        assert!(
+            wait(|| {
+                if let Ok(chunk) = send.write_chunk_uninit(360) {
+                    chunk.fill_from_iter(std::iter::repeat_n(0.0, 360));
+                }
+                if let Ok(chunk) = host_hear.read_chunk(host_hear.slots()) {
+                    let (a, b) = chunk.as_slices();
+                    let heard = a.iter().chain(b).any(|s| (*s - 0.25).abs() < 1e-6);
+                    chunk.commit_all();
+                    return heard;
+                }
+                false
+            }),
+            "LAN return reached Share"
+        );
     }
 
     /// Share → Join over WebRTC, both at 44.1 kHz (so both resamplers run),
@@ -607,11 +746,12 @@ mod tests {
         let (hs, mut host, from_host, to_host) = side(Role::Share);
         let (js, mut join, from_join, to_join) = side(Role::Join);
         join.opened -= LAN_FIRST;
-        let ((mut send, mut htx), (mut hrx, _)) = crate::rings();
-        let ((_, mut jtx), (mut jrx, mut hear)) = crate::rings();
+        let ((mut send, mut htx), (mut hrx, mut host_hear)) = crate::rings();
+        let ((mut return_audio, mut jtx), (mut jrx, mut hear)) = crate::rings();
 
         let start = Instant::now();
-        let (mut pushed, mut heard) = (0usize, Vec::<f32>::new());
+        let (mut pushed, mut returned, mut heard, mut returned_heard) =
+            (0usize, 0usize, Vec::<f32>::new(), Vec::<f32>::new());
         // Debug builds run the codec well below real time; give them room.
         while start.elapsed() < Duration::from_secs(20) && heard.len() < 44_100 {
             host.step(&hs, &mut htx, &mut hrx);
@@ -647,6 +787,22 @@ mod tests {
                 }));
                 pushed += n;
             }
+            if due > returned {
+                let n = (due - returned).min(return_audio.slots() / 2);
+                if n > 0 {
+                    let chunk = return_audio.write_chunk_uninit(n * 2).unwrap();
+                    chunk.fill_from_iter((returned..returned + n).flat_map(|i| {
+                        let x = (i as f32 * 500.0 * std::f32::consts::TAU / 44_100.0).sin() * 0.5;
+                        [x, x]
+                    }));
+                    returned += n;
+                }
+            }
+            if let Ok(chunk) = host_hear.read_chunk(host_hear.slots()) {
+                let (a, b) = chunk.as_slices();
+                returned_heard.extend(a.iter().chain(b).step_by(2));
+                chunk.commit_all();
+            }
             if let Ok(chunk) = hear.read_chunk(hear.slots()) {
                 let (a, b) = chunk.as_slices();
                 heard.extend(a.iter().chain(b).step_by(2));
@@ -660,6 +816,13 @@ mod tests {
         let tail = &heard[heard.len() - 11_025..];
         let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
         assert!((0.3..0.4).contains(&rms), "rms {rms}, want 0.354");
+        assert!(
+            returned_heard.len() >= 11_025,
+            "WebRTC return reached Share"
+        );
+        let tail = &returned_heard[returned_heard.len() - 11_025..];
+        let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!((0.25..0.4).contains(&rms), "return rms {rms}, want 0.354");
     }
 
     /// Share → Join through the deployed signaling worker. Run with

@@ -28,13 +28,19 @@ pub const RING: usize = 48_000 * CHANNELS;
 /// Signaling and the browser listen page: `https://{SITE}/{room}`.
 pub const SITE: &str = "relay.matari-audio.com";
 
-/// A browser listener whose microphone can talk back to the sharing plugin.
+/// A source returning audio to the sharing plugin.
 #[derive(Clone, Debug)]
 pub struct Talker {
     pub id: String,
     pub slot: usize,
+    pub name: String,
+    pub plugin: bool,
+    pub stereo: bool,
     pub active: bool,
+    /// Unamplified L/R microphone peaks since the editor last read them.
+    pub peak: [f32; CHANNELS],
     pub gain_db: f32,
+    pub muted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

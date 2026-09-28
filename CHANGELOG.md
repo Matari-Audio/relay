@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Two RELAY plugins in one room now send and receive audio over LAN or WebRTC. Browser listeners hear both plugins together.
+- Browser listeners can name themselves. The sharing plugin shows each browser microphone and plugin return in a compact strip with its own gain, mute and level meter.
+- Separate input and output MUTE controls dim their meters when active. THRU controls whether local DAW input passes to the plugin output.
+- The plugin opens at a more readable size and waits for a pause or Enter before reconnecting after room or password edits.
+
 ## 0.4.2
 
 - The browser listen page shows the optional room password before joining and sends it with the first join request.

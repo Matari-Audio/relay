@@ -3,12 +3,14 @@
 //! each with its own fader, on the right.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use moose::mui::{Bridge, MuiEditor};
 use moose_core::editor::{Editor, IntoEditor};
+use mui::geometry::kurbo::Shape as _;
 use mui::prelude::*;
 use relay_core::{Net, Peak, Shared};
 
@@ -32,6 +34,9 @@ const LINK: char = '\u{E2E6}';
 const LOCK: char = '\u{E308}';
 const WIFI: char = '\u{E4EA}';
 const MIC: char = '\u{E326}';
+const MIC_OFF: char = '\u{E328}';
+const SPEAKER: char = '\u{E44A}';
+const SPEAKER_OFF: char = '\u{E45A}';
 
 const SIZE: (u32, u32) = (440, 156);
 /// Field height and corner.
@@ -44,6 +49,7 @@ const GAIN: (f64, f64) = (-24.0, 12.0);
 /// Width of an L/R meter pair and of the scale between pairs.
 const PAIR: f64 = 28.0;
 const SCALE: f64 = 24.0;
+const NAME_RAIL: f64 = 19.0;
 
 // Matari's Signal palette, Oklch. The listen page uses the matching sRGB.
 const BG: Color = Color::oklch(0.1735, 0.002, 286.2); // #101011
@@ -124,8 +130,14 @@ struct View {
     show_password: bool,
     show_address: bool,
     copied: bool,
+    room: String,
+    password: String,
+    room_edit: Option<Instant>,
+    password_edit: Option<Instant>,
     /// IN L, IN R, OUT L, OUT R.
     rails: [Rail; 4],
+    mic_rails: HashMap<String, [Rail; 2]>,
+    mic_scroll: usize,
     /// Highest IN and OUT since the last reset, linear.
     max: [f32; 2],
     last: Instant,
@@ -146,7 +158,13 @@ impl Default for View {
             show_password: false,
             show_address: false,
             copied: false,
+            room: String::new(),
+            password: String::new(),
+            room_edit: None,
+            password_edit: None,
             rails: [rail; 4],
+            mic_rails: HashMap::new(),
+            mic_scroll: 0,
             max: [0.0; 2],
             last: now,
         }
@@ -183,8 +201,12 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     let shared = Arc::clone(&params.link.0);
     let settings = Arc::clone(&params);
     let (ui, fonts) = new_ui();
-    let mut view = View::default();
-    MuiEditor::new(params, ui, SIZE, move |ui, bridge| {
+    let mut view = View {
+        room: Shared::text(&shared.room),
+        password: Shared::text(&shared.password),
+        ..View::default()
+    };
+    let mut editor = MuiEditor::new(params, ui, SIZE, move |ui, bridge| {
         build(
             ui,
             bridge,
@@ -196,8 +218,9 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     })
     .resizable((380, 150))
     // Meters decay and the link status moves while nothing is touched.
-    .changed(|| true)
-    .into_editor()
+    .changed(|| true);
+    let _ = editor.set_size(616, 218);
+    editor.into_editor()
 }
 
 /// An icon centred in a field-high square, so its inset is the same on
@@ -304,26 +327,48 @@ fn build(
             .fill(FIELD)
     });
 
-    let mut room = Shared::text(&shared.room);
-    let Response { el: input, changed } = text_input(ui, "room", &mut room);
+    let now = Instant::now();
+    if view.room_edit.is_none() {
+        view.room = Shared::text(&shared.room);
+    }
+    let Response { el: input, changed } = text_input(ui, "room", &mut view.room);
     if changed {
-        shared.set_text(&shared.room, &room);
+        view.room_edit = Some(now);
+    }
+    if view.room_edit.is_some_and(|at| {
+        now.duration_since(at) >= Duration::from_millis(300)
+            || ui.keys("room").iter().any(|k| k.key == Key::Enter)
+    }) {
+        shared.set_text(&shared.room, &view.room);
+        view.room_edit = None;
     }
     let (dice, roll) = action(ui, fonts, "roll", DICE, "New room name");
     if roll {
-        shared.set_text(&shared.room, &relay_core::room_name());
+        view.room = relay_core::room_name();
+        shared.set_text(&shared.room, &view.room);
+        view.room_edit = None;
     }
+    let room = view.room.clone();
     let mut rows = vec![field(fonts, HASH, bare(input), dice)];
 
-    let mut password = Shared::text(&shared.password);
+    if view.password_edit.is_none() {
+        view.password = Shared::text(&shared.password);
+    }
     let show = view.show_password;
     let Response { el: input, changed } = if show {
-        text_input(ui, "pass", &mut password)
+        text_input(ui, "pass", &mut view.password)
     } else {
-        masked_input(ui, "pass", &mut password)
+        masked_input(ui, "pass", &mut view.password)
     };
     if changed {
-        shared.set_text(&shared.password, &password);
+        view.password_edit = Some(now);
+    }
+    if view.password_edit.is_some_and(|at| {
+        now.duration_since(at) >= Duration::from_millis(300)
+            || ui.keys("pass").iter().any(|k| k.key == Key::Enter)
+    }) {
+        shared.set_text(&shared.password, &view.password);
+        view.password_edit = None;
     }
     let (eye, toggle) = action(
         ui,
@@ -444,23 +489,23 @@ fn build(
     }
     let t = view.born.elapsed().as_secs_f64();
     let live = lit == LIME;
-    // Share: browser listeners talking back through their mic.
-    let talking = shared.talking.load(Relaxed);
+    let sources = shared.talkers.lock().unwrap().len();
     let talk = if picked == 1 {
         if ui.get("mics").clicked_with(Button::Primary) {
             view.mic_panel = !view.mic_panel;
             view.about = false;
         }
         row![
-            icon(MIC).font(fonts.icons.clone()).text_size(12.0).fill(
-                if talking > 0 || view.mic_panel {
+            icon(SPEAKER)
+                .font(fonts.icons.clone())
+                .text_size(12.0)
+                .fill(if sources > 0 || view.mic_panel {
                     LIME
                 } else {
                     DIM
-                }
-            ),
-            text(if talking > 0 {
-                talking.to_string()
+                }),
+            text(if sources > 0 {
+                sources.to_string()
             } else {
                 String::new()
             })
@@ -471,7 +516,7 @@ fn build(
         .center()
         .h(H)
         .a11y(A11y::Button)
-        .named("Browser microphone levels")
+        .named("Audio source levels")
         .focusable()
         .id("mics")
     } else {
@@ -497,7 +542,7 @@ fn build(
     let body = if view.about {
         about(ui, standard_ui, fonts)
     } else if picked == 1 && view.mic_panel {
-        microphones(ui, shared)
+        microphones(ui, shared, fonts, view)
     } else {
         col([
             col(rows).gap(4.0),
@@ -530,54 +575,216 @@ fn build(
     row([left, meters]).gap(12.0).pad(10.0).fill(BG)
 }
 
-/// Browser microphones are mixed on the network thread before the audio ring.
-fn microphones(ui: &mut Ui, shared: &Shared) -> El {
+/// One narrow channel per return source, mixed on the network thread.
+fn microphones(ui: &mut Ui, shared: &Shared, fonts: &Fonts, view: &mut View) -> El {
     let mut talkers = shared.talkers.lock().unwrap();
-    let rows: Vec<El> = talkers
+    let now = Instant::now();
+    let dt = now.duration_since(view.last).as_secs_f32().min(0.1);
+    view.mic_rails
+        .retain(|id, _| talkers.iter().any(|t| &t.id == id));
+    let panel_w = ui
+        .scene()
+        .and_then(|s| s.surface("microphones"))
+        .map_or(328.0, |s| s.frame.size.width);
+    let strip_w = PAIR + NAME_RAIL + 2.0 + 8.0;
+    let visible = ((panel_w + 4.0) / (strip_w + 4.0)).floor().max(1.0) as usize;
+    let max_scroll = talkers.len().saturating_sub(visible);
+    if let Some(wheel) = ui.wheel("microphones") {
+        let delta = if wheel.y.abs() > wheel.x.abs() {
+            wheel.y
+        } else {
+            wheel.x
+        };
+        if delta > 0.0 {
+            view.mic_scroll = view.mic_scroll.saturating_add(1);
+        } else if delta < 0.0 {
+            view.mic_scroll = view.mic_scroll.saturating_sub(1);
+        }
+    }
+    view.mic_scroll = view.mic_scroll.min(max_scroll);
+    let strips: Vec<El> = talkers
         .iter_mut()
+        .skip(view.mic_scroll)
+        .take(visible)
         .map(|t| {
             let id = format!("mic-{}", t.id);
-            let label = format!("Listener {}", t.slot);
+            let label = if t.name.is_empty() {
+                format!("Listener {}", t.slot)
+            } else {
+                t.name.clone()
+            };
             let mut gain = f64::from(t.gain_db);
-            let slider = slider(ui, id.clone(), &label, &mut gain, GAIN.0..=GAIN.1);
+            let extent = ui
+                .scene()
+                .and_then(|s| s.surface(&id))
+                .map_or(40.0, |s| s.frame.size.height)
+                .max(1.0);
+            if ui.get(&id).pressed
+                && let Some(p) = ui.local(&id)
+            {
+                let unit = 1.0 - p.y / extent;
+                gain = GAIN.0 + unit.clamp(0.0, 1.0) * (GAIN.1 - GAIN.0);
+            }
+            ui.drag(&id, &mut gain, GAIN.0..=GAIN.1, extent, true);
             if ui.double_click(&id) {
                 gain = 0.0;
             }
-            if slider.changed || gain != f64::from(t.gain_db) {
+            if gain != f64::from(t.gain_db) {
                 t.gain_db = gain as f32;
             }
-            row![
-                block(6.0, 6.0)
-                    .radius(3.0)
-                    .fill(if t.active { LIME } else { DIM }),
-                slider
-                    .el
-                    .px(18.0)
-                    .value_text(format!("{gain:+.1} dB"))
-                    .el()
-                    .grow(1.0),
-            ]
-            .gap(6.0)
-            .center()
-            .w(Len::Pct(100.0))
+
+            let mute_id = format!("mute-{}", t.id);
+            if ui.get(&mute_id).clicked_with(Button::Primary) {
+                t.muted = !t.muted;
+            }
+            let meter = view.mic_rails.entry(t.id.clone()).or_insert(
+                [Rail {
+                    shown: FLOOR,
+                    hold: FLOOR,
+                    held: now,
+                }; 2],
+            );
+            for (rail, peak) in meter.iter_mut().zip(std::mem::take(&mut t.peak)) {
+                rail.feed(peak, now, dt);
+            }
+            let handle = row([block(0.0, 3.0).grow(1.0).radius(1.5).fill(if t.muted {
+                DIM
+            } else if gain > 0.0 {
+                RED
+            } else {
+                TEXT
+            })])
+            .pad(1.0)
+            .radius(2.5)
+            .fill(BG);
+            let position = 1.0 - ((gain - GAIN.0) / (GAIN.1 - GAIN.0)) as f32;
+            let level = if t.stereo {
+                row![rail(meter[0], t.muted), rail(meter[1], t.muted)]
+                    .gap(1.0)
+                    .w(PAIR)
+            } else {
+                rail(meter[0], t.muted).w(PAIR)
+            };
+            let zero = at(
+                1.0 / 3.0,
+                block(PAIR, 1.0).fill(if t.muted { DIM } else { YELLOW }),
+            );
+            let meter = stack([level, zero, at(position, handle)])
+                .w(PAIR)
+                .h(Len::Pct(100.0));
+            let meter = row([meter])
+                .justify(Justify::Center)
+                .w(PAIR)
+                .h(Len::Pct(100.0))
+                .a11y(A11y::Slider {
+                    value: gain,
+                    min: GAIN.0,
+                    max: GAIN.1,
+                })
+                .named(format!("{} source gain, dB", label))
+                .focusable()
+                .id(id);
+
+            let glyph = match (t.plugin, t.muted) {
+                (false, false) => MIC,
+                (false, true) => MIC_OFF,
+                (true, false) => SPEAKER,
+                (true, true) => SPEAKER_OFF,
+            };
+            let mute = centered_icon(ui, fonts, glyph, if t.muted { RED } else { LIME })
+                .fill(if t.muted { HOT } else { WELL })
+                .a11y(A11y::Button)
+                .named(format!(
+                    "{} {}",
+                    if t.muted { "Unmute" } else { "Mute" },
+                    label
+                ))
+                .focusable()
+                .id(mute_id);
+            let name = vertical_name(ui, fonts, &label, if t.muted { DIM } else { TEXT });
+            let label_rail = col([mute, name]).gap(4.0).w(NAME_RAIL).h(Len::Pct(100.0));
+            let strip = row![label_rail, meter].gap(2.0).pad(4.0);
+            strip
+                .fill(FIELD)
+                .stroke(DIM.with_alpha(0.38))
+                .stroke_width(1.0)
         })
         .collect();
-    if rows.is_empty() {
-        return text("Browser microphones appear when listeners connect.")
+    let body = if strips.is_empty() {
+        text("Audio sources appear when peers connect.")
             .text_size(10.5)
             .fill(DIM)
-            .grow(1.0);
-    }
-    col(rows)
-        .gap(5.0)
-        .w(Len::Pct(100.0))
-        .scroll()
-        .grow(1.0)
-        .id("microphones")
+            .grow(1.0)
+    } else {
+        row(strips)
+            .gap(4.0)
+            .align(Align::Stretch)
+            .justify(Justify::Start)
+            .grow(1.0)
+    };
+    body.id("microphones")
+}
+
+fn ink_box(path: &Path) -> Option<mui::geometry::Rect> {
+    Some(mui::geometry::bez_path(path, 0.1).ok()?.bounding_box())
+}
+
+fn centered_icon(ui: &Ui, fonts: &Fonts, glyph: char, ink: Color) -> El {
+    let (runs, font, glyph) = (ui.text_runs(), fonts.icons.clone(), glyph.to_string());
+    canvas(move |size| {
+        let Some(run) = runs.get(&font, &glyph, 12.0, &[]) else {
+            return vec![];
+        };
+        let Some(b) = ink_box(&run.path) else {
+            return vec![];
+        };
+        vec![Draw::fill(run.path.clone(), ink).at(Point::new(
+            (size.width - b.width()) / 2.0 - b.x0,
+            (size.height - b.height()) / 2.0 - b.y0,
+        ))]
+    })
+    .size(NAME_RAIL, NAME_RAIL)
+}
+
+fn vertical_name(ui: &Ui, fonts: &Fonts, label: &str, ink: Color) -> El {
+    let (runs, font, label) = (ui.text_runs(), fonts.departure.clone(), label.to_owned());
+    canvas(move |size| {
+        let mut shown = label.clone();
+        let mut point_size = 9.0;
+        loop {
+            let text = if shown.len() == label.len() {
+                shown.clone()
+            } else {
+                format!("{shown}…")
+            };
+            let Some(run) = runs.get(&font, &text, point_size, &[]) else {
+                return vec![];
+            };
+            let Some(b) = ink_box(&run.path) else {
+                return vec![];
+            };
+            if b.width() <= size.height - 8.0 && b.height() <= size.width - 4.0 {
+                let x = (size.width - b.height()) / 2.0 - b.y0;
+                let y = size.height - 4.0 + b.x0;
+                let path = run
+                    .path
+                    .rigid_transform(mui::geometry::Vec2::new(x, y), -std::f64::consts::FRAC_PI_2);
+                return path.map_or_else(|_| vec![], |p| vec![Draw::fill(p, ink)]);
+            }
+            if point_size > 7.0 {
+                point_size -= 1.0;
+            } else if shown.pop().is_none() {
+                return vec![];
+            }
+        }
+    })
+    .w(NAME_RAIL)
+    .grow(1.0)
+    .clip()
 }
 
 /// IN and OUT pairs with a fader riding each, the scale between them,
-/// max-peak readouts on top and the gains below.
+/// peak readouts on top and mute controls below.
 fn meters(
     ui: &mut Ui,
     bridge: &mut Bridge<RelayParams>,
@@ -599,8 +806,22 @@ fn meters(
     if ui.get("peaks").clicked_with(Button::Primary) {
         view.max = [0.0; 2];
     }
-    let [max_in, max_out] = [("IN", view.max[0]), ("OUT", view.max[1])].map(|(label, v)| {
-        let ink = if v >= 1.0 { RED } else { TEXT };
+    let muted = [
+        bridge.value(P::MuteInput) >= 0.5,
+        bridge.value(P::MuteOutput) >= 0.5,
+    ];
+    let [max_in, max_out] = [
+        ("IN", view.max[0], muted[0]),
+        ("OUT", view.max[1], muted[1]),
+    ]
+    .map(|(label, v, off)| {
+        let ink = if off {
+            DIM
+        } else if v >= 1.0 {
+            RED
+        } else {
+            TEXT
+        };
         let value = if v < 1e-5 {
             minus_infinity(fonts, ink)
         } else {
@@ -616,9 +837,23 @@ fn meters(
         .id("peaks");
 
     let [il, ir, ol, or] = view.rails;
-    let pair = |a: Rail, b: Rail| row![rail(a), rail(b)].gap(1.0).w(PAIR);
-    let input = fader(ui, bridge, P::Input, "Input", pair(il, ir));
-    let output = fader(ui, bridge, P::Output, "Output", pair(ol, or));
+    let pair = |a: Rail, b: Rail, off| row![rail(a, off), rail(b, off)].gap(1.0).w(PAIR);
+    let input = fader(
+        ui,
+        bridge,
+        P::Input,
+        "Input",
+        pair(il, ir, muted[0]),
+        muted[0],
+    );
+    let output = fader(
+        ui,
+        bridge,
+        P::Output,
+        "Output",
+        pair(ol, or, muted[1]),
+        muted[1],
+    );
 
     let scale = col(
         [(0, 6.0), (-6, 6.0), (-12, 12.0), (-24, 24.0), (-48, 12.0)].map(|(d, span)| {
@@ -629,21 +864,57 @@ fn meters(
     )
     .w(SCALE);
 
-    let under = |p: P| {
-        let db = GAIN.0 + bridge.value(p) * (GAIN.1 - GAIN.0);
-        col([mono(fonts, format!("{db:+.1}"), 8.0, TEXT)])
-            .align(Align::Center)
-            .w(PAIR)
-    };
+    let input_mute = mute(ui, bridge, P::MuteInput, "input");
+    let output_mute = mute(ui, bridge, P::MuteOutput, "output");
+    let thru = bridge.bind(ui, P::Passthrough, |ui, id, v| {
+        if ui.get(&id).clicked_with(Button::Primary) {
+            *v = 1.0 - *v;
+        }
+        row([text("THRU")
+            .text_size(7.0)
+            .fill(if *v >= 0.5 { LIME } else { DIM })])
+        .justify(Justify::Center)
+        .center()
+        .size(SCALE, 16.0)
+        .fill(FIELD)
+        .stroke(DIM.with_alpha(0.38))
+        .stroke_width(1.0)
+        .a11y(A11y::Toggle { on: *v >= 0.5 })
+        .named("Pass local input to output")
+        .focusable()
+        .id(id)
+    });
     col([
         readouts,
         row![input, scale, output].grow(1.0),
-        row![under(P::Input), spacer().w(SCALE), under(P::Output)],
+        row![input_mute, thru, output_mute],
     ])
     .gap(4.0)
     .w(PAIR * 2.0 + SCALE)
     .h(Len::Pct(100.0))
     .id("meters")
+}
+
+fn mute(ui: &mut Ui, bridge: &mut Bridge<RelayParams>, param: P, name: &'static str) -> El {
+    bridge.bind(ui, param, |ui, id, v| {
+        if ui.get(&id).clicked_with(Button::Primary) {
+            *v = 1.0 - *v;
+        }
+        let muted = *v >= 0.5;
+        row([text("MUTE")
+            .text_size(7.0)
+            .fill(if muted { BG } else { DIM })])
+        .justify(Justify::Center)
+        .center()
+        .size(PAIR, 16.0)
+        .fill(if muted { RED } else { FIELD })
+        .stroke(if muted { RED } else { DIM.with_alpha(0.38) })
+        .stroke_width(1.0)
+        .a11y(A11y::Toggle { on: muted })
+        .named(format!("Mute {name}"))
+        .focusable()
+        .id(id)
+    })
 }
 
 /// A gain fader over a meter pair: drag anywhere on it, double-click for
@@ -654,6 +925,7 @@ fn fader(
     param: P,
     label: &'static str,
     meter: El,
+    muted: bool,
 ) -> El {
     bridge.bind(ui, param, |ui, id, v| {
         let h = ui
@@ -664,7 +936,11 @@ fn fader(
         if ui.double_click(&id) {
             *v = -GAIN.0 / (GAIN.1 - GAIN.0);
         }
-        let handle = row([block(0.0, 3.0).grow(1.0).radius(1.5).fill(TEXT)])
+        let handle =
+            row([block(0.0, 3.0)
+                .grow(1.0)
+                .radius(1.5)
+                .fill(if muted { DIM } else { TEXT })])
             .pad(1.0)
             .radius(2.5)
             .fill(BG);
@@ -851,20 +1127,23 @@ fn at(t: f32, el: El) -> El {
 
 /// One rail: a single red-yellow-green ramp, dark above the level, with a
 /// thin peak-hold line.
-fn rail(r: Rail) -> El {
+fn rail(r: Rail, muted: bool) -> El {
     let cover = depth(r.shown);
-    let edge = RAMP.windows(2).find(|w| cover <= w[1].0).map_or(LIME, |w| {
+    let ramp = RAMP.map(|(at, color)| (at, if muted { DIM } else { color }));
+    let edge = ramp.windows(2).find(|w| cover <= w[1].0).map_or(LIME, |w| {
         w[0].1.mix(w[1].1, (cover - w[0].0) / (w[1].0 - w[0].0))
     });
     let stops = [(0.0, WELL), (cover, WELL), (cover, edge)]
         .into_iter()
-        .chain(RAMP.into_iter().filter(|s| s.0 > cover));
+        .chain(ramp.into_iter().filter(|s| s.0 > cover));
     let bar = block(0.0, 0.0)
         .w(Len::Pct(100.0))
         .h(Len::Pct(100.0))
         .radius(2.0)
         .fill(Gradient::linear(180.0, stops));
-    let hold = block(0.0, 1.5).w(Len::Pct(100.0)).fill(TEXT);
+    let hold = block(0.0, 1.5)
+        .w(Len::Pct(100.0))
+        .fill(if muted { DIM } else { TEXT });
     let mut layers = vec![bar];
     if r.hold > FLOOR {
         layers.push(at(depth(r.hold), hold));
@@ -936,6 +1215,10 @@ mod snapshot {
     fn render(mode: f64, net: Net, name: &str, about: bool) {
         let params = Arc::new(RelayParams::new());
         params.set_normalized(P::Mode.into(), mode);
+        if name.ends_with("muted") {
+            params.set_normalized(P::MuteInput.into(), 1.0);
+            params.set_normalized(P::MuteOutput.into(), 1.0);
+        }
         *params.standard_ui.write().unwrap() = name == "standard";
         let settings = Arc::clone(&params);
         let shared = Arc::clone(&params.link.0);
@@ -947,19 +1230,40 @@ mod snapshot {
         shared.rate.store(48_000, Relaxed);
         shared.latency.store(512, Relaxed);
         shared.talking.store(1, Relaxed);
-        if name == "mics" || name == "compact-mics" {
+        if name.starts_with("mics") || name.starts_with("compact-mics") {
             shared.talkers.lock().unwrap().extend([
                 relay_core::Talker {
                     id: "1".into(),
                     slot: 1,
+                    name: "Maya Chen".into(),
+                    plugin: false,
+                    stereo: false,
                     active: true,
+                    peak: [0.16, 0.1],
                     gain_db: 3.0,
+                    muted: false,
                 },
                 relay_core::Talker {
                     id: "2".into(),
                     slot: 2,
+                    name: "Jonah".into(),
+                    plugin: false,
+                    stereo: false,
                     active: false,
+                    peak: [0.0, 0.0],
                     gain_db: -6.0,
+                    muted: false,
+                },
+                relay_core::Talker {
+                    id: "3".into(),
+                    slot: 3,
+                    name: "Plugin 2".into(),
+                    plugin: true,
+                    stereo: true,
+                    active: true,
+                    peak: [0.04, 0.08],
+                    gain_db: 0.0,
+                    muted: true,
                 },
             ]);
         }
@@ -980,27 +1284,33 @@ mod snapshot {
         }
         let mut view = View {
             about,
-            mic_panel: name == "mics" || name == "compact-mics",
+            mic_panel: name.starts_with("mics") || name.starts_with("compact-mics"),
             ..View::default()
         };
-        let logical = if name == "compact-mics" {
+        let logical = if name == "share-default" {
+            (616, 218)
+        } else if name.starts_with("compact-mics") {
             (380, 150)
+        } else if name.contains("large") {
+            (792, 432)
         } else {
             SIZE
         };
         let (w, h) = (logical.0 * 2, logical.1 * 2);
         ui.set_scale(Some(2.0));
-        let root = build(
-            &mut ui,
-            &mut bridge,
-            &shared,
-            &settings.standard_ui,
-            &fonts,
-            &mut view,
-        );
         let size = mui::layout::Size::new(f64::from(logical.0), f64::from(logical.1));
-        ui.frame(root, Some(size), mui::input::Input::default(), 0.0)
-            .unwrap();
+        for _ in 0..3 {
+            let root = build(
+                &mut ui,
+                &mut bridge,
+                &shared,
+                &settings.standard_ui,
+                &fonts,
+                &mut view,
+            );
+            ui.frame(root, Some(size), mui::input::Input::default(), 0.0)
+                .unwrap();
+        }
         assert!(
             ui.scene().unwrap().layout.frame("meters").unwrap().right() <= f64::from(logical.0)
         );
@@ -1016,8 +1326,21 @@ mod snapshot {
                     > 15.0
             );
         }
-        if name == "mics" || name == "compact-mics" {
+        if name.starts_with("mics") || name.starts_with("compact-mics") {
             assert!(ui.scene().unwrap().layout.frame("mic-1").is_some());
+            assert!(ui.scene().unwrap().layout.frame("mute-1").is_some());
+            if name.starts_with("compact-mics") {
+                assert!(
+                    ui.scene()
+                        .unwrap()
+                        .layout
+                        .frame("mic-1")
+                        .unwrap()
+                        .size
+                        .height
+                        >= 38.0
+                );
+            }
         }
         let mut ctx = RenderContext::new(w as u16, h as u16);
         let mut resources = Resources::default();
@@ -1049,10 +1372,52 @@ mod snapshot {
     #[test]
     fn editor_renders() {
         render(0.5, Net::Internet, "share", false);
+        render(0.5, Net::Internet, "share-default", false);
         render(0.5, Net::Internet, "standard", false);
         render(1.0, Net::Lan, "join", false);
         render(0.5, Net::Internet, "about", true);
-        render(0.5, Net::Internet, "mics", false);
+        render(0.5, Net::Internet, "mics-large", false);
         render(0.5, Net::Internet, "compact-mics", false);
+        render(0.5, Net::Internet, "compact-mics-muted", false);
+    }
+
+    #[test]
+    fn wheel_moves_overflowing_listener_strips_sideways() {
+        let shared = Shared::default();
+        shared
+            .talkers
+            .lock()
+            .unwrap()
+            .extend((0..6).map(|n| relay_core::Talker {
+                id: n.to_string(),
+                slot: n + 1,
+                name: format!("Listener {n}"),
+                plugin: false,
+                stereo: false,
+                active: true,
+                peak: [0.0, 0.0],
+                gain_db: 0.0,
+                muted: false,
+            }));
+        let (mut ui, fonts) = new_ui();
+        let mut view = View::default();
+        let size = mui::layout::Size::new(250.0, 100.0);
+        let mut draw = |input| {
+            let root = microphones(&mut ui, &shared, &fonts, &mut view);
+            ui.frame(root, Some(size), input, 0.016).unwrap();
+        };
+        draw(mui::input::Input::default());
+        draw(mui::input::Input {
+            pointer: mui::input::PointerInput {
+                pos: Some(Point::new(20.0, 30.0)),
+                ..Default::default()
+            },
+            wheel: mui::geometry::Vec2::new(0.0, 40.0),
+            ..Default::default()
+        });
+        draw(mui::input::Input::default());
+        assert_eq!(view.mic_scroll, 1);
+        assert!(ui.scene().unwrap().surface("mic-3").is_some());
+        assert!(ui.scene().unwrap().surface("mic-0").is_none());
     }
 }

@@ -50,9 +50,12 @@ Barlow and Martian Mono with 4px corners, retaining the Signal palette.
   the 380×150 minimum editor size.
 - The RELAY wordmark opens changelog and Appearance controls. Pixel and
   Standard are the two explicit choices. The microphone icon stays in the
-  header while sharing and opens a scrollable listener list. Each browser
-  listener has a live indicator and an independent -24…+12 dB slider; double
-  click restores 0 dB.
+  header while sharing and opens listener strips. Each narrow charcoal strip
+  has a name and microphone mute button above live L/R level rails with the
+  same peak hold and gain fader as IN/OUT. A thin line across the rails marks
+  0 dB gain; the fader turns red above it. Gain spans -24…+12 dB; double click
+  restores 0 dB. A vertical wheel over the panel moves through overflowing
+  strips horizontally.
 - The logo is a circular dot sending two chevrons. While live, they ripple
   outward on the original damped spring, one behind the other. Pixel mode
   snaps their drawn coordinates to the pixel grid; Standard draws smoothly.
@@ -66,5 +69,5 @@ Barlow and Martian Mono with 4px corners, retaining the Signal palette.
   the card in Firefox. At very narrow widths, compact the dB readout.
 - The logo keeps its dot and two chevrons, and the live ripple respects
   `prefers-reduced-motion`. The browser page always uses the Pixel appearance.
-- Keep room and password in one-piece fields, a single Listen/Stop action,
-  mic button, L/R meter and room roster. No nested cards.
+- Keep room, password and listener name in one-piece fields, a single
+  Listen/Stop action, mic button, L/R meter and room roster. No nested cards.

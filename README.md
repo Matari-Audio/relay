@@ -2,16 +2,20 @@
 
 ![The RELAY editor sharing a room](docs/images/relay-editor.png)
 
-An insert that shares the track it sits on, peer to peer:
+An insert that sends and receives the track it sits on, peer to peer. One
+plugin shares a room; another joins it. Both send their DAW input and hear
+the other plugin. Browser listeners hear their mix. Each source has its own
+gain and mute control in the sharing plugin; turn off **THRU** for an FX return.
 
 | To | How | Audio |
 |---|---|---|
-| Another RELAY on your LAN | UDP, found by room name over mDNS | 32-bit float PCM, no codec, no added latency |
+| Another RELAY on your LAN | UDP, found by room name over mDNS | 32-bit float PCM, no codec |
 | Another RELAY over the internet | WebRTC | Opus 510 kbps, self-sizing jitter buffer |
 | Anyone's browser | `relay.matari-audio.com/<room>` | Opus 510 kbps, nothing to install |
 
 No account. The only server is a Cloudflare Durable Object that introduces
-the two ends; audio never passes through it. Protocol: [docs/protocol.md](docs/protocol.md).
+the two ends; audio never passes through it. LAN PCM is currently unencrypted;
+see the [protocol and security notes](docs/protocol.md).
 
 Open source under [MPL-2.0](LICENSE).
 

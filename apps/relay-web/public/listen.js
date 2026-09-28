@@ -5,6 +5,13 @@ const $ = (id) => document.getElementById(id);
 let room = slug(decodeURIComponent(location.pathname.slice(1)));
 const out = $("out");
 $("room").value = room;
+try { $("name").value = localStorage.listenerName ?? ""; } catch {}
+$("name").onchange = () => {
+  const name = $("name").value.trim().slice(0, 24);
+  $("name").value = name;
+  try { localStorage.listenerName = name; } catch {}
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "name", name }));
+};
 window.onpopstate = () => location.reload();
 
 let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, on = false;
@@ -37,7 +44,8 @@ function roster({ you, peers }) {
   const kinds = { host: "plugin", web: "browser", plugin: "plugin" };
   const rows = peers.map((p, i) => {
     const li = document.createElement("li");
-    const name = p.kind === "host" ? "Host" : p.id === you ? "You" : `Listener ${i}`;
+    const name = p.kind === "host" ? "Host" : p.name
+      ? `${p.name}${p.id === you ? " (you)" : ""}` : p.id === you ? "You" : `Listener ${i}`;
     for (const t of [name, kinds[p.kind] ?? p.kind]) li.appendChild(document.createElement("span")).textContent = t;
     return li;
   });
@@ -53,7 +61,7 @@ function setOn(v) {
 }
 
 async function hello() {
-  ws?.send(JSON.stringify({ t: "hello", kind: "web", auth: await auth(room, $("pw").value) }));
+  ws?.send(JSON.stringify({ t: "hello", kind: "web", auth: await auth(room, $("pw").value), name: $("name").value.trim() }));
 }
 
 function connect() {
