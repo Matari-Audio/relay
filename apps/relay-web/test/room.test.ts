@@ -145,15 +145,20 @@ it("sends everyone the roster when the host arrives, a peer is admitted or leave
   const q = await open(`/${r}/peer`);
   await p.next();
   await q.next();
-  p.send({ t: "hello", kind: "web", auth: AUTH });
+  p.send({ t: "hello", kind: "web", auth: AUTH, name: "Maya" });
   q.send({ t: "hello", kind: "plugin", auth: AUTH });
   const idP = (await h.next()).id;
   const idQ = (await h.next()).id;
   h.send({ t: "offer", to: idP, sdp: "v=0" });
-  const one = [{ id: 0, kind: "host" }, { id: idP, kind: "web" }];
+  const one = [{ id: 0, kind: "host" }, { id: idP, kind: "web", name: "Maya" }];
   expect(await h.roster()).toEqual({ t: "roster", you: null, peers: one });
   expect(await p.roster()).toEqual({ t: "roster", you: idP, peers: one });
   expect(await q.roster()).toEqual({ t: "roster", you: idQ, peers: one });
+  p.send({ t: "name", name: " Alex " });
+  one[1].name = "Alex";
+  expect((await h.roster()).peers).toEqual(one);
+  expect((await p.roster()).peers).toEqual(one);
+  expect((await q.roster()).peers).toEqual(one);
   h.send({ t: "deny", to: idQ }); // not admitted: no roster change
   h.send({ t: "offer", to: idQ, sdp: "v=0" });
   const two = [...one, { id: idQ, kind: "plugin" }];

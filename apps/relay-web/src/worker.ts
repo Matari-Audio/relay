@@ -18,7 +18,10 @@ const STUN: RTCIceServer = { urls: "stun:stun.cloudflare.com:3478" };
 type Msg = Record<string, unknown>;
 type RTCIceServer = { urls: string | string[]; username?: string; credential?: string };
 // A peer is `in` once the host has sent it an offer; `kind` comes from its hello.
-type Tag = { role: "host" } | { role: "peer"; id: number; kind?: string; in?: boolean };
+type Tag = { role: "host" } | { role: "peer"; id: number; kind?: string; name?: string; in?: boolean };
+
+const cleanName = (value: unknown) => typeof value === "string"
+  ? value.replace(/[\x00-\x1f\x7f]/g, "").trim().slice(0, 24) : "";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -175,9 +178,15 @@ export class Room extends DurableObject<Env> {
     if (msg.t === "hello") {
       const { kind, auth } = msg;
       if ((kind !== "web" && kind !== "plugin") || typeof auth !== "string" || !/^[0-9a-f]{16}$/.test(auth)) return;
-      ws.serializeAttachment({ ...tag, kind });
+      ws.serializeAttachment({ ...tag, kind, name: kind === "web" ? cleanName(msg.name) : "" });
       if (host) send(host, { t: "hello", id: tag.id, kind, auth });
       else send(ws, { t: "error", code: "no-host" });
+    } else if (msg.t === "name" && tag.kind === "web") {
+      const name = cleanName(msg.name);
+      if (name !== tag.name) {
+        ws.serializeAttachment({ ...tag, name });
+        if (tag.in) this.roster();
+      }
     } else if (msg.t === "answer" && typeof msg.sdp === "string") {
       send(host, { t: "answer", id: tag.id, sdp: msg.sdp });
     }
@@ -229,7 +238,8 @@ export class Room extends DurableObject<Env> {
     const tags = this.peers().map((ws) => [ws, ws.deserializeAttachment() as Tag | null] as const);
     const peers = [
       ...(host ? [{ id: 0, kind: "host" }] : []),
-      ...tags.flatMap(([, t]) => (t?.role === "peer" && t.in ? [{ id: t.id, kind: t.kind ?? "web" }] : [])),
+      ...tags.flatMap(([, t]) => (t?.role === "peer" && t.in
+        ? [{ id: t.id, kind: t.kind ?? "web", ...(t.name ? { name: t.name } : {}) }] : [])),
     ];
     send(host, { t: "roster", you: null, peers });
     for (const [ws, t] of tags) send(ws, { t: "roster", you: t?.role === "peer" ? t.id : null, peers });

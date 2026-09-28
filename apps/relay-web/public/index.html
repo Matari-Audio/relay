@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="Listen to a RELAY room: audio straight from the sharer's DAW, peer to peer.">
+<meta name="description" content="Listen to a RELAY room: live audio from the connected DAWs, peer to peer.">
 <title>RELAY</title>
 <meta property="og:site_name" content="RELAY by Matari Audio">
 <meta property="og:title" content="Listen on RELAY">
-<meta property="og:description" content="Audio straight from the sharer's DAW, peer to peer. Open the link and press Listen.">
+<meta property="og:description" content="Live audio from the connected DAWs, peer to peer. Open the link and press Listen.">
 <meta property="og:image" content="https://relay.matari-audio.com/og.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="800">
@@ -140,6 +140,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path id="slash" style="display:none" d="M2.5 13.5l11-11"/></svg>
       </button>
     </div>
+    <div class="field room-only">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.5"/><path d="M2.5 14c0-3 2-4.5 5.5-4.5s5.5 1.5 5.5 4.5"/></svg>
+      <input id="name" aria-label="Your name" autocomplete="nickname" maxlength="24" placeholder="Your name (optional)">
+    </div>
     <div class="play">
       <button id="listen" aria-pressed="false">
         <svg class="go" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z"/></svg>
@@ -157,7 +161,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
       <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
     </div>
     <ul class="who room-only" id="who" hidden><li><span>In the room</span><span class="n" id="count"></span></li></ul>
-    <p class="about home-only">Audio from a DAW to your browser, peer to peer. <a href="https://matari-audio.com/relay">Get the plugin</a></p>
+    <p class="about home-only">Live audio from a RELAY room to your browser, peer to peer. <a href="https://matari-audio.com/relay">Get the plugin</a></p>
   </form>
   <div class="meters">
     <div class="scale" style="grid-area:1/1" aria-hidden="true"><span style="top:0">0</span><span style="top:10%">-6</span><span style="top:20%">-12</span><span style="top:40%">-24</span><span style="top:80%">-48</span></div>

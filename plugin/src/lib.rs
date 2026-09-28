@@ -61,6 +61,12 @@ pub struct RelayParams {
     pub input: FloatParam,
     #[param(name = "Internet quality")]
     pub quality: EnumParam<Quality>,
+    #[param(name = "Mute input", default = false)]
+    pub mute_input: BoolParam,
+    #[param(name = "Mute output", default = false)]
+    pub mute_output: BoolParam,
+    #[param(name = "Local passthrough", default = true)]
+    pub passthrough: BoolParam,
     /// False: Matari's pixel style. True: the smooth Barlow style.
     #[persist = "standard_ui"]
     pub standard_ui: RwLock<bool>,
@@ -128,6 +134,7 @@ pub struct Dsp {
     right: Vec<f32>,
     /// The input and output gains the last block ended on, linear.
     gain: [f32; 2],
+    dry: f32,
     /// Stops and joins the link thread on drop.
     _link: Option<Link>,
 }
@@ -143,6 +150,7 @@ impl Dsp {
             left: Vec::new(),
             right: Vec::new(),
             gain: [1.0; 2],
+            dry: 1.0,
         }
     }
 }
@@ -200,37 +208,37 @@ impl PluginLogic for Relay {
         let (l, r) = (&mut state.left[..n], &mut state.right[..n]);
         l.copy_from_slice(&buffer.input(0)[..n]);
         r.copy_from_slice(&buffer.input(buffer.num_input_channels().min(2) - 1)[..n]);
-        let gain = [params.input.value(), params.output.value()].map(db_to_linear);
-        match role {
-            Role::Share => {
-                ramp(l, state.gain[0], gain[0]);
-                ramp(r, state.gain[0], gain[0]);
-                if let Ok(chunk) = state.tx.write_chunk_uninit(n * 2) {
-                    chunk.fill_from_iter(l.iter().zip(r.iter()).flat_map(|(a, b)| [*a, *b]));
-                }
+        let gain = [
+            if params.mute_input.value() {
+                0.0
+            } else {
+                db_to_linear(params.input.value())
+            },
+            if params.mute_output.value() {
+                0.0
+            } else {
+                db_to_linear(params.output.value())
+            },
+        ];
+        if role != Role::Off {
+            ramp(l, state.gain[0], gain[0]);
+            ramp(r, state.gain[0], gain[0]);
+            if let Ok(chunk) = state.tx.write_chunk_uninit(n * 2) {
+                chunk.fill_from_iter(l.iter().zip(r.iter()).flat_map(|(a, b)| [*a, *b]));
             }
-            Role::Join => {
-                l.fill(0.0);
-                r.fill(0.0);
-                state.playout.render(l, r);
-                state
-                    .shared
-                    .latency
-                    .store(state.playout.target() as u32, Relaxed);
-                ramp(l, state.gain[0], gain[0]);
-                ramp(r, state.gain[0], gain[0]);
-                add(buffer, l, r, outs);
-            }
-            Role::Off => {}
         }
         let shared = &state.shared;
         shared.note_peak(Peak::InL, peak(l));
         shared.note_peak(Peak::InR, peak(r));
-        if role == Role::Share {
-            // Browser mics talking back: straight to our output.
+        let dry = f32::from(role == Role::Off || params.passthrough.value());
+        for ch in 0..outs {
+            ramp(&mut buffer.output(ch)[..n], state.dry, dry);
+        }
+        if role != Role::Off {
             l.fill(0.0);
             r.fill(0.0);
             state.playout.render(l, r);
+            shared.latency.store(state.playout.target() as u32, Relaxed);
             add(buffer, l, r, outs);
         }
         let mut out = [0.0; 2];
@@ -243,6 +251,7 @@ impl PluginLogic for Relay {
         shared.note_peak(Peak::OutL, out[0]);
         shared.note_peak(Peak::OutR, out[outs.saturating_sub(1)]);
         state.gain = gain;
+        state.dry = dry;
         ProcessStatus::Normal
     }
 
