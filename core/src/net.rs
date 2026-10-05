@@ -459,11 +459,14 @@ impl Session {
                         .then(|| h.offer(&id, s("kind") == "web", now))
                         .flatten();
                     signal.send(&match offer {
-                        Some(sdp) => json!({"t": "offer", "to": v["id"], "sdp": sdp}),
+                        Some(sdp) => {
+                            json!({"t": "offer", "to": v["id"], "sdp": sdp, "trickle": true})
+                        }
                         None => json!({"t": "deny", "to": v["id"]}),
                     });
                 }
                 ("answer", Some(h), _) => h.answer(&id, s("sdp")),
+                ("candidate", Some(h), _) => h.candidate(&id, s("candidate"), s("ufrag")),
                 ("leave", Some(h), _) => h.leave(&id),
                 ("host", ..) => (self.up, self.hello_sent) = (true, false),
                 ("offer", _, Some(g)) if self.host.is_none() => {
@@ -502,6 +505,22 @@ impl Session {
         now: Instant,
     ) {
         let rate = shared.rate.load(Relaxed);
+        if self.role == Role::Share
+            && self.peers.is_empty()
+            && self.rtc.as_ref().is_none_or(|h| h.live() == 0)
+        {
+            // Discard unheard audio in one chunk, without copying or mixing it.
+            let n = tx.slots();
+            if let Ok(chunk) = tx.read_chunk(n) {
+                chunk.commit_all();
+                self.frame += (n / CHANNELS) as u64;
+            }
+            self.waiting = None;
+            if let Some(h) = self.rtc.as_mut() {
+                h.audio(&[], &[], rate, now); // clear the previous listener's PCM
+            }
+            return;
+        }
         loop {
             let n = (tx.slots() / CHANNELS).min(wire::MAX_FRAMES);
             if n == 0 {
@@ -678,6 +697,48 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         false
+    }
+
+    #[test]
+    fn share_without_listeners_discards_audio_until_a_peer_arrives() {
+        let shared = Shared::new();
+        shared.rate.store(48_000, Relaxed);
+        let mut host = Session::build(&shared, Role::Share, false).unwrap();
+        let ((mut send, mut tx), (mut rx, heard)) = crate::rings();
+        let now = Instant::now();
+        // An unanswered offer still has no listener to encode for.
+        host.rtc
+            .as_mut()
+            .unwrap()
+            .offer("pending", true, now)
+            .unwrap();
+        let n = wire::MAX_FRAMES * CHANNELS * 4;
+        send.write_chunk_uninit(n)
+            .unwrap()
+            .fill_from_iter(std::iter::repeat_n(0.5, n));
+        host.send(&shared, &mut tx, &mut rx, now);
+        assert_eq!(tx.slots(), 0);
+        assert_eq!(heard.slots(), 0);
+        assert!(host.lan_mix.is_empty());
+        assert_eq!(host.frame, (n / CHANNELS) as u64);
+
+        let peer = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+        peer.set_nonblocking(true).unwrap();
+        host.peers.push(LanPeer {
+            addr: peer.local_addr().unwrap(),
+            seen: now,
+            voice: VecDeque::new(),
+            primed: false,
+        });
+        send.write_chunk_uninit(wire::MAX_FRAMES * CHANNELS)
+            .unwrap()
+            .fill_from_iter(std::iter::repeat(0.25));
+        host.send(&shared, &mut tx, &mut rx, now);
+        let mut buf = [0; 2048];
+        let (n, _) = peer.recv_from(&mut buf).unwrap();
+        let packet = wire::decode(&buf[..n]).unwrap();
+        assert_eq!(packet.kind, wire::AUDIO);
+        assert!(wire::samples(packet.samples).all(|s| s == 0.25));
     }
 
     /// Share → Join over loopback: the joiner gets the exact samples, a

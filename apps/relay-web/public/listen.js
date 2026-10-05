@@ -15,6 +15,33 @@ $("name").onchange = () => {
 window.onpopstate = () => location.reload();
 
 let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, on = false;
+let timing;
+const elapsed = (at) => at == null || !timing ? null : Math.round(at - timing.start);
+out.onplaying = () => { if (timing && pc?.connectionState === "connected") timing.audio ??= performance.now(); };
+
+// Local diagnostics only: no recurring telemetry or media is sent to Cloudflare.
+window.relayDiagnostics = async () => {
+  const conn = pc, report = await conn?.getStats();
+  const stats = report ? [...report.values()] : [];
+  const transport = stats.find((s) => s.type === "transport");
+  const pair = report?.get(transport?.selectedCandidatePairId)
+    ?? stats.find((s) => s.type === "candidate-pair" && s.nominated && s.state === "succeeded");
+  const audio = stats.find((s) => s.type === "inbound-rtp" && s.kind === "audio");
+  const ms = (seconds) => seconds == null ? null : Math.round(seconds * 1000);
+  return {
+    state: conn?.connectionState ?? "idle",
+    setupMs: timing ? Object.fromEntries(["socket", "offer", "answer", "ice", "connected", "audio"]
+      .map((phase) => [phase, elapsed(timing[phase])])) : null,
+    rttMs: ms(pair?.currentRoundTripTime),
+    localCandidate: report?.get(pair?.localCandidateId)?.candidateType ?? null,
+    remoteCandidate: report?.get(pair?.remoteCandidateId)?.candidateType ?? null,
+    jitterMs: ms(audio?.jitter),
+    jitterBufferMs: audio?.jitterBufferEmittedCount > 0
+      ? ms(audio.jitterBufferDelay / audio.jitterBufferEmittedCount) : null,
+    packetsReceived: audio?.packetsReceived ?? 0,
+    packetsLost: audio?.packetsLost ?? 0,
+  };
+};
 // Talk: the mic stream while on, its level meter, and whether this room's
 // plugin can hear browsers (older RELAYs offer a send-only track).
 let mic, micLevel, canTalk = true;
@@ -66,13 +93,15 @@ async function hello() {
 
 function connect() {
   clearTimeout(retry);
+  timing = { start: performance.now() };
   const sock = (ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/${room}/peer`));
+  sock.onopen = () => { if (sock === ws) timing.socket = performance.now(); };
   sock.onmessage = async ({ data }) => {
     if (data === "pong") return;
     const m = JSON.parse(data);
     if (m.t === "ice") { servers = m.servers; tries = 0; status("Connecting"); hello(); }
     else if (m.t === "host") hello();
-    else if (m.t === "offer") answer(m.sdp);
+    else if (m.t === "offer") answer(m.sdp, m.servers, m.trickle === true);
     else if (m.t === "roster") roster(m);
     else if (m.code === "no-host") status("Waiting for host", "warn");
     else if (m.code === "denied") { stop(); status("Wrong password", "bad"); $("pw").focus(); }
@@ -86,9 +115,32 @@ function connect() {
   };
 }
 
-async function answer(sdp) {
+async function answer(sdp, acceptedServers, trickle = false) {
   pc?.close();
-  const conn = (pc = new RTCPeerConnection({ iceServers: servers }));
+  if (timing) timing.offer = performance.now();
+  const sock = ws;
+  const conn = (pc = new RTCPeerConnection({ iceServers: acceptedServers ?? servers }));
+  const send = (msg) => {
+    if (conn === pc && sock === ws && sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify(msg));
+  };
+  const ufrag = /^a=ice-ufrag:(.+)$/m.exec(sdp)?.[1].trim();
+  const hasRelay = (acceptedServers ?? servers).some((s) => [s.urls].flat().some((url) => /^turns?:/.test(url)));
+  let answerSent = false, gathered;
+  const candidates = [];
+  const usable = new Promise((done) => { gathered = done; });
+  conn.onicecandidate = ({ candidate }) => {
+    if (conn !== pc) return;
+    if (!candidate || (!hasRelay && candidate.type === "srflx")) gathered();
+    if (trickle && candidate) {
+      const msg = { t: "candidate", candidate: candidate.candidate, ufrag };
+      if (answerSent) send(msg); else candidates.push(msg);
+    }
+  };
+  conn.onicegatheringstatechange = () => {
+    if (conn !== pc || conn.iceGatheringState !== "complete") return;
+    if (timing) timing.ice = performance.now();
+    gathered();
+  };
   conn.ontrack = ({ track, streams, receiver }) => {
     // Ask for the smallest jitter buffer the browser allows.
     if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
@@ -101,7 +153,7 @@ async function answer(sdp) {
   conn.onconnectionstatechange = () => {
     if (conn !== pc) return;
     const s = conn.connectionState;
-    if (s === "connected") status("Live", "ok");
+    if (s === "connected") { if (timing) timing.connected = performance.now(); status("Live", "ok"); }
     else if (s === "failed") { status("Reconnecting", "warn"); hello(); }
   };
   await conn.setRemoteDescription({ type: "offer", sdp });
@@ -114,14 +166,18 @@ async function answer(sdp) {
   if (!canTalk && mic) talk(false);
   micButton();
   await conn.setLocalDescription(await conn.createAnswer());
-  // No trickle: send the answer once every candidate is in it.
-  if (conn.iceGatheringState !== "complete") {
-    await new Promise((done) => {
-      conn.onicegatheringstatechange = () => conn.iceGatheringState === "complete" && done();
-      setTimeout(done, 5000); // a dead STUN/TURN server must not stall us forever
-    });
+  // New hosts can start ICE immediately; discoveries follow over the same socket.
+  // Legacy hosts get a gathered answer as soon as a public route is available.
+  if (!trickle && conn.iceGatheringState !== "complete") {
+    const timeout = setTimeout(gathered, 5000);
+    await usable;
+    clearTimeout(timeout);
   }
-  if (conn === pc) ws?.send(JSON.stringify({ t: "answer", sdp: conn.localDescription.sdp }));
+  if (conn !== pc || sock !== ws) return;
+  send({ t: "answer", sdp: conn.localDescription.sdp });
+  if (timing) timing.answer = performance.now();
+  answerSent = true;
+  for (const candidate of candidates) send(candidate);
   // Voice needs far less than music: cap the mic at 32 kbps.
   const sender = t?.sender, params = sender?.getParameters();
   if (params?.encodings?.length) {

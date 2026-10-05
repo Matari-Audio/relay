@@ -16,6 +16,8 @@
     // Split from v2: a class can only be deleted once no live version binds it.
     { "tag": "v3-drop-session-room", "deleted_classes": ["SessionRoom"] }
   ],
-  // Secrets: TURN_KEY_ID, TURN_KEY_TOKEN (wrangler secret put). Optional var EXTRA_ICE (JSON).
+  // TURN stays off until deliberately enabled, even when credentials are configured.
+  "vars": { "TURN_ENABLED": "false" },
+  // Opt-in secrets: TURN_KEY_ID, TURN_KEY_TOKEN. Optional var EXTRA_ICE (JSON).
   "observability": { "enabled": true, "head_sampling_rate": 0.01 }
 }

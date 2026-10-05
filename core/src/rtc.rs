@@ -486,6 +486,24 @@ impl Host {
         p.next = drain(&mut p.rtc, &self.ice, |_| {}).unwrap_or(p.next);
     }
 
+    /// Browser candidates arrive after the answer. The offer's ICE username
+    /// keeps late candidates from an earlier connection out of a replacement.
+    pub fn candidate(&mut self, id: &str, candidate: &str, ufrag: &str) {
+        let Some(p) = self.peers.iter_mut().find(|p| p.id == id) else {
+            return;
+        };
+        if !p.web
+            || p.pending.is_some()
+            || p.rtc.direct_api().local_ice_credentials().ufrag != ufrag
+        {
+            return;
+        }
+        if let Ok(c) = Candidate::from_sdp_string(candidate) {
+            p.rtc.add_remote_candidate(c);
+            p.next = Self::drain(p, &self.ice);
+        }
+    }
+
     pub fn leave(&mut self, id: &str) {
         self.peers.retain(|p| p.id != id);
     }
@@ -883,6 +901,54 @@ impl Guest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_candidates_require_an_answer_and_current_offer_generation() {
+        let now = Instant::now();
+        let mut host = Host::new(false).unwrap();
+        let mut guest = Guest::new().unwrap();
+        let offer = host.offer("phone", true, now).unwrap();
+        let ufrag = host.peers[0].rtc.direct_api().local_ice_credentials().ufrag;
+        let c = guest.ice.candidates().remove(0);
+        let sdp = c.to_sdp_string();
+        let absent = |host: &mut Host| !host.peers[0].rtc.direct_api().invalidate_candidate(&c);
+        host.candidate("phone", &sdp, &ufrag);
+        assert!(absent(&mut host), "candidate before answer is ignored");
+        let without_candidates = |sdp: &str| {
+            sdp.lines()
+                .filter(|line| !line.starts_with("a=candidate:"))
+                .collect::<Vec<_>>()
+                .join("\r\n")
+                + "\r\n"
+        };
+        let answer = guest.offer(&without_candidates(&offer), now).unwrap();
+        host.answer("phone", &without_candidates(&answer));
+        host.candidate("phone", &sdp, "oldGeneration");
+        assert!(absent(&mut host), "stale candidate is ignored");
+        host.candidate("phone", "malformed candidate", &ufrag);
+        assert!(absent(&mut host));
+        host.candidate("phone", &sdp, &ufrag);
+        assert!(!absent(&mut host), "late candidate reaches the ICE agent");
+        host.candidate("phone", &sdp, &ufrag);
+        let (_, (mut rx, _)) = crate::rings();
+        let start = Instant::now();
+        while host.live() == 0 && start.elapsed() < Duration::from_secs(5) {
+            host.poll(Instant::now());
+            guest.poll(Instant::now(), 48_000, &mut rx);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            host.live(),
+            1,
+            "candidate-free SDP connects through trickle ICE"
+        );
+        let answer = guest
+            .offer(&host.offer("phone", true, now).unwrap(), now)
+            .unwrap();
+        host.answer("phone", &without_candidates(&answer));
+        host.candidate("phone", &sdp, &ufrag);
+        assert!(absent(&mut host), "previous offer cannot alter replacement");
+    }
 
     #[test]
     fn stun_binding_round_trip() {
