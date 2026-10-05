@@ -109,6 +109,10 @@ STUN sends up to three probes, 500 ms apart, on each socket with a matching
 server address family. Router mapping begins concurrently. Discoveries are
 added to each existing ICE agent and forwarded over signaling once.
 
+Audio reordering waits for at most four packets or 40 ms before moving past a
+missing packet, replacing str0m's 15-packet/one-second defaults. Contiguous audio
+is delivered immediately. The adaptive playout buffer still absorbs jitter.
+
 Plugin decoders accept mono and stereo Opus. Missing single-frame packets
 covering up to 60 ms use the native decoder's concealment when the next packet
 arrives, without adding a recovery wait. Longer gaps, including intentional silence, add no concealment

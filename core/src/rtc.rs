@@ -46,6 +46,9 @@ const RECONNECT_AFTER: Duration = Duration::from_secs(5);
 fn new_rtc(now: Instant, bwe: bool) -> Rtc {
     let mut cfg = Rtc::builder()
         .clear_codecs()
+        // A lost packet must not hold music behind str0m's 15-packet/1 s defaults.
+        .set_reordering_size_audio(4)
+        .set_reordering_timeout_audio(Some(Duration::from_millis(40)))
         .enable_bwe(bwe.then(|| Bitrate::bps(MAX_BPS.into())));
     let opus = FormatParams {
         min_p_time: Some(10),
@@ -1277,6 +1280,65 @@ mod tests {
             FRAME * CHANNELS,
             "long silence adds no concealment backlog"
         );
+    }
+
+    #[test]
+    fn one_lost_rtp_packet_does_not_hold_audio_for_150_ms() {
+        let now = Instant::now();
+        let mut host = Host::new(false).unwrap();
+        let mut guest = Guest::new().unwrap();
+        let answer = guest
+            .offer(&host.offer("plugin", false, now).unwrap(), now)
+            .unwrap();
+        host.answer("plugin", &answer);
+        let (_, (mut rx, _)) = crate::rings();
+        while (host.live() == 0 || !guest.live()) && now.elapsed() < Duration::from_secs(5) {
+            host.poll(Instant::now());
+            guest.poll(Instant::now(), 48_000, &mut rx);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(guest.live());
+        let now = Instant::now();
+        let mut packets = 0;
+        let mut received = Vec::new();
+        for i in 0..3 {
+            let at = now + Duration::from_millis(i * 10);
+            host.audio(&[0.2; FRAME * CHANNELS], &[], 48_000, at);
+            host.poll(at);
+            while let Some((local, from, n)) = guest.ice.recv() {
+                let data = &guest.ice.buf[..n];
+                if data.len() >= 12 && data[0] & 0xc0 == 0x80 && data[1] & 0x7f == *PT {
+                    packets += 1;
+                    if packets == 2 {
+                        continue;
+                    } // Simulate one encrypted RTP packet lost in transit.
+                }
+                let rtc = &mut guest.rtc.as_mut().unwrap().0;
+                let packet = Receive::new(Protocol::Udp, from, local, data).unwrap();
+                rtc.handle_input(Input::Receive(at, packet)).unwrap();
+                drain(rtc, &guest.ice, |e| {
+                    if let Event::MediaData(m) = e {
+                        received.push(m.time.numer());
+                    }
+                });
+            }
+        }
+        assert_eq!(packets, 3);
+        assert_eq!(received, [0], "contiguous audio has no reordering wait");
+        for (ms, expected) in [(59, vec![0]), (61, vec![0, 960])] {
+            let rtc = &mut guest.rtc.as_mut().unwrap().0;
+            rtc.handle_input(Input::Timeout(now + Duration::from_millis(ms)))
+                .unwrap();
+            drain(rtc, &guest.ice, |e| {
+                if let Event::MediaData(m) = e {
+                    received.push(m.time.numer());
+                }
+            });
+            assert_eq!(
+                received, expected,
+                "later audio waits at most 40 ms for the missing packet"
+            );
+        }
     }
 
     #[test]

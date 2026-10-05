@@ -8,6 +8,7 @@
 - Browser answers start immediately with compatible hosts. Late STUN and router addresses now reach connections already being established, in both directions.
 - STUN probes IPv4 and IPv6 interfaces; router mapping starts alongside discovery. Brief network interruptions get a recovery window, and failed plugin joins retry automatically.
 - Mono browser microphones decode correctly. Short losses in single-frame Opus streams use concealment without adding a wait; long silence does not create an audio backlog.
+- A missing packet no longer holds later audio behind the WebRTC library's 15-packet/one-second recovery defaults; reordering is limited to four packets or 40 ms.
 - Browser diagnostics report local setup times, RTT, jitter and packet loss. Public GitHub Actions builds updated installers automatically after plugin changes land on main.
 
 ## 0.5.0
