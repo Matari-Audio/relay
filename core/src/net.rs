@@ -326,6 +326,12 @@ impl Session {
                 }
                 let internet = self.rtc.as_mut().map_or(0, |h| {
                     h.poll(now);
+                    for (id, candidate, ufrag) in h.trickle() {
+                        if let Some(signal) = &self.signal {
+                            let to: Value = serde_json::from_str(&id).unwrap_or(Value::Null);
+                            signal.send(&json!({"t":"candidate", "to":to, "candidate":candidate, "ufrag":ufrag}));
+                        }
+                    }
                     h.sync_talkers(&mut talkers);
                     let cap = shared.bitrate_cap.load(Relaxed);
                     h.set_cap(if cap == 0 { crate::MAX_BPS } else { cap });
@@ -376,8 +382,22 @@ impl Session {
                 let lan = self.host.is_some() && fresh(self.last_audio);
                 let mut internet = false;
                 if let (None, Some(g)) = (self.host, self.guest.as_mut()) {
-                    g.poll(now, shared.rate.load(Relaxed), rx);
-                    internet = fresh(g.last_audio);
+                    let cap = shared.bitrate_cap.load(Relaxed);
+                    shared.bitrate.store(
+                        g.set_cap(if cap == 0 { crate::MAX_BPS } else { cap }),
+                        Relaxed,
+                    );
+                    if g.poll(now, shared.rate.load(Relaxed), rx) {
+                        self.hello_sent = false;
+                    }
+                    for (candidate, ufrag) in g.trickle() {
+                        if let Some(signal) = &self.signal {
+                            signal.send(
+                                &json!({"t":"candidate", "candidate":candidate, "ufrag":ufrag}),
+                            );
+                        }
+                    }
+                    internet = g.live();
                 }
                 shared.peers.store(u32::from(lan || internet), Relaxed);
                 if shared.net() != Net::RateMismatch || !lan {
@@ -467,6 +487,7 @@ impl Session {
                 }
                 ("answer", Some(h), _) => h.answer(&id, s("sdp")),
                 ("candidate", Some(h), _) => h.candidate(&id, s("candidate"), s("ufrag")),
+                ("candidate", _, Some(g)) => g.candidate(s("candidate"), s("ufrag")),
                 ("leave", Some(h), _) => h.leave(&id),
                 ("host", ..) => (self.up, self.hello_sent) = (true, false),
                 ("offer", _, Some(g)) if self.host.is_none() => {
@@ -824,6 +845,10 @@ mod tests {
             }
             for m in from_host.try_iter() {
                 let v: Value = serde_json::from_str(&m).unwrap();
+                if v["t"] == "candidate" {
+                    to_join.send(Msg::Text(v.to_string())).unwrap();
+                    continue;
+                }
                 assert_eq!(v["t"], "offer", "host denied the joiner: {v}");
                 assert_eq!(v["to"], 7);
                 assert!(

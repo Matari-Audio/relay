@@ -20,6 +20,7 @@ function page(servers = []) {
   class Peer {
     constructor() { conns.push(this); this.iceGatheringState = "new"; }
     async setRemoteDescription() {}
+    async addIceCandidate(c) { (this.remoteCandidates ??= []).push(c); }
     getTransceivers() { return [{ sender: { getParameters: () => ({}) } }]; }
     async createAnswer() { return { type: "answer", sdp: "answer with current candidates" }; }
     async setLocalDescription(description) {
@@ -34,7 +35,7 @@ function page(servers = []) {
   const context = vm.createContext({
     document: { getElementById: element }, window: {}, localStorage: {},
     location: { pathname: "/test-room" }, performance: { now: () => 100 },
-    RTCPeerConnection: Peer, WebSocket: { OPEN: 1 }, slug: (s) => s,
+    RTCPeerConnection: Peer, WebSocket: { OPEN: 1 }, slug: (s) => s, auth: async () => "0123456789abcdef",
     setTimeout: (fn) => { timers.add(fn); return fn; }, clearTimeout: (fn) => timers.delete(fn),
     setInterval() {}, requestAnimationFrame() {}, socket, serversForTest: servers,
   });
@@ -57,6 +58,23 @@ test("early answers preserve candidate order, legacy relay gathering and stale-c
   assert.equal(modern.sent.length, count, "closed peer cannot leak stale candidates");
   modern.conns[1].onicecandidate({ candidate });
   assert.equal(modern.sent.at(-1).t, "candidate", "late candidates are forwarded");
+  await vm.runInContext(`candidate(${JSON.stringify({ candidate: candidate.candidate, ufrag: "oldOffer" })})`, modern.context);
+  assert.equal(modern.conns[1].remoteCandidates, undefined, "ignore stale host candidates");
+  await vm.runInContext(`candidate(${JSON.stringify({ candidate: candidate.candidate, ufrag: "hostGeneration" })})`, modern.context);
+  assert.equal(modern.conns[1].remoteCandidates[0].candidate, candidate.candidate);
+  vm.runInContext("on = true", modern.context);
+  const current = modern.conns[1];
+  current.connectionState = "disconnected";
+  current.onconnectionstatechange();
+  assert.equal(modern.timers.size, 1);
+  current.connectionState = "connected";
+  current.onconnectionstatechange();
+  assert.equal(modern.timers.size, 0, "recovery cancels the replacement timer");
+  current.connectionState = "disconnected";
+  current.onconnectionstatechange();
+  [...modern.timers][0]();
+  await new Promise((done) => setImmediate(done));
+  assert.equal(modern.sent.at(-1).t, "hello", "persistent interruption requests a fresh offer");
   modern.conns[1].getStats = async () => new Map([
     ["transport", { type: "transport", selectedCandidatePairId: "pair" }],
     ["pair", { type: "candidate-pair", currentRoundTripTime: 0.023, localCandidateId: "local", remoteCandidateId: "remote" }],

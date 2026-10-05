@@ -5,7 +5,7 @@ Three paths. The operator runs signaling only; audio never touches it.
 | Path | Transport | Audio |
 |---|---|---|
 | Plugin ↔ plugin, same LAN | UDP, port 17492+ | f32 PCM, lossless |
-| Plugin ↔ plugin, internet | WebRTC (str0m) | Opus 48 kHz stereo, 192 kbps default ceiling, FEC, 10 ms frames |
+| Plugin ↔ plugin, internet | WebRTC (str0m) | Opus 48 kHz stereo, 192 kbps default ceiling, 10 ms frames |
 | Plugins → browser | WebRTC | host and joined-plugin mix |
 
 ## LAN
@@ -50,7 +50,8 @@ or when its connection fails.
 | host → object → peer | `{"t":"offer","to":id,"sdp","trickle"?:true}`, forwarded as `{"t":"offer","sdp","servers"?:[RTCIceServer…],"trickle"?:true}`; browser offers include ICE servers |
 | host → object → peer | `{"t":"deny","to":id}`, forwarded as `{"t":"error","code":"denied"}` |
 | peer → object → host | `{"t":"answer","sdp"}`, forwarded as `{"t":"answer","id","sdp"}` |
-| accepted browser → object → host | `{"t":"candidate","candidate":"candidate:…","ufrag":"<offer ICE username>"}`, forwarded with `id` |
+| accepted peer → object → host | `{"t":"candidate","candidate":"candidate:…","ufrag":"<offer ICE username>"}`, forwarded with `id` |
+| host → object → accepted peer | `{"t":"candidate","to":id,"candidate":"candidate:…","ufrag":"<offer ICE username>"}`, forwarded without `to` |
 | object → host | `{"t":"leave","id"}` when a peer socket closes |
 | object → peers | `{"t":"error","code":"no-host"}` when the host socket closes |
 | object → peer | `{"t":"error","code":"full"}`, then close: the 33rd peer |
@@ -69,11 +70,13 @@ or when its connection fails.
 - Hosts include known candidates in offers. With `trickle:true`, browsers send
   answers immediately, then forward candidates as they are discovered. The host
   checks `ufrag` against its current offer, rejecting stale connection candidates.
+  Hosts and joining plugins forward late STUN/router candidates too. Receivers
+  check the offer generation before adding them; browsers also wait for the remote
+  description to be installed. Unknown messages are ignored by older clients.
   Older plugins receive an answer once STUN yields a public candidate or gathering
   finishes, with a 5 s ceiling. If TURN was deliberately enabled, legacy answers
-  wait for full gathering so relay candidates are included. Plugin joiners still
-  include their known candidates in their answer; late host port mappings only
-  help subsequent peers.
+  wait for full gathering so relay candidates are included. Plugin joiners include
+  their known candidates in their answer and then forward later discoveries.
 - Initial `ice` messages contain only `stun:stun.cloudflare.com:3478`.
   Once the host accepts a browser by sending an offer, the object includes
   `servers` in that offer. TURN is disabled by default: only the exact string
@@ -90,7 +93,8 @@ or when its connection fails.
 Limits in the object:
 - At most 32 peers per room.
 - Messages over 16 KB are dropped.
-- More than 20 messages a second from one socket closes it.
+- More than 20 messages a second from a peer socket closes it. Hosts get 80
+  to allow simultaneous offers and candidate discoveries across a room.
 
 ## WebRTC media
 
@@ -98,8 +102,22 @@ The host offers one `sendrecv` audio m-line: Opus/48000/2, `stereo=1;
 sprop-stereo=1; maxaveragebitrate=510000; useinbandfec=1; minptime=10`, 10 ms
 frames, Opus `RESTRICTED_LOWDELAY`. Its candidates are:
 - host candidates, IPv4 and IPv6;
-- a server-reflexive candidate from STUN;
+- server-reflexive candidates from STUN on IPv4 and IPv6 sockets;
 - a NAT-PMP/PCP or UPnP mapped candidate when the router grants one.
+
+STUN sends up to three probes, 500 ms apart, on each socket with a matching
+server address family. Router mapping begins concurrently. Discoveries are
+added to each existing ICE agent and forwarded over signaling once.
+
+Plugin decoders accept mono and stereo Opus. Missing single-frame packets
+covering up to 60 ms use the native decoder's concealment when the next packet
+arrives, without adding a recovery wait. Longer gaps, including intentional silence, add no concealment
+backlog. The restricted-low-delay encoder uses CELT; `useinbandfec=1` negotiates
+Opus capability with browsers but does not mean plugin packets contain SILK FEC.
+Joining plugins honor their own quality ceiling and gate sustained silence,
+keeping the encoder and RTP clock running for immediate resumption. An ICE
+disconnection gets five seconds to recover before a plugin join retries; the
+browser requests a new offer after three seconds of persistent disconnection.
 
 A host at 44.1 kHz resamples to 48 kHz before encoding. A joining plugin
 does the same for its DAW input and decodes the host stream to its own rate.

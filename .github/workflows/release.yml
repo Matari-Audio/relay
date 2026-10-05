@@ -3,7 +3,7 @@ name: Release
 # Modeled on KURV's release.yml. Builds CLAP + VST3 for Linux and Windows, and
 # CLAP + VST3 + AU for universal macOS (signed, notarized .pkg via
 # scripts/build-macos-signed.sh).
-# A manual run only builds and uploads workflow artifacts. Pushing a v* tag
+# Main-branch changes and manual runs build and upload workflow artifacts. Pushing a v* tag
 # also creates the GitHub Release and publishes to the R2 manifest that drives
 # the matari-audio.com download panel (scripts/publish-release.py).
 # All secrets are Matari-Audio org secrets, same names as KURV / drop-recorder.
@@ -11,6 +11,14 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'plugin/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/build-macos-signed.sh'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:

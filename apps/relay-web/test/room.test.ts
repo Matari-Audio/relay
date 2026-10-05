@@ -125,6 +125,17 @@ it("routes offer to the peer and answer back to the host", async () => {
   expect(await h.next()).toEqual({
     t: "candidate", id: id2, candidate: "candidate:1 1 udp 1 203.0.113.1 1234 typ srflx", ufrag: "offerGeneration",
   });
+  const candidate = { t: "candidate", candidate: "candidate:2 1 udp 1 203.0.113.2 2345 typ srflx", ufrag: "offerGeneration" };
+  h.send({ ...candidate, to: id2 });
+  expect(await p2.next()).toEqual(candidate);
+  p1.send(candidate); // A plugin that hasn't been accepted cannot trickle.
+  h.send({ t: "offer", to: id1, sdp: "plugin offer" });
+  expect(await p1.next()).toMatchObject({ t: "offer", sdp: "plugin offer" });
+  p1.send(candidate);
+  expect(await h.next()).toEqual({ ...candidate, id: id1 });
+  // Concurrent candidate discoveries should not disconnect the room host.
+  for (let i = 0; i < 24; i++) h.send({ ...candidate, to: id1 });
+  for (let i = 0; i < 24; i++) expect(await p1.next()).toEqual(candidate);
 });
 
 it("forwards deny as denied", async () => {

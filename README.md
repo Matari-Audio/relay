@@ -41,6 +41,12 @@ pnpm install && pnpm -r test && pnpm -r build
 `cargo test -p relay-plugin` also renders the editor to
 `$TMPDIR/relay-editor-{share,join,about}.png`, so you can look at it without a DAW.
 
+The public [Release workflow](https://github.com/Matari-Audio/relay/actions/workflows/release.yml)
+builds Linux and Windows CLAP/VST3 archives and a signed, notarized universal
+macOS CLAP/VST3/AU installer. It runs automatically for plugin/core changes on
+`main`, or manually for a branch. Those builds are downloadable workflow artifacts;
+only a matching `v<version>` tag publishes a stable release and updates the site.
+
 ## Deploying signaling
 
 `apps/relay-web` deploys with `wrangler deploy`. TURN is **disabled by default**:
@@ -54,8 +60,20 @@ for a self-hosted relay. Relayed traffic may incur charges. Set the flag back
 to `"false"` and deploy to disable it; credentials already issued can remain
 valid until their 24 h expiration.
 
-Without TURN, some restrictive NATs/firewalls prevent internet connections.
-LAN is unaffected.
+IPv4 and IPv6 interfaces are probed with STUN while router port mapping runs
+in parallel. Newly discovered addresses are forwarded to current peers, so
+they can help the first connection too. Brief interruptions can recover before
+a replacement connection is requested.
+
+| Network | Direct connection support |
+|---|---|
+| Same LAN | Lossless UDP with automatic discovery |
+| Typical home internet | IPv4 STUN, optional router mapping and IPv6 candidates |
+| Mobile data / CGNAT | Direct ICE can work with a reachable peer; restrictive NATs can still block it |
+| Networks blocking UDP | Direct audio cannot work; no paid relay is enabled automatically |
+
+TURN remains optional for browser listeners and is not implemented in the
+native plugins. Neither IPv6 nor TURN guarantees access through every firewall.
 
 New plugin instances default to a 192 kbps internet quality ceiling (64, 128,
 192 or 510 kbps). Saved quality settings keep their positions; the former

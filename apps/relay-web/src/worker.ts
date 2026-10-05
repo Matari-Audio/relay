@@ -150,10 +150,12 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
+    const tag = ws.deserializeAttachment() as Tag;
     const second = Math.floor(Date.now() / 1000);
     const rate = this.#rate.get(ws);
     if (rate?.second === second) {
-      if (++rate.count > MAX_PER_SECOND) return ws.close(1008, "rate");
+      // A host negotiates with many peers at once; peer limits stay unchanged.
+      if (++rate.count > (tag.role === "host" ? MAX_PER_SECOND * 4 : MAX_PER_SECOND)) return ws.close(1008, "rate");
     } else this.#rate.set(ws, { second, count: 1 });
 
     if (typeof data !== "string" || data.length > MAX_BYTES) return;
@@ -164,7 +166,6 @@ export class Room extends DurableObject<Env> {
       return;
     }
     if (!msg || typeof msg !== "object") return;
-    const tag = ws.deserializeAttachment() as Tag;
 
     if (tag.role === "host") {
       const to = this.ctx.getWebSockets(`id:${msg.to}`)[0];
@@ -181,6 +182,12 @@ export class Room extends DurableObject<Env> {
       } else if (msg.t === "deny") {
         send(to, { t: "error", code: "denied" });
         this.admit(to, false);
+      } else if (msg.t === "candidate" && this.host() === ws
+        && to?.readyState === WebSocket.OPEN
+        && (to.deserializeAttachment() as { in?: boolean }).in
+        && typeof msg.candidate === "string" && msg.candidate.length <= 2048
+        && typeof msg.ufrag === "string" && /^[a-zA-Z0-9+/]{4,256}$/.test(msg.ufrag)) {
+        send(to, { t: "candidate", candidate: msg.candidate, ufrag: msg.ufrag });
       }
       return;
     }
@@ -199,7 +206,7 @@ export class Room extends DurableObject<Env> {
       }
     } else if (msg.t === "answer" && typeof msg.sdp === "string") {
       send(host, { t: "answer", id: tag.id, sdp: msg.sdp });
-    } else if (msg.t === "candidate" && tag.in && tag.kind === "web"
+    } else if (msg.t === "candidate" && tag.in
       && typeof msg.candidate === "string" && msg.candidate.length <= 2048
       && typeof msg.ufrag === "string" && /^[a-zA-Z0-9+/]{4,256}$/.test(msg.ufrag)) {
       send(host, { t: "candidate", id: tag.id, candidate: msg.candidate, ufrag: msg.ufrag });

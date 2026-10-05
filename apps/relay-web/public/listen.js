@@ -102,6 +102,7 @@ function connect() {
     if (m.t === "ice") { servers = m.servers; tries = 0; status("Connecting"); hello(); }
     else if (m.t === "host") hello();
     else if (m.t === "offer") answer(m.sdp, m.servers, m.trickle === true);
+    else if (m.t === "candidate") candidate(m);
     else if (m.t === "roster") roster(m);
     else if (m.code === "no-host") status("Waiting for host", "warn");
     else if (m.code === "denied") { stop(); status("Wrong password", "bad"); $("pw").focus(); }
@@ -116,14 +117,21 @@ function connect() {
 }
 
 async function answer(sdp, acceptedServers, trickle = false) {
+  clearTimeout(pc?.relayRetry);
   pc?.close();
-  if (timing) timing.offer = performance.now();
+  if (timing) {
+    timing.offer = performance.now();
+    delete timing.answer;
+    delete timing.connected;
+    delete timing.audio;
+  }
   const sock = ws;
   const conn = (pc = new RTCPeerConnection({ iceServers: acceptedServers ?? servers }));
   const send = (msg) => {
     if (conn === pc && sock === ws && sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify(msg));
   };
   const ufrag = /^a=ice-ufrag:(.+)$/m.exec(sdp)?.[1].trim();
+  conn.relayUfrag = ufrag;
   const hasRelay = (acceptedServers ?? servers).some((s) => [s.urls].flat().some((url) => /^turns?:/.test(url)));
   let answerSent = false, gathered;
   const candidates = [];
@@ -152,11 +160,19 @@ async function answer(sdp, acceptedServers, trickle = false) {
   };
   conn.onconnectionstatechange = () => {
     if (conn !== pc) return;
+    clearTimeout(conn.relayRetry);
     const s = conn.connectionState;
     if (s === "connected") { if (timing) timing.connected = performance.now(); status("Live", "ok"); }
     else if (s === "failed") { status("Reconnecting", "warn"); hello(); }
+    else if (s === "disconnected") {
+      status("Reconnecting", "warn");
+      conn.relayRetry = setTimeout(() => {
+        if (!on || conn !== pc || conn.connectionState !== "disconnected") return;
+        if (ws?.readyState === WebSocket.OPEN) hello(); else connect();
+      }, 3000);
+    }
   };
-  await conn.setRemoteDescription({ type: "offer", sdp });
+  await (conn.relayRemote = conn.setRemoteDescription({ type: "offer", sdp }));
   const t = conn.getTransceivers()[0];
   canTalk = /a=sendrecv/.test(sdp);
   if (t && canTalk) {
@@ -184,6 +200,14 @@ async function answer(sdp, acceptedServers, trickle = false) {
     params.encodings[0].maxBitrate = 32_000;
     sender.setParameters(params).catch(() => {});
   }
+}
+
+async function candidate({ candidate, ufrag }) {
+  const conn = pc;
+  if (!conn || conn.relayUfrag !== ufrag) return;
+  await conn.relayRemote;
+  if (conn !== pc) return;
+  await conn.addIceCandidate({ candidate, sdpMid: conn.getTransceivers()[0]?.mid ?? "0" }).catch(() => {});
 }
 
 // Play through Web Audio so the fader works everywhere (iOS ignores
@@ -253,6 +277,7 @@ function stop() {
   const sock = ws;
   ws = undefined;
   sock?.close();
+  clearTimeout(pc?.relayRetry);
   pc?.close();
   pc = undefined;
   out.srcObject = null;
