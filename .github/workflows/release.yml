@@ -32,6 +32,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Standard GitHub-hosted runners are free for this public repository.
+  # Keep these labels; larger runners are paid even for public repositories.
   build:
     name: Build ${{ matrix.os }}
     strategy:
@@ -79,6 +81,7 @@ jobs:
           name: relay-${{ matrix.os }}
           path: target/dist/*.zip
           if-no-files-found: error
+          retention-days: 7
 
   macos:
     name: Build, sign and notarize macOS
@@ -115,6 +118,7 @@ jobs:
           name: relay-macos
           path: target/macos-release/*.pkg
           if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: GitHub Release and matari-audio.com
