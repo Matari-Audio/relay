@@ -3,10 +3,12 @@
 ## 0.5.1
 
 - New instances use a 192 kbps internet ceiling. Joining plugins now apply the selected ceiling to their return audio too.
+- Share and Join expose the quality ceiling in the editor; changes apply during playback without reconnecting. Join's ceiling controls its outgoing return audio.
 - Sharing with no listeners skips audio encoding. Both plugin directions stop sending audio packets during sustained silence.
 - TURN stays disabled unless the operator explicitly enables it. Normal connections use direct P2P audio and free STUN discovery.
 - Browser answers start immediately with compatible hosts. Late STUN and router addresses now reach connections already being established, in both directions.
 - STUN probes IPv4 and IPv6 interfaces; router mapping starts alongside discovery. Brief network interruptions get a recovery window, and failed plugin joins retry automatically.
+- Native signaling races alternate IPv4/IPv6 addresses after 250 ms instead of waiting five seconds for each unreachable route.
 - Mono browser microphones decode correctly. Short losses in single-frame Opus streams use concealment without adding a wait; long silence does not create an audio backlog.
 - A missing packet no longer holds later audio behind the WebRTC library's 15-packet/one-second recovery defaults; reordering is limited to four packets or 40 ms.
 - Browser diagnostics report local setup times, RTT, jitter and packet loss. Public GitHub Actions builds updated installers automatically after plugin changes land on main.
