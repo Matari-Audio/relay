@@ -30,7 +30,7 @@ pub enum Mode {
 pub enum Quality {
     #[name = "510 kbps"]
     Max,
-    #[name = "256 kbps"]
+    #[name = "192 kbps"]
     High,
     #[name = "128 kbps"]
     Medium,
@@ -42,7 +42,7 @@ impl Quality {
     pub fn bps(&self) -> u32 {
         match self {
             Self::Max => relay_core::MAX_BPS,
-            Self::High => 256_000,
+            Self::High => 192_000,
             Self::Medium => 128_000,
             Self::Low => 64_000,
         }
@@ -59,7 +59,7 @@ pub struct RelayParams {
     /// Level of the room's audio: what is shared (Share) or played (Join).
     #[param(name = "Input", range = "linear(-24, 12)", unit = "dB", default = 0.0)]
     pub input: FloatParam,
-    #[param(name = "Internet quality")]
+    #[param(name = "Internet quality", default = 1)]
     pub quality: EnumParam<Quality>,
     #[param(name = "Mute input", default = false)]
     pub mute_input: BoolParam,
@@ -306,6 +306,12 @@ mod state {
     fn values(p: &Plugin) -> [f64; 4] {
         [P::Mode, P::Output, P::Input, P::Quality]
             .map(|id| p.params().get_normalized(id.into()).unwrap())
+    }
+
+    #[test]
+    fn default_quality_is_192_kbps() {
+        let p = Plugin::create();
+        assert_eq!(p.params().quality.value().bps(), 192_000);
     }
 
     #[test]

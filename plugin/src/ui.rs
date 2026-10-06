@@ -436,7 +436,7 @@ fn build(
                 step = (step + 1) % 4;
                 *v = step as f64 / 3.0;
             }
-            let cap = [510, 256, 128, 64][step];
+            let cap = [510, 192, 128, 64][step];
             let label = if shared.net() == Net::Internet {
                 format!("{}/{cap}k", shared.bitrate.load(Relaxed) / 1000)
             } else {

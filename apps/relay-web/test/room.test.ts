@@ -41,6 +41,32 @@ const room = () => `room-${++n}-${Date.now()}`;
 const KEY = "00112233445566778899aabbccddeeff";
 const AUTH = "0123456789abcdef";
 
+it("only sends relay credentials after the host accepts a browser", async () => {
+  const r = room();
+  const browser = await open(`/${r}/peer`);
+  const stun = { t: "ice", servers: [{ urls: "stun:stun.cloudflare.com:3478" }] };
+  expect(await browser.next()).toEqual(stun);
+  expect(await browser.next()).toEqual({ t: "error", code: "no-host" });
+  const h = await open(`/${r}/host?key=${KEY}`);
+  expect(await h.next()).toEqual(stun);
+  expect(await browser.next()).toEqual({ t: "host" });
+  const plugin = await open(`/${r}/peer`);
+  expect(await plugin.next()).toEqual(stun);
+  browser.send({ t: "hello", kind: "web", auth: AUTH });
+  const { id } = await h.next();
+  h.send({ t: "deny", to: id });
+  expect(await browser.next()).toEqual({ t: "error", code: "denied" });
+  h.send({ t: "offer", to: id, sdp: "browser offer" });
+  expect(await browser.next()).toEqual({
+    t: "offer", sdp: "browser offer", servers: [...stun.servers, { urls: "turn:relay.test:3478" }],
+  });
+  plugin.send({ t: "hello", kind: "plugin", auth: AUTH });
+  const pluginId = (await h.next()).id;
+  h.send({ t: "offer", to: pluginId, sdp: "plugin offer" });
+  expect(await plugin.next()).toEqual({ t: "offer", sdp: "plugin offer" });
+  for (const socket of [h, plugin, browser]) socket.ws.close(1000);
+});
+
 it("serves the listen page at /<room> and rejects bad paths", async () => {
   const page = await SELF.fetch("https://relay.test/big-filthy-papaya");
   expect(page.status).toBe(200);
@@ -88,10 +114,28 @@ it("routes offer to the peer and answer back to the host", async () => {
   const id1 = (await h.next()).id;
   const id2 = (await h.next()).id;
   expect(id1).not.toBe(id2);
-  h.send({ t: "offer", to: id2, sdp: "v=0 offer" });
-  expect(await p2.next()).toEqual({ t: "offer", sdp: "v=0 offer" });
+  h.send({ t: "offer", to: id2, sdp: "v=0 offer", trickle: true });
+  expect(await p2.next()).toEqual({
+    t: "offer", sdp: "v=0 offer", trickle: true,
+    servers: [{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "turn:relay.test:3478" }],
+  });
   p2.send({ t: "answer", sdp: "v=0 answer" });
   expect(await h.next()).toEqual({ t: "answer", id: id2, sdp: "v=0 answer" });
+  p2.send({ t: "candidate", candidate: "candidate:1 1 udp 1 203.0.113.1 1234 typ srflx", ufrag: "offerGeneration" });
+  expect(await h.next()).toEqual({
+    t: "candidate", id: id2, candidate: "candidate:1 1 udp 1 203.0.113.1 1234 typ srflx", ufrag: "offerGeneration",
+  });
+  const candidate = { t: "candidate", candidate: "candidate:2 1 udp 1 203.0.113.2 2345 typ srflx", ufrag: "offerGeneration" };
+  h.send({ ...candidate, to: id2 });
+  expect(await p2.next()).toEqual(candidate);
+  p1.send(candidate); // A plugin that hasn't been accepted cannot trickle.
+  h.send({ t: "offer", to: id1, sdp: "plugin offer" });
+  expect(await p1.next()).toMatchObject({ t: "offer", sdp: "plugin offer" });
+  p1.send(candidate);
+  expect(await h.next()).toEqual({ ...candidate, id: id1 });
+  // Concurrent candidate discoveries should not disconnect the room host.
+  for (let i = 0; i < 24; i++) h.send({ ...candidate, to: id1 });
+  for (let i = 0; i < 24; i++) expect(await p1.next()).toEqual(candidate);
 });
 
 it("forwards deny as denied", async () => {

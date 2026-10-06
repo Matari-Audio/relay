@@ -40,11 +40,15 @@ const GATE_AFTER: u32 = 30;
 const SILENT: f32 = 1e-4;
 const PT: Pt = Pt::new_with_value(111);
 const STUN: &str = "stun.cloudflare.com:3478";
+const RECONNECT_AFTER: Duration = Duration::from_secs(5);
 
 /// `bwe`: estimate the path to the peer, so the host can size its bitrate.
 fn new_rtc(now: Instant, bwe: bool) -> Rtc {
     let mut cfg = Rtc::builder()
         .clear_codecs()
+        // A lost packet must not hold music behind str0m's 15-packet/1 s defaults.
+        .set_reordering_size_audio(4)
+        .set_reordering_timeout_audio(Some(Duration::from_millis(40)))
         .enable_bwe(bwe.then(|| Bitrate::bps(MAX_BPS.into())));
     let opus = FormatParams {
         min_p_time: Some(10),
@@ -77,13 +81,15 @@ fn local_ips() -> Vec<IpAddr> {
 }
 
 /// One UDP socket per local address, so str0m always knows the destination,
-/// plus the STUN and port-mapped addresses of the primary one.
+/// plus STUN addresses for both families and a primary IPv4 port mapping.
 struct Ice {
     socks: Vec<UdpSocket>,
     txid: [u8; 12],
-    /// The socket STUN and the port mapping are for.
+    /// The primary IPv4 socket used for router port mapping.
     primary: Option<SocketAddr>,
-    srflx: Option<SocketAddr>,
+    srflx: Vec<(SocketAddr, SocketAddr)>,
+    announced_mapping: Option<SocketAddr>,
+    discoveries: Vec<Candidate>,
     mapping: Arc<Mutex<Option<Mapping>>>,
     buf: Vec<u8>,
 }
@@ -102,27 +108,32 @@ impl Ice {
             .iter()
             .find(|s| s.local_addr().ok().map(|a| a.ip()) == lan);
         let primary_addr = primary.and_then(|s| s.local_addr().ok());
-        if let (Some(sock), Some(SocketAddr::V4(base))) =
-            (primary.and_then(|s| s.try_clone().ok()), primary_addr)
-        {
-            let slot = Arc::downgrade(&mapping);
-            let _ = thread::Builder::new()
-                .name("relay-gather".into())
-                .spawn(move || {
-                    let req = stun_request(txid);
-                    if let Some(to) = STUN
-                        .to_socket_addrs()
-                        .ok()
-                        .and_then(|mut a| a.find(SocketAddr::is_ipv4))
-                    {
-                        for _ in 0..3 {
+        let probes: Vec<_> = socks.iter().filter_map(|s| s.try_clone().ok()).collect();
+        let _ = thread::Builder::new()
+            .name("relay-stun".into())
+            .spawn(move || {
+                let destinations: Vec<_> = STUN
+                    .to_socket_addrs()
+                    .map(Iterator::collect)
+                    .unwrap_or_default();
+                let req = stun_request(txid);
+                for _ in 0..3 {
+                    for sock in &probes {
+                        if let Ok(local) = sock.local_addr()
+                            && let Some(to) =
+                                destinations.iter().find(|a| a.is_ipv4() == local.is_ipv4())
+                        {
                             let _ = sock.send_to(&req, to);
-                            thread::sleep(Duration::from_millis(500));
                         }
                     }
-                    if !map {
-                        return;
-                    }
+                    thread::sleep(Duration::from_millis(500));
+                }
+            });
+        if map && let Some(SocketAddr::V4(base)) = primary_addr {
+            let slot = Arc::downgrade(&mapping);
+            let _ = thread::Builder::new()
+                .name("relay-portmap".into())
+                .spawn(move || {
                     // If the session is gone by now, `m` drops here and unmaps.
                     if let (Some(m), Some(slot)) = (crate::portmap::map(base), slot.upgrade()) {
                         *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(m);
@@ -133,14 +144,14 @@ impl Ice {
             socks,
             txid,
             primary: primary_addr,
-            srflx: None,
+            srflx: Vec::new(),
+            announced_mapping: None,
+            discoveries: Vec::new(),
             mapping,
             buf: vec![0; 2048],
         })
     }
 
-    /// ponytail: candidates are what we know when the offer/answer is made;
-    /// a port mapping that lands later only helps the next peer.
     fn candidates(&self) -> Vec<Candidate> {
         let mut out: Vec<Candidate> = self
             .socks
@@ -153,12 +164,30 @@ impl Ice {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|m| m.external);
-        if let Some(base) = self.primary {
-            for addr in [self.srflx, mapped.filter(|m| Some(*m) != self.srflx)] {
-                out.extend(addr.and_then(|a| Candidate::server_reflexive(a, base, "udp").ok()));
-            }
+        for &(base, addr) in &self.srflx {
+            out.extend(Candidate::server_reflexive(addr, base, "udp").ok());
+        }
+        if let (Some(base), Some(addr)) = (self.primary, mapped) {
+            out.extend(Candidate::server_reflexive(addr, base, "udp").ok());
         }
         out
+    }
+
+    fn discoveries(&mut self) -> Vec<Candidate> {
+        let mapped = self
+            .mapping
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|m| m.external);
+        if let (Some(base), Some(addr)) = (self.primary, mapped)
+            && self.announced_mapping != Some(addr)
+        {
+            self.announced_mapping = Some(addr);
+            self.discoveries
+                .extend(Candidate::server_reflexive(addr, base, "udp").ok());
+        }
+        std::mem::take(&mut self.discoveries)
     }
 
     /// The next datagram for str0m: `(destination, source, len)`, bytes in
@@ -168,7 +197,13 @@ impl Ice {
             while let Ok((n, from)) = sock.recv_from(&mut self.buf) {
                 let local = sock.local_addr().ok()?;
                 match stun_response(&self.buf[..n], self.txid) {
-                    Some(public) => self.srflx = Some(public),
+                    Some(public) => {
+                        if !self.srflx.contains(&(local, public)) {
+                            self.srflx.push((local, public));
+                            self.discoveries
+                                .extend(Candidate::server_reflexive(public, local, "udp").ok());
+                        }
+                    }
                     None => return Some((local, from, n)),
                 }
             }
@@ -193,11 +228,13 @@ fn stun_request(txid: [u8; 12]) -> Vec<u8> {
     p
 }
 
-/// XOR-MAPPED-ADDRESS (IPv4) from a binding success with our transaction id.
+/// XOR-MAPPED-ADDRESS from a binding success with our transaction id.
 fn stun_response(p: &[u8], txid: [u8; 12]) -> Option<SocketAddr> {
-    if p.len() < 20 || p[..2] != [1, 1] || p[8..20] != txid {
+    if p.len() < 20 || p[..2] != [1, 1] || p[4..8] != [0x21, 0x12, 0xa4, 0x42] || p[8..20] != txid {
         return None;
     }
+    let end = 20 + usize::from(u16::from_be_bytes([p[2], p[3]]));
+    let p = p.get(..end)?;
     let mut at = 20;
     while at + 4 <= p.len() {
         let (kind, len) = (
@@ -209,6 +246,15 @@ fn stun_response(p: &[u8], txid: [u8; 12]) -> Option<SocketAddr> {
             let port = u16::from_be_bytes([v[2], v[3]]) ^ 0x2112;
             let ip = u32::from_be_bytes([v[4], v[5], v[6], v[7]]) ^ 0x2112_a442;
             return Some(SocketAddr::V4(SocketAddrV4::new(ip.into(), port)));
+        }
+        if kind == 0x20 && len == 20 && v[1] == 2 {
+            let port = u16::from_be_bytes([v[2], v[3]]) ^ 0x2112;
+            let mask = p.get(4..20)?;
+            let mut ip = [0; 16];
+            for i in 0..16 {
+                ip[i] = v[i + 4] ^ mask[i];
+            }
+            return Some(SocketAddr::new(std::net::Ipv6Addr::from(ip).into(), port));
         }
         at += 4 + len.div_ceil(4) * 4;
     }
@@ -286,11 +332,86 @@ fn resampler(
     slot.as_mut().map(|(_, r)| r)
 }
 
+/// Decode short losses without waiting for retransmissions. Longer timestamp
+/// gaps are silence/DTX and must not turn into seconds of queued concealment.
+struct Decode {
+    dec: OpusDecoder,
+    channels: usize,
+    pcm: Vec<f32>,
+    out: Vec<f32>,
+    next: Option<u64>,
+    toc: u8,
+    duration: usize,
+}
+
+impl Decode {
+    fn new() -> Option<Self> {
+        Some(Self {
+            dec: OpusDecoder::new(48_000, CHANNELS).ok()?,
+            channels: CHANNELS,
+            pcm: vec![0.0; 5_760 * CHANNELS],
+            out: Vec::new(),
+            next: None,
+            toc: 0,
+            duration: 0,
+        })
+    }
+
+    fn append(&mut self, n: usize) {
+        if self.channels == 1 {
+            self.out.extend(self.pcm[..n].iter().flat_map(|&s| [s, s]));
+        } else {
+            self.out.extend_from_slice(&self.pcm[..n * CHANNELS]);
+        }
+    }
+
+    fn run(&mut self, packet: &[u8], time: u64) -> &[f32] {
+        self.out.clear();
+        let Some(&toc) = packet.first() else {
+            return &self.out;
+        };
+        if self.next.is_some_and(|next| time < next) {
+            return &self.out;
+        }
+        let channels = if toc & 4 == 0 { 1 } else { 2 };
+        if channels != self.channels {
+            let Ok(dec) = OpusDecoder::new(48_000, channels) else {
+                return &self.out;
+            };
+            self.dec = dec;
+            self.channels = channels;
+            self.next = None;
+        }
+        let gap = self.next.map_or(0, |next| time.saturating_sub(next)) as usize;
+        // The native decoder accepts a single TOC byte as a lost frame.
+        // ponytail: PLC for single-frame packets; multi-frame loss stays with playout.
+        if gap > 0
+            && gap <= 2_880
+            && self.duration > 0
+            && self.toc & 3 == 0
+            && gap.is_multiple_of(self.duration)
+        {
+            for _ in 0..gap / self.duration {
+                let Ok(n) = self.dec.decode(&[self.toc], self.duration, &mut self.pcm) else {
+                    break;
+                };
+                self.append(n);
+            }
+        }
+        if let Ok(n) = self.dec.decode(packet, 5_760, &mut self.pcm) {
+            self.append(n);
+            self.next = Some(time + n as u64);
+            self.toc = toc;
+            self.duration = n;
+        }
+        &self.out
+    }
+}
+
 /// A peer's input, decoded and queued at 48 kHz until the host's clock
 /// mixes it.
 struct Voice {
-    dec: OpusDecoder,
-    pcm: Vec<f32>,
+    decode: Decode,
     queue: VecDeque<f32>,
     primed: bool,
     stereo: bool,
@@ -300,8 +421,7 @@ struct Voice {
 impl Voice {
     fn new() -> Option<Self> {
         Some(Self {
-            dec: OpusDecoder::new(48_000, CHANNELS).ok()?,
-            pcm: vec![0.0; 5_760 * CHANNELS],
+            decode: Decode::new()?,
             queue: VecDeque::new(),
             primed: false,
             stereo: false,
@@ -309,11 +429,8 @@ impl Voice {
         })
     }
 
-    fn push(&mut self, packet: &[u8]) {
-        let Ok(n) = self.dec.decode(packet, 5_760, &mut self.pcm) else {
-            return;
-        };
-        self.queue.extend(&self.pcm[..n * CHANNELS]);
+    fn push(&mut self, packet: &[u8], time: u64) {
+        self.queue.extend(self.decode.run(packet, time));
         if self.queue.len() > BACKLOG {
             self.queue.drain(..self.queue.len() - PRIME);
         }
@@ -351,6 +468,7 @@ struct Peer {
     next: Instant,
     live: bool,
     dead: bool,
+    disconnected: Option<Instant>,
     voice: Voice,
     gain: f32,
     /// What the path to this peer carries, bits/s, from TWCC or REMB.
@@ -462,6 +580,7 @@ impl Host {
             next,
             live: false,
             dead: false,
+            disconnected: None,
             voice: Voice::new()?,
             gain: 1.0,
             estimate: MAX_BPS,
@@ -478,16 +597,52 @@ impl Host {
         let Some(p) = self.peers.iter_mut().find(|p| p.id == id) else {
             return;
         };
-        let (Some(pending), Ok(answer)) = (p.pending.take(), SdpAnswer::from_sdp_string(sdp))
-        else {
+        let Ok(answer) = SdpAnswer::from_sdp_string(sdp) else {
+            return;
+        };
+        let Some(pending) = p.pending.take() else {
             return;
         };
         p.dead = p.rtc.sdp_api().accept_answer(pending, answer).is_err();
         p.next = drain(&mut p.rtc, &self.ice, |_| {}).unwrap_or(p.next);
     }
 
+    /// Browser candidates arrive after the answer. The offer's ICE username
+    /// keeps late candidates from an earlier connection out of a replacement.
+    pub fn candidate(&mut self, id: &str, candidate: &str, ufrag: &str) {
+        let Some(p) = self.peers.iter_mut().find(|p| p.id == id) else {
+            return;
+        };
+        if p.pending.is_some() || p.rtc.direct_api().local_ice_credentials().ufrag != ufrag {
+            return;
+        }
+        if let Ok(c) = Candidate::from_sdp_string(candidate) {
+            p.rtc.add_remote_candidate(c);
+            p.next = Self::drain(p, &self.ice);
+        }
+    }
+
     pub fn leave(&mut self, id: &str) {
         self.peers.retain(|p| p.id != id);
+    }
+
+    /// Announce discoveries to peers already negotiating or playing.
+    pub fn trickle(&mut self) -> Vec<(String, String, String)> {
+        let mut messages = Vec::new();
+        for c in self.ice.discoveries() {
+            for p in &mut self.peers {
+                if let Some(candidate) = p
+                    .rtc
+                    .add_local_candidate(c.clone())
+                    .map(Candidate::to_sdp_string)
+                {
+                    let ufrag = p.rtc.direct_api().local_ice_credentials().ufrag;
+                    messages.push((p.id.clone(), candidate, ufrag));
+                    p.next = Self::drain(p, &self.ice);
+                }
+            }
+        }
+        messages
     }
 
     /// Network in, timers, dead peers out.
@@ -508,19 +663,34 @@ impl Host {
                 p.next = Self::drain(p, &self.ice);
             }
         }
-        self.peers.retain(|p| !p.dead && p.rtc.is_alive());
+        self.peers.retain(|p| {
+            !p.dead
+                && p.rtc.is_alive()
+                && p.disconnected
+                    .is_none_or(|at| now.saturating_duration_since(at) < RECONNECT_AFTER)
+        });
     }
 
     fn drain(p: &mut Peer, ice: &Ice) -> Instant {
-        let (live, dead, voice, estimate) =
-            (&mut p.live, &mut p.dead, &mut p.voice, &mut p.estimate);
+        let (live, dead, voice, estimate, disconnected) = (
+            &mut p.live,
+            &mut p.dead,
+            &mut p.voice,
+            &mut p.estimate,
+            &mut p.disconnected,
+        );
         let next = drain(&mut p.rtc, ice, |e| match e {
             Event::Connected => *live = true,
-            Event::MediaData(m) => voice.push(&m.data),
+            Event::MediaData(m) => voice.push(&m.data, m.time.numer()),
             Event::EgressBitrateEstimate(
                 BweKind::Twcc { estimate: b, .. } | BweKind::Remb { estimate: b, .. },
             ) => *estimate = b.as_u64().min(u64::from(MAX_BPS)) as u32,
-            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => *dead = true,
+            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => {
+                disconnected.get_or_insert_with(Instant::now);
+            }
+            Event::IceConnectionStateChange(
+                IceConnectionState::Connected | IceConnectionState::Completed,
+            ) => *disconnected = None,
             _ => {}
         });
         *dead |= next.is_none();
@@ -750,11 +920,13 @@ pub struct Guest {
     send_pcm: Vec<f32>,
     packet: Vec<u8>,
     time: u64,
-    dec: OpusDecoder,
+    decode: Decode,
     down: Option<((u32, u32), Resample)>,
-    pcm: Vec<f32>,
     out: Vec<f32>,
     pub last_audio: Option<Instant>,
+    generation: Option<String>,
+    disconnected: Option<Instant>,
+    silent: u32,
 }
 
 impl Guest {
@@ -768,11 +940,13 @@ impl Guest {
             send_pcm: Vec::new(),
             packet: vec![0; 1500],
             time: 0,
-            dec: OpusDecoder::new(48_000, CHANNELS).ok()?,
+            decode: Decode::new()?,
             down: None,
-            pcm: vec![0.0; 5_760 * CHANNELS],
             out: Vec::new(),
             last_audio: None,
+            generation: None,
+            disconnected: None,
+            silent: 0,
         })
     }
 
@@ -792,6 +966,14 @@ impl Guest {
         let next = drain(&mut rtc, &self.ice, |_| {})?;
         self.rtc = Some((rtc, next));
         self.mid = Some(Mid::from(mid));
+        self.generation = sdp
+            .lines()
+            .find_map(|l| l.strip_prefix("a=ice-ufrag:"))
+            .map(|s| s.trim().to_owned());
+        self.disconnected = None;
+        self.silent = 0;
+        self.last_audio = None;
+        self.decode = Decode::new()?;
         self.send_pcm.clear();
         self.time = 0;
         Some(answer.to_sdp_string())
@@ -800,6 +982,46 @@ impl Guest {
     pub fn close(&mut self) {
         self.rtc = None;
         self.mid = None;
+        self.last_audio = None;
+        self.disconnected = None;
+    }
+
+    pub fn live(&self) -> bool {
+        self.rtc.as_ref().is_some_and(|(rtc, _)| rtc.is_connected())
+    }
+
+    pub fn set_cap(&mut self, cap: u32) -> u32 {
+        self.enc.bitrate_bps = cap.clamp(MIN_BPS, MAX_BPS) as i32;
+        self.enc.bitrate_bps as u32
+    }
+
+    pub fn candidate(&mut self, candidate: &str, ufrag: &str) {
+        if self.generation.as_deref() != Some(ufrag) {
+            return;
+        }
+        if let Some((rtc, next)) = self.rtc.as_mut()
+            && let Ok(c) = Candidate::from_sdp_string(candidate)
+        {
+            rtc.add_remote_candidate(c);
+            *next = drain(rtc, &self.ice, |_| {}).unwrap_or(*next);
+        }
+    }
+
+    pub fn trickle(&mut self) -> Vec<(String, String)> {
+        let candidates = self.ice.discoveries();
+        let (Some((rtc, next)), Some(ufrag)) = (self.rtc.as_mut(), self.generation.as_ref()) else {
+            return Vec::new();
+        };
+        let mut messages = Vec::new();
+        for c in candidates {
+            if let Some(candidate) = rtc.add_local_candidate(c).map(Candidate::to_sdp_string) {
+                messages.push((candidate, ufrag.clone()));
+            }
+        }
+        if !messages.is_empty() {
+            *next = drain(rtc, &self.ice, |_| {}).unwrap_or(*next);
+        }
+        messages
     }
 
     /// Join's DAW input travels upstream on the same sendrecv track.
@@ -808,6 +1030,10 @@ impl Guest {
             self.send_pcm.clear();
             return;
         };
+        if !rtc.is_connected() {
+            self.send_pcm.clear();
+            return;
+        }
         match resampler(&mut self.up, rate, 48_000) {
             Some(r) => r.run(samples, &mut self.send_pcm),
             None => self.send_pcm.extend_from_slice(samples),
@@ -817,10 +1043,19 @@ impl Guest {
                 .enc
                 .encode(&self.send_pcm[..FRAME * CHANNELS], FRAME, &mut self.packet)
                 .unwrap_or(0);
+            let quiet = self.send_pcm[..FRAME * CHANNELS]
+                .iter()
+                .all(|s| s.abs() < SILENT);
+            self.silent = if quiet {
+                self.silent.saturating_add(1)
+            } else {
+                0
+            };
             self.send_pcm.drain(..FRAME * CHANNELS);
             let at = MediaTime::new(self.time, Frequency::FORTY_EIGHT_KHZ);
             self.time += FRAME as u64;
             if n > 0
+                && self.silent < GATE_AFTER
                 && let Some(w) = rtc.writer(mid)
             {
                 let data: Arc<[u8]> = self.packet[..n].into();
@@ -831,17 +1066,22 @@ impl Guest {
     }
 
     /// Network in, decoded audio out to `rx` at `rate`.
-    /// ponytail: no Opus PLC/FEC decode on loss; the playout buffer rides
-    /// out the gap.
-    pub fn poll(&mut self, now: Instant, rate: u32, rx: &mut Producer<f32>) {
+    /// Returns true when a failed connection needs a fresh hello.
+    pub fn poll(&mut self, now: Instant, rate: u32, rx: &mut Producer<f32>) -> bool {
         let Some((rtc, next)) = self.rtc.as_mut() else {
-            return;
+            return false;
         };
-        let mut packets: Vec<Arc<[u8]>> = Vec::new();
-        let (mut dead, mut gone) = (false, false);
+        let mut packets = Vec::new();
+        let mut dead = false;
+        let disconnected = &mut self.disconnected;
         let mut on = |e| match e {
-            Event::MediaData(m) => packets.push(m.data),
-            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => gone = true,
+            Event::MediaData(m) => packets.push((m.data, m.time.numer())),
+            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => {
+                disconnected.get_or_insert(now);
+            }
+            Event::IceConnectionStateChange(
+                IceConnectionState::Connected | IceConnectionState::Completed,
+            ) => *disconnected = None,
             _ => {}
         };
         while let Some((local, from, n)) = self.ice.recv() {
@@ -858,15 +1098,21 @@ impl Guest {
             dead |= rtc.handle_input(Input::Timeout(now)).is_err();
             *next = drain(rtc, &self.ice, &mut on).unwrap_or(now);
         }
-        if dead || gone || !rtc.is_alive() {
+        let retry = dead
+            || !rtc.is_alive()
+            || self
+                .disconnected
+                .is_some_and(|at| now.saturating_duration_since(at) >= RECONNECT_AFTER);
+        if retry {
             self.rtc = None;
+            self.last_audio = None;
         }
-        for p in packets {
-            let Ok(n) = self.dec.decode(&p, 5_760, &mut self.pcm) else {
+        for (p, time) in packets {
+            let pcm = self.decode.run(&p, time);
+            if pcm.is_empty() {
                 continue;
-            };
+            }
             self.last_audio = Some(now);
-            let pcm = &self.pcm[..n * CHANNELS];
             self.out.clear();
             match resampler(&mut self.down, 48_000, rate) {
                 Some(r) => r.run(pcm, &mut self.out),
@@ -877,12 +1123,223 @@ impl Guest {
                 chunk.fill_from_iter(self.out.iter().copied());
             }
         }
+        retry
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_candidates_require_an_answer_and_current_offer_generation() {
+        let now = Instant::now();
+        let mut host = Host::new(false).unwrap();
+        let mut guest = Guest::new().unwrap();
+        let offer = host.offer("phone", true, now).unwrap();
+        let ufrag = host.peers[0].rtc.direct_api().local_ice_credentials().ufrag;
+        let c = guest.ice.candidates().remove(0);
+        let sdp = c.to_sdp_string();
+        let absent = |host: &mut Host| !host.peers[0].rtc.direct_api().invalidate_candidate(&c);
+        host.candidate("phone", &sdp, &ufrag);
+        assert!(absent(&mut host), "candidate before answer is ignored");
+        let without_candidates = |sdp: &str| {
+            sdp.lines()
+                .filter(|line| !line.starts_with("a=candidate:"))
+                .collect::<Vec<_>>()
+                .join("\r\n")
+                + "\r\n"
+        };
+        let answer = guest.offer(&without_candidates(&offer), now).unwrap();
+        host.answer("phone", "invalid SDP");
+        assert!(
+            host.awaiting("phone"),
+            "invalid SDP cannot consume the offer"
+        );
+        host.answer("phone", &without_candidates(&answer));
+        host.candidate("phone", &sdp, "oldGeneration");
+        assert!(absent(&mut host), "stale candidate is ignored");
+        host.candidate("phone", "malformed candidate", &ufrag);
+        assert!(absent(&mut host));
+        host.candidate("phone", &sdp, &ufrag);
+        assert!(!absent(&mut host), "late candidate reaches the ICE agent");
+        host.candidate("phone", &sdp, &ufrag);
+        let (_, (mut rx, _)) = crate::rings();
+        let start = Instant::now();
+        while (host.live() == 0 || !guest.live()) && start.elapsed() < Duration::from_secs(5) {
+            host.poll(Instant::now());
+            guest.poll(Instant::now(), 48_000, &mut rx);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            host.live(),
+            1,
+            "candidate-free SDP connects through trickle ICE"
+        );
+        assert!(guest.live());
+        assert_eq!(guest.set_cap(192_000), 192_000);
+        for _ in 0..40 {
+            guest.audio(&[0.0; FRAME * CHANNELS], 48_000, Instant::now());
+        }
+        assert_eq!(guest.silent, 40);
+        assert_eq!(
+            guest.time,
+            40 * FRAME as u64,
+            "silence preserves the RTP clock"
+        );
+        guest.audio(&[0.1; FRAME * CHANNELS], 48_000, Instant::now());
+        assert_eq!(guest.silent, 0, "audio resumes immediately after silence");
+        let answer = guest
+            .offer(&host.offer("phone", true, now).unwrap(), now)
+            .unwrap();
+        host.answer("phone", &without_candidates(&answer));
+        host.candidate("phone", &sdp, &ufrag);
+        assert!(absent(&mut host), "previous offer cannot alter replacement");
+        guest.poll(Instant::now(), 48_000, &mut rx);
+        guest.disconnected = Some(Instant::now());
+        assert!(
+            !guest.poll(Instant::now(), 48_000, &mut rx),
+            "brief outages can recover"
+        );
+        guest.disconnected = Some(Instant::now() - RECONNECT_AFTER);
+        assert!(
+            guest.poll(Instant::now(), 48_000, &mut rx),
+            "persistent outages request a new offer"
+        );
+        assert!(
+            !guest.poll(Instant::now(), 48_000, &mut rx),
+            "retry is requested once"
+        );
+    }
+
+    #[test]
+    fn late_host_addresses_reach_native_peers_with_current_generation() {
+        let now = Instant::now();
+        let mut host = Host::new(false).unwrap();
+        let mut guest = Guest::new().unwrap();
+        let offer = host.offer("plugin", false, now).unwrap();
+        let answer = guest.offer(&offer, now).unwrap();
+        host.answer("plugin", &answer);
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let c = Candidate::host(socket.local_addr().unwrap(), "udp").unwrap();
+        host.ice.socks.push(socket);
+        host.ice.discoveries.push(c.clone());
+        let messages = host.trickle();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].0, "plugin");
+        assert!(host.trickle().is_empty(), "discoveries are announced once");
+        guest.candidate(&messages[0].1, "previousOffer");
+        assert!(
+            !guest
+                .rtc
+                .as_mut()
+                .unwrap()
+                .0
+                .direct_api()
+                .invalidate_candidate(&c)
+        );
+        guest.candidate(&messages[0].1, &messages[0].2);
+        assert!(
+            guest
+                .rtc
+                .as_mut()
+                .unwrap()
+                .0
+                .direct_api()
+                .invalidate_candidate(&c)
+        );
+    }
+
+    #[test]
+    fn mono_decode_conceals_short_loss_without_queueing_dtx_silence() {
+        let mut enc = OpusEncoder::new(48_000, 1, Application::RestrictedLowDelay).unwrap();
+        let input: Vec<_> = (0..FRAME)
+            .map(|i| (i as f32 * std::f32::consts::TAU / 48.0).sin() * 0.2)
+            .collect();
+        let mut packet = vec![0; 1500];
+        let n = enc.encode(&input, FRAME, &mut packet).unwrap();
+        packet.truncate(n);
+        let mut decode = Decode::new().unwrap();
+        let pcm = decode.run(&packet, 0);
+        assert_eq!(pcm.len(), FRAME * CHANNELS);
+        assert!(pcm.as_chunks::<2>().0.iter().all(|pair| pair[0] == pair[1]));
+        let pcm = decode.run(&packet, 2 * FRAME as u64);
+        assert_eq!(
+            pcm.len(),
+            2 * FRAME * CHANNELS,
+            "conceal one missing 10 ms frame"
+        );
+        assert!(pcm.iter().all(|s| s.is_finite()));
+        assert!(
+            decode.run(&packet, 2 * FRAME as u64).is_empty(),
+            "drop duplicate timestamps"
+        );
+        assert_eq!(
+            decode.run(&packet, 24_000).len(),
+            FRAME * CHANNELS,
+            "long silence adds no concealment backlog"
+        );
+    }
+
+    #[test]
+    fn one_lost_rtp_packet_does_not_hold_audio_for_150_ms() {
+        let now = Instant::now();
+        let mut host = Host::new(false).unwrap();
+        let mut guest = Guest::new().unwrap();
+        let answer = guest
+            .offer(&host.offer("plugin", false, now).unwrap(), now)
+            .unwrap();
+        host.answer("plugin", &answer);
+        let (_, (mut rx, _)) = crate::rings();
+        while (host.live() == 0 || !guest.live()) && now.elapsed() < Duration::from_secs(5) {
+            host.poll(Instant::now());
+            guest.poll(Instant::now(), 48_000, &mut rx);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(guest.live());
+        let now = Instant::now();
+        let mut packets = 0;
+        let mut received = Vec::new();
+        for i in 0..3 {
+            let at = now + Duration::from_millis(i * 10);
+            host.audio(&[0.2; FRAME * CHANNELS], &[], 48_000, at);
+            host.poll(at);
+            while let Some((local, from, n)) = guest.ice.recv() {
+                let data = &guest.ice.buf[..n];
+                if data.len() >= 12 && data[0] & 0xc0 == 0x80 && data[1] & 0x7f == *PT {
+                    packets += 1;
+                    if packets == 2 {
+                        continue;
+                    } // Simulate one encrypted RTP packet lost in transit.
+                }
+                let rtc = &mut guest.rtc.as_mut().unwrap().0;
+                let packet = Receive::new(Protocol::Udp, from, local, data).unwrap();
+                rtc.handle_input(Input::Receive(at, packet)).unwrap();
+                drain(rtc, &guest.ice, |e| {
+                    if let Event::MediaData(m) = e {
+                        received.push(m.time.numer());
+                    }
+                });
+            }
+        }
+        assert_eq!(packets, 3);
+        assert_eq!(received, [0], "contiguous audio has no reordering wait");
+        for (ms, expected) in [(59, vec![0]), (61, vec![0, 960])] {
+            let rtc = &mut guest.rtc.as_mut().unwrap().0;
+            rtc.handle_input(Input::Timeout(now + Duration::from_millis(ms)))
+                .unwrap();
+            drain(rtc, &guest.ice, |e| {
+                if let Event::MediaData(m) = e {
+                    received.push(m.time.numer());
+                }
+            });
+            assert_eq!(
+                received, expected,
+                "later audio waits at most 40 ms for the missing packet"
+            );
+        }
+    }
 
     #[test]
     fn stun_binding_round_trip() {
@@ -899,6 +1356,29 @@ mod tests {
             Some(SocketAddr::from(([203, 0, 113, 7], 40_000)))
         );
         assert_eq!(stun_response(&p, [4; 12]), None);
+        p[4] = 0;
+        assert_eq!(stun_response(&p, txid), None, "validate the STUN cookie");
+        let addr: std::net::Ipv6Addr = "2001:db8::7".parse().unwrap();
+        let mut p = vec![1, 1, 0, 24, 0x21, 0x12, 0xa4, 0x42];
+        p.extend(txid);
+        let mask: Vec<_> = p[4..20].to_vec();
+        p.extend([0, 0x20, 0, 20, 0, 2]);
+        p.extend((40_000u16 ^ 0x2112).to_be_bytes());
+        p.extend(
+            addr.octets()
+                .iter()
+                .zip(mask)
+                .map(|(byte, mask)| byte ^ mask),
+        );
+        assert_eq!(
+            stun_response(&p, txid),
+            Some(SocketAddr::new(addr.into(), 40_000))
+        );
+        assert_eq!(
+            stun_response(&p[..p.len() - 1], txid),
+            None,
+            "reject truncated IPv6 responses"
+        );
     }
 
     #[test]

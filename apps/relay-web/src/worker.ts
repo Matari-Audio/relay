@@ -5,6 +5,7 @@ import { DurableObject } from "cloudflare:workers";
 export interface Env {
   ROOM: DurableObjectNamespace<Room>;
   ASSETS: Fetcher;
+  TURN_ENABLED?: string;
   TURN_KEY_ID?: string;
   TURN_KEY_TOKEN?: string;
   EXTRA_ICE?: string;
@@ -40,6 +41,8 @@ export default {
 let turn: { at: number; servers: RTCIceServer[] } | undefined;
 
 export async function iceServers(env: Env): Promise<RTCIceServer[]> {
+  // Relay access is opt-in, even if secrets, extra servers or cached credentials exist.
+  if (env.TURN_ENABLED !== "true") return [STUN];
   let servers = [STUN];
   if (env.TURN_KEY_ID && env.TURN_KEY_TOKEN) {
     if (!turn || Date.now() - turn.at > 3600_000) {
@@ -135,11 +138,11 @@ export class Room extends DurableObject<Env> {
       tags = ["peer", `id:${id}`];
       tag = { role: "peer", id };
     }
-    const servers = await iceServers(this.env);
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server, tags);
     server.serializeAttachment(tag);
-    send(server, { t: "ice", servers });
+    // TURN is only needed once the host accepts a browser listener.
+    send(server, { t: "ice", servers: [STUN] });
     if (isHost) for (const p of this.peers()) send(p, { t: "host" });
     else if (!this.host()) send(server, { t: "error", code: "no-host" });
     if (isHost) this.roster();
@@ -147,10 +150,12 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer) {
+    const tag = ws.deserializeAttachment() as Tag;
     const second = Math.floor(Date.now() / 1000);
     const rate = this.#rate.get(ws);
     if (rate?.second === second) {
-      if (++rate.count > MAX_PER_SECOND) return ws.close(1008, "rate");
+      // A host negotiates with many peers at once; peer limits stay unchanged.
+      if (++rate.count > (tag.role === "host" ? MAX_PER_SECOND * 4 : MAX_PER_SECOND)) return ws.close(1008, "rate");
     } else this.#rate.set(ws, { second, count: 1 });
 
     if (typeof data !== "string" || data.length > MAX_BYTES) return;
@@ -161,16 +166,28 @@ export class Room extends DurableObject<Env> {
       return;
     }
     if (!msg || typeof msg !== "object") return;
-    const tag = ws.deserializeAttachment() as Tag;
 
     if (tag.role === "host") {
       const to = this.ctx.getWebSockets(`id:${msg.to}`)[0];
       if (msg.t === "offer" && typeof msg.sdp === "string") {
-        send(to, { t: "offer", sdp: msg.sdp });
+        if (!to || to.readyState !== WebSocket.OPEN) return;
+        const peer = to.deserializeAttachment() as Tag | null;
+        const servers = peer?.role === "peer" && peer.kind === "web"
+          ? await iceServers(this.env) : undefined;
+        // The host or listener may have left while TURN credentials were fetched.
+        if (this.host() !== ws || to.readyState !== WebSocket.OPEN) return;
+        send(to, { t: "offer", sdp: msg.sdp, ...(servers ? { servers } : {}),
+          ...(msg.trickle === true ? { trickle: true } : {}) });
         this.admit(to, true);
       } else if (msg.t === "deny") {
         send(to, { t: "error", code: "denied" });
         this.admit(to, false);
+      } else if (msg.t === "candidate" && this.host() === ws
+        && to?.readyState === WebSocket.OPEN
+        && (to.deserializeAttachment() as { in?: boolean }).in
+        && typeof msg.candidate === "string" && msg.candidate.length <= 2048
+        && typeof msg.ufrag === "string" && /^[a-zA-Z0-9+/]{4,256}$/.test(msg.ufrag)) {
+        send(to, { t: "candidate", candidate: msg.candidate, ufrag: msg.ufrag });
       }
       return;
     }
@@ -189,6 +206,10 @@ export class Room extends DurableObject<Env> {
       }
     } else if (msg.t === "answer" && typeof msg.sdp === "string") {
       send(host, { t: "answer", id: tag.id, sdp: msg.sdp });
+    } else if (msg.t === "candidate" && tag.in
+      && typeof msg.candidate === "string" && msg.candidate.length <= 2048
+      && typeof msg.ufrag === "string" && /^[a-zA-Z0-9+/]{4,256}$/.test(msg.ufrag)) {
+      send(host, { t: "candidate", id: tag.id, candidate: msg.candidate, ufrag: msg.ufrag });
     }
   }
 
