@@ -827,6 +827,8 @@ mod tests {
         };
         let (hs, mut host, from_host, to_host) = side(Role::Share);
         let (js, mut join, from_join, to_join) = side(Role::Join);
+        hs.bitrate_cap.store(192_000, Relaxed);
+        js.bitrate_cap.store(192_000, Relaxed);
         join.opened -= LAN_FIRST;
         let ((mut send, mut htx), (mut hrx, mut host_hear)) = crate::rings();
         let ((mut return_audio, mut jtx), (mut jrx, mut hear)) = crate::rings();
@@ -834,10 +836,30 @@ mod tests {
         let start = Instant::now();
         let (mut pushed, mut returned, mut heard, mut returned_heard) =
             (0usize, 0usize, Vec::<f32>::new(), Vec::<f32>::new());
+        let (mut offers, mut quality_step) = (0, 0);
+        let ceilings = [64_000, 128_000, 192_000, 510_000];
         // Debug builds run the codec well below real time; give them room.
-        while start.elapsed() < Duration::from_secs(20) && heard.len() < 44_100 {
+        while start.elapsed() < Duration::from_secs(20)
+            && (heard.len() < 55_125
+                || returned_heard.len() < 55_125
+                || quality_step < ceilings.len())
+        {
             host.step(&hs, &mut htx, &mut hrx);
             join.step(&js, &mut jtx, &mut jrx);
+            if quality_step < ceilings.len()
+                && heard.len() >= 11_025 * (quality_step + 1)
+                && returned_heard.len() >= 11_025 * (quality_step + 1)
+            {
+                let cap = ceilings[quality_step];
+                hs.bitrate_cap.store(cap, Relaxed);
+                js.bitrate_cap.store(cap, Relaxed);
+                host.step(&hs, &mut htx, &mut hrx);
+                join.step(&js, &mut jtx, &mut jrx);
+                assert!(hs.bitrate.load(Relaxed) <= cap);
+                assert_eq!(js.bitrate.load(Relaxed), cap);
+                assert_eq!((hs.net(), js.net()), (Net::Internet, Net::Internet));
+                quality_step += 1;
+            }
             for m in from_join.try_iter() {
                 let mut v: Value = serde_json::from_str(&m).unwrap();
                 v["id"] = json!(7);
@@ -850,6 +872,7 @@ mod tests {
                     continue;
                 }
                 assert_eq!(v["t"], "offer", "host denied the joiner: {v}");
+                offers += 1;
                 assert_eq!(v["to"], 7);
                 assert!(
                     v["sdp"]
@@ -898,13 +921,18 @@ mod tests {
         }
         assert_eq!((hs.net(), hs.peers.load(Relaxed)), (Net::Internet, 1));
         assert_eq!(js.net(), Net::Internet);
-        assert!(heard.len() >= 44_100, "heard {} frames", heard.len());
+        assert_eq!(quality_step, ceilings.len(), "all live ceilings applied");
+        assert_eq!(
+            offers, 1,
+            "quality changes must not renegotiate the connection"
+        );
+        assert!(heard.len() >= 55_125, "heard {} frames", heard.len());
         let tail = &heard[heard.len() - 11_025..];
         let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
         assert!((0.3..0.4).contains(&rms), "rms {rms}, want 0.354");
         assert!(
-            returned_heard.len() >= 11_025,
-            "WebRTC return reached Share"
+            returned_heard.len() >= 55_125,
+            "WebRTC return continues through every quality change"
         );
         let tail = &returned_heard[returned_heard.len() - 11_025..];
         let rms = (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();

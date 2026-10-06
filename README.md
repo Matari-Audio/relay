@@ -64,6 +64,8 @@ IPv4 and IPv6 interfaces are probed with STUN while router port mapping runs
 in parallel. Newly discovered addresses are forwarded to current peers, so
 they can help the first connection too. Brief interruptions can recover before
 a replacement connection is requested.
+Native signaling tries alternate IPv4/IPv6 addresses after 250 ms, so an
+unreachable route does not delay a working address by its full timeout.
 
 | Network | Direct connection support |
 |---|---|
@@ -78,6 +80,9 @@ native plugins. Neither IPv6 nor TURN guarantees access through every firewall.
 New plugin instances default to a 192 kbps internet quality ceiling (64, 128,
 192 or 510 kbps). Saved quality settings keep their positions; the former
 256 kbps step now uses 192 kbps. The ceiling adapts down for slower listeners.
+Click the bitrate readout in Share or Join to cycle the ceiling during
+playback, without reconnecting. Share controls the stream it sends to listeners;
+Join controls its outgoing return audio. LAN audio stays lossless.
 At 192 kbps, encoded music uses about 86.4 MB per listener-hour before network
 headers, 62% less than 510 kbps. Direct P2P audio uses the host's upload and
 listener's download, with no Cloudflare media bandwidth charge.

@@ -385,6 +385,34 @@ fn build(
     rows.push(field(fonts, LOCK, bare(input), eye));
 
     let peers = shared.peers.load(Relaxed);
+    // Internet bitrate over its live ceiling. Join controls return audio.
+    let quality = if picked == 0 {
+        spacer()
+    } else {
+        bridge.bind(ui, P::Quality, |ui, id, v| {
+            let r = ui.get(&id);
+            let mut step = (*v * 3.0).round() as usize % 4;
+            if r.clicked_with(Button::Primary) {
+                step = (step + 1) % 4;
+                *v = step as f64 / 3.0;
+            }
+            let cap = [510, 192, 128, 64][step];
+            let label = if shared.net() == Net::Internet {
+                format!("{}/{cap}k", shared.bitrate.load(Relaxed) / 1000)
+            } else {
+                format!("{cap}k")
+            };
+            mono(fonts, label, 9.0, if r.hovered { TEXT } else { DIM })
+                .a11y(A11y::Button)
+                .named(if picked == 2 {
+                    "Return audio quality ceiling"
+                } else {
+                    "Internet quality ceiling"
+                })
+                .focusable()
+                .id(id)
+        })
+    };
     let tail = if picked == 1 {
         let slug = relay_core::slug(&room);
         let url = format!("https://{}/{slug}", relay_core::SITE);
@@ -427,27 +455,6 @@ fn build(
                 .map(|c| if c.is_ascii_hexdigit() { '•' } else { c })
                 .collect();
         }
-        // Internet bitrate: what Opus runs at, adapting to the listeners,
-        // over the ceiling. A click steps the ceiling down, then round.
-        let quality = bridge.bind(ui, P::Quality, |ui, id, v| {
-            let r = ui.get(&id);
-            let mut step = (*v * 3.0).round() as usize % 4;
-            if r.clicked_with(Button::Primary) {
-                step = (step + 1) % 4;
-                *v = step as f64 / 3.0;
-            }
-            let cap = [510, 192, 128, 64][step];
-            let label = if shared.net() == Net::Internet {
-                format!("{}/{cap}k", shared.bitrate.load(Relaxed) / 1000)
-            } else {
-                format!("{cap}k")
-            };
-            mono(fonts, label, 9.0, if r.hovered { TEXT } else { DIM })
-                .a11y(A11y::Button)
-                .named("Internet quality ceiling")
-                .focusable()
-                .id(id)
-        });
         let r = ui.get("lan");
         view.show_address ^= r.clicked_with(Button::Primary);
         let lan = row![
@@ -460,10 +467,15 @@ fn build(
         .focusable()
         .id("lan");
         row![quality, lan].gap(8.0).center()
-    } else if picked == 2 && peers > 0 {
-        let rate = f64::from(shared.rate.load(Relaxed).max(1));
-        let ms = f64::from(shared.latency.load(Relaxed)) * 1000.0 / rate;
-        mono(fonts, format!("{ms:.1} ms"), 9.0, DIM)
+    } else if picked == 2 {
+        let latency = if peers > 0 {
+            let rate = f64::from(shared.rate.load(Relaxed).max(1));
+            let ms = f64::from(shared.latency.load(Relaxed)) * 1000.0 / rate;
+            mono(fonts, format!("{ms:.1} ms"), 9.0, DIM)
+        } else {
+            spacer()
+        };
+        row![quality, latency].gap(8.0).center()
     } else {
         spacer()
     };
@@ -1219,14 +1231,16 @@ mod snapshot {
             params.set_normalized(P::MuteInput.into(), 1.0);
             params.set_normalized(P::MuteOutput.into(), 1.0);
         }
-        *params.standard_ui.write().unwrap() = name == "standard";
+        *params.standard_ui.write().unwrap() = name.contains("standard");
         let settings = Arc::clone(&params);
         let shared = Arc::clone(&params.link.0);
         shared.set_text(&shared.room, "quiet-dusty-papaya");
         shared.set_text(&shared.password, "hunter2");
         shared.set_text(&shared.address, "192.168.1.20");
         shared.set_net(net);
-        shared.peers.store(2, Relaxed);
+        shared
+            .peers
+            .store(if name.contains("waiting") { 0 } else { 2 }, Relaxed);
         shared.rate.store(48_000, Relaxed);
         shared.latency.store(512, Relaxed);
         shared.talking.store(1, Relaxed);
@@ -1267,8 +1281,28 @@ mod snapshot {
                 },
             ]);
         }
-        shared.bitrate.store(312_000, Relaxed);
+        shared.bitrate.store(160_000, Relaxed);
         let mut bridge = Bridge::new(params);
+        let (writer, reader) = (Arc::clone(&settings), Arc::clone(&settings));
+        let host = moose_core::editor::ClosureBridge {
+            begin_edit: Box::new(|_| {}),
+            set_param: Box::new(move |id, value| {
+                writer.set_normalized(id, value);
+            }),
+            end_edit: Box::new(|_| {}),
+            get_param: Box::new(move |id| reader.get_normalized(id).unwrap()),
+            get_param_plain: Box::new(|_| 0.0),
+            format_param: Box::new(|_| String::new()),
+            request_resize: Box::new(|_, _| false),
+            get_meter: Box::new(|_| 0.0),
+            get_state: Box::new(Vec::new),
+            set_state: Box::new(|_| {}),
+            transport: Box::new(|| None),
+        };
+        bridge.attach(moose_core::editor::PluginContext::new(
+            Arc::new(host),
+            Arc::clone(&settings),
+        ));
         let (mut ui, fonts) = new_ui();
         for (p, v) in [
             (Peak::InL, 0.7),
@@ -1277,7 +1311,7 @@ mod snapshot {
             (Peak::OutR, 1.02),
         ] {
             // Join shows an empty IN: the "−∞" readout.
-            if name == "join" && matches!(p, Peak::InL | Peak::InR) {
+            if mode == 1.0 && matches!(p, Peak::InL | Peak::InR) {
                 continue;
             }
             shared.note_peak(p, v);
@@ -1289,7 +1323,7 @@ mod snapshot {
         };
         let logical = if name == "share-default" {
             (616, 218)
-        } else if name.starts_with("compact-mics") {
+        } else if name.starts_with("compact") {
             (380, 150)
         } else if name.contains("large") {
             (792, 432)
@@ -1367,6 +1401,38 @@ mod snapshot {
         let mut enc = png::Encoder::new(std::fs::File::create(path).unwrap(), w, h);
         enc.set_color(png::ColorType::Rgba);
         enc.write_header().unwrap().write_image_data(&rgba).unwrap();
+        if !about && !view.mic_panel {
+            let id = moose::mui::widget_id(P::Quality);
+            for cap in [128_000, 64_000, 510_000, 192_000] {
+                let bounds = ui.scene().unwrap().layout.frame(&id).unwrap();
+                assert!(bounds.right() <= f64::from(logical.0));
+                let pos = mui::geometry::Point::new(
+                    bounds.x + bounds.size.width / 2.0,
+                    bounds.y + bounds.size.height / 2.0,
+                );
+                for buttons in [
+                    mui::input::Buttons::PRIMARY,
+                    mui::input::Buttons::default(),
+                    mui::input::Buttons::default(),
+                ] {
+                    let root = build(
+                        &mut ui,
+                        &mut bridge,
+                        &shared,
+                        &settings.standard_ui,
+                        &fonts,
+                        &mut view,
+                    );
+                    let input = mui::input::PointerInput {
+                        pos: Some(pos),
+                        buttons,
+                        ..Default::default()
+                    };
+                    ui.frame(root, Some(size), input, 0.0).unwrap();
+                }
+                assert_eq!(settings.quality.value().bps(), cap, "{name} quality click");
+            }
+        }
     }
 
     #[test]
@@ -1375,6 +1441,9 @@ mod snapshot {
         render(0.5, Net::Internet, "share-default", false);
         render(0.5, Net::Internet, "standard", false);
         render(1.0, Net::Lan, "join", false);
+        render(1.0, Net::Internet, "join-internet", false);
+        render(1.0, Net::Internet, "compact-join-standard", false);
+        render(1.0, Net::Waiting, "compact-join-waiting", false);
         render(0.5, Net::Internet, "about", true);
         render(0.5, Net::Internet, "mics-large", false);
         render(0.5, Net::Internet, "compact-mics", false);
