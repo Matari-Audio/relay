@@ -1,0 +1,60 @@
+name: Plugin UI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      APP_GIT_REVISION: ${{ github.sha }}
+      MUI_REPORTING_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev libfreetype6-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libssl-dev libasound2-dev cmake pkg-config
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: UI scheduling regressions
+        run: cargo test --locked -p relay-plugin --lib ui::tests
+      - name: Verify shared MUI source and build VST3
+        run: |
+          python3 - <<'PYPIN'
+          import pathlib, re, tomllib
+          revision = re.search(r'config.mui_revision = "([0-9a-f]{40})"', pathlib.Path('plugin/src/ui.rs').read_text()).group(1)
+          sources = {p['source'].split('#')[-1] for p in tomllib.loads(pathlib.Path('Cargo.lock').read_text())['package'] if 'Matari-Audio/MUI' in p.get('source', '')}
+          assert sources == {revision}, f'MUI reporting identity differs from compiled sources: {sources}'
+          PYPIN
+          cargo build --locked --release -p relay-plugin --lib
+          mkdir -p ui-plugin/RELAY.vst3/Contents/x86_64-linux
+          cp target/release/librelay_plugin.so ui-plugin/RELAY.vst3/Contents/x86_64-linux/RELAY.so
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: relay-vst3-ui
+          path: ui-plugin/
+          retention-days: 7
+          if-no-files-found: error
+  editor:
+    needs: build
+    uses: Matari-Audio/MUI/.github/workflows/plugin-ui.yml@dcf0796082feec053af1418e3a38a302ee61da0a
+    with:
+      artifact-name: relay-vst3-ui
+      plugin-path: RELAY.vst3
+      require-mui-diagnostics: true
