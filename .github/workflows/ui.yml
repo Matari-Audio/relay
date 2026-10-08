@@ -32,6 +32,8 @@ jobs:
             libx11-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libssl-dev libasound2-dev cmake pkg-config
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: UI scheduling regressions
+        run: cargo test --locked -p relay-plugin --lib ui::tests
       - name: Verify shared MUI source and build VST3
         run: |
           python3 - <<'PYPIN'
@@ -51,7 +53,7 @@ jobs:
           if-no-files-found: error
   editor:
     needs: build
-    uses: Matari-Audio/MUI/.github/workflows/plugin-ui.yml@199d46be30dc742cd82882035531ab8a8894291b
+    uses: Matari-Audio/MUI/.github/workflows/plugin-ui.yml@1c43e33e9db2a0c89d80b73b36899aebdcec5005
     with:
       artifact-name: relay-vst3-ui
       plugin-path: RELAY.vst3

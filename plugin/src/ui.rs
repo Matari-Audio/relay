@@ -5,7 +5,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use moose::mui::{Bridge, MuiEditor};
@@ -110,6 +110,10 @@ struct Rail {
 }
 
 impl Rail {
+    fn animating(&self) -> bool {
+        self.shown > FLOOR || self.hold > FLOOR
+    }
+
     fn feed(&mut self, peak: f32, now: Instant, dt: f32) {
         let db = db(peak);
         self.shown = db.max(self.shown - 24.0 * dt).max(FLOOR);
@@ -119,6 +123,30 @@ impl Rail {
             self.hold = (self.hold - 20.0 * dt).max(FLOOR);
         }
     }
+}
+
+#[derive(PartialEq)]
+struct TalkerState {
+    id: String,
+    slot: usize,
+    name: String,
+    plugin: bool,
+    stereo: bool,
+    gain: u32,
+    muted: bool,
+}
+
+#[derive(PartialEq)]
+struct LinkState {
+    net: Net,
+    config: u32,
+    peers: u32,
+    rate: u32,
+    latency: u32,
+    bitrate: u32,
+    address: String,
+    talkers: Vec<TalkerState>,
+    standard: bool,
 }
 
 /// What only the editor remembers.
@@ -138,6 +166,12 @@ struct View {
     rails: [Rail; 4],
     mic_rails: HashMap<String, [Rail; 2]>,
     mic_scroll: usize,
+    // ponytail: visible mic panels poll so strip counts catch up after resize.
+    // A Moose after_frame callback could replace this with one layout follow-up.
+    mic_open: bool,
+    live: bool,
+    dirty: bool,
+    link: Option<LinkState>,
     /// Highest IN and OUT since the last reset, linear.
     max: [f32; 2],
     last: Instant,
@@ -165,9 +199,63 @@ impl Default for View {
             rails: [rail; 4],
             mic_rails: HashMap::new(),
             mic_scroll: 0,
+            mic_open: false,
+            live: false,
+            dirty: false,
+            link: None,
             max: [0.0; 2],
             last: now,
         }
+    }
+}
+
+impl View {
+    fn flags(&self) -> [bool; 5] {
+        [
+            self.about,
+            self.mic_panel,
+            self.show_password,
+            self.show_address,
+            self.copied,
+        ]
+    }
+
+    fn changed(&mut self, shared: &Shared, standard: bool) -> bool {
+        let dirty = std::mem::take(&mut self.dirty);
+        let address = Shared::text(&shared.address);
+        let talkers = shared.talkers.lock().unwrap();
+        let link = LinkState {
+            net: shared.net(),
+            config: shared.config.load(Relaxed),
+            peers: shared.peers.load(Relaxed),
+            rate: shared.rate.load(Relaxed),
+            latency: shared.latency.load(Relaxed),
+            bitrate: shared.bitrate.load(Relaxed),
+            address,
+            talkers: talkers
+                .iter()
+                .map(|t| TalkerState {
+                    id: t.id.clone(),
+                    slot: t.slot,
+                    name: t.name.clone(),
+                    plugin: t.plugin,
+                    stereo: t.stereo,
+                    gain: t.gain_db.to_bits(),
+                    muted: t.muted,
+                })
+                .collect(),
+            standard,
+        };
+        let changed = self.link.as_ref() != Some(&link);
+        self.link = Some(link);
+        changed
+            || dirty
+            || self.live
+            || self.room_edit.is_some()
+            || self.password_edit.is_some()
+            || self.rails.iter().any(Rail::animating)
+            || self.mic_open
+            || shared.peaks.iter().any(|p| p.load(Relaxed) != 0)
     }
 }
 
@@ -200,18 +288,21 @@ fn new_ui() -> (Ui, Fonts) {
 pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     let mut config = mui::diagnostics::Config::new("relay", env!("CARGO_PKG_VERSION"));
     config.build = option_env!("APP_GIT_REVISION").unwrap_or("unknown").into();
-    config.mui_revision = "199d46be30dc742cd82882035531ab8a8894291b".into();
+    config.mui_revision = "1c43e33e9db2a0c89d80b73b36899aebdcec5005".into();
     let reporter = mui::diagnostics::Reporter::start(config)
         .inspect_err(|error| eprintln!("RELAY MUI reporting: {error}"))
         .ok();
     let shared = Arc::clone(&params.link.0);
     let settings = Arc::clone(&params);
     let (ui, fonts) = new_ui();
-    let mut view = View {
+    let view = Arc::new(Mutex::new(View {
         room: Shared::text(&shared.room),
         password: Shared::text(&shared.password),
         ..View::default()
-    };
+    }));
+    let polled_view = Arc::clone(&view);
+    let polled_shared = Arc::clone(&shared);
+    let polled_settings = Arc::clone(&settings);
     let mut editor = MuiEditor::new(params, ui, SIZE, move |ui, bridge| {
         let _reporter = &reporter;
         build(
@@ -220,12 +311,17 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
             &shared,
             &settings.standard_ui,
             &fonts,
-            &mut view,
+            &mut view.lock().unwrap(),
         )
     })
     .resizable((380, 150))
-    // Meters decay and the link status moves while nothing is touched.
-    .changed(|| true);
+    // Moose polls parameter changes; Relay adds link changes and unfinished animation.
+    .changed(move || {
+        polled_view
+            .lock()
+            .unwrap()
+            .changed(&polled_shared, *polled_settings.standard_ui.read().unwrap())
+    });
     let _ = editor.set_size(616, 218);
     editor.into_editor()
 }
@@ -285,6 +381,8 @@ fn build(
     fonts: &Fonts,
     view: &mut View,
 ) -> El {
+    let flags = view.flags();
+    view.mic_open = false;
     let pixel = !*standard_ui.read().unwrap();
     fonts.pixel.set(pixel);
     ui.set_theme(if pixel { PIXEL_THEME } else { STANDARD_THEME });
@@ -508,6 +606,7 @@ fn build(
     }
     let t = view.born.elapsed().as_secs_f64();
     let live = lit == LIME;
+    view.live = live;
     let sources = shared.talkers.lock().unwrap().len();
     let talk = if picked == 1 {
         if ui.get("mics").clicked_with(Button::Primary) {
@@ -591,11 +690,15 @@ fn build(
     .clip();
 
     let meters = meters(ui, bridge, shared, fonts, view);
-    row([left, meters]).gap(12.0).pad(10.0).fill(BG)
+    let root = row([left, meters]).gap(12.0).pad(10.0).fill(BG);
+    // Some actions change a flag after constructing its label or input this frame.
+    view.dirty |= flags != view.flags();
+    root
 }
 
 /// One narrow channel per return source, mixed on the network thread.
 fn microphones(ui: &mut Ui, shared: &Shared, fonts: &Fonts, view: &mut View) -> El {
+    view.mic_open = true;
     let mut talkers = shared.talkers.lock().unwrap();
     let now = Instant::now();
     let dt = now.duration_since(view.last).as_secs_f32().min(0.1);
@@ -1202,6 +1305,116 @@ fn unmask(old: &[char], shown: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settled_editor_wakes_once_for_link_and_style_changes() {
+        let shared = Shared::new();
+        let mut view = View::default();
+        assert!(view.changed(&shared, false));
+        assert!(!view.changed(&shared, false));
+        for field in [
+            &shared.config,
+            &shared.peers,
+            &shared.rate,
+            &shared.latency,
+            &shared.bitrate,
+        ] {
+            field.fetch_add(1, Relaxed);
+            assert!(view.changed(&shared, false));
+            assert!(!view.changed(&shared, false));
+        }
+        shared.set_net(Net::Waiting);
+        assert!(view.changed(&shared, false));
+        assert!(!view.changed(&shared, false));
+        *shared.address.lock().unwrap() = "127.0.0.1:17493".into();
+        assert!(view.changed(&shared, false));
+        assert!(!view.changed(&shared, false));
+        assert!(view.changed(&shared, true));
+        assert!(!view.changed(&shared, true));
+    }
+
+    #[test]
+    fn incoming_peak_is_not_consumed_by_polling_and_tail_eventually_sleeps() {
+        let shared = Shared::new();
+        let mut view = View::default();
+        view.changed(&shared, false);
+        shared.note_peak(Peak::InL, 1.0);
+        assert!(view.changed(&shared, false));
+        let peak = shared.take_peak(Peak::InL);
+        assert_eq!(peak, 1.0);
+        let now = view.last;
+        view.rails[0].feed(peak, now, 0.0);
+        view.rails[0].feed(0.0, now + Duration::from_secs(1), 0.1);
+        assert_eq!(view.rails[0].hold, 0.0, "peak hold must survive silence");
+        assert!(view.changed(&shared, false));
+        for step in 11..=60 {
+            view.rails[0].feed(0.0, now + Duration::from_millis(step * 100), 0.1);
+        }
+        assert_eq!((view.rails[0].shown, view.rails[0].hold), (FLOOR, FLOOR));
+        assert!(!view.changed(&shared, false));
+    }
+
+    #[test]
+    fn open_mic_panel_polls_but_closed_panel_only_wakes_for_metadata() {
+        let shared = Shared::new();
+        let mut view = View::default();
+        view.changed(&shared, false);
+        shared.talkers.lock().unwrap().push(relay_core::Talker {
+            id: "mic".into(),
+            slot: 1,
+            name: "Listener".into(),
+            plugin: false,
+            stereo: false,
+            active: false,
+            peak: [0.5, 0.0],
+            gain_db: 0.0,
+            muted: false,
+        });
+        assert!(
+            view.changed(&shared, false),
+            "roster must update with panel closed"
+        );
+        assert!(
+            !view.changed(&shared, false),
+            "hidden peak must not force redraw"
+        );
+        view.mic_open = true;
+        assert!(view.changed(&shared, false));
+        assert!(view.changed(&shared, false));
+        assert_eq!(shared.talkers.lock().unwrap()[0].peak[0], 0.5);
+        shared.talkers.lock().unwrap()[0].peak = [0.0; 2];
+        assert!(
+            view.changed(&shared, false),
+            "silent panel still follows layout"
+        );
+        view.mic_open = false;
+        assert!(
+            !view.changed(&shared, false),
+            "closing panel must stop its polling"
+        );
+        shared.talkers.lock().unwrap()[0].muted = true;
+        assert!(view.changed(&shared, false));
+        assert!(!view.changed(&shared, false));
+    }
+
+    #[test]
+    fn edit_commit_and_local_followup_finish_but_live_mark_keeps_animating() {
+        let shared = Shared::new();
+        let mut view = View::default();
+        view.changed(&shared, false);
+        view.room_edit = Some(view.last);
+        assert!(view.changed(&shared, false));
+        view.room_edit = None;
+        view.password_edit = Some(view.last);
+        assert!(view.changed(&shared, false));
+        view.password_edit = None;
+        view.dirty = true;
+        assert!(view.changed(&shared, false));
+        assert!(!view.changed(&shared, false));
+        view.live = true;
+        assert!(view.changed(&shared, false));
+        assert!(view.changed(&shared, false));
+    }
 
     #[test]
     fn mark_keeps_dot_and_two_moving_chevrons() {
