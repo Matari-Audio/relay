@@ -198,6 +198,12 @@ fn new_ui() -> (Ui, Fonts) {
 }
 
 pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
+    let mut config = mui::diagnostics::Config::new("relay", env!("CARGO_PKG_VERSION"));
+    config.build = option_env!("APP_GIT_REVISION").unwrap_or("unknown").into();
+    config.mui_revision = "199d46be30dc742cd82882035531ab8a8894291b".into();
+    let reporter = mui::diagnostics::Reporter::start(config)
+        .inspect_err(|error| eprintln!("RELAY MUI reporting: {error}"))
+        .ok();
     let shared = Arc::clone(&params.link.0);
     let settings = Arc::clone(&params);
     let (ui, fonts) = new_ui();
@@ -207,6 +213,7 @@ pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
         ..View::default()
     };
     let mut editor = MuiEditor::new(params, ui, SIZE, move |ui, bridge| {
+        let _reporter = &reporter;
         build(
             ui,
             bridge,
