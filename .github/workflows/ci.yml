@@ -29,6 +29,6 @@ jobs:
             libxcb-util-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libxcursor-dev libxrandr-dev libxi-dev
       - name: Check workspace
-        run: flock /tmp/mui-cargo.lock cargo check --workspace --all-targets --locked
+        run: flock --close /tmp/mui-cargo.lock cargo check --workspace --all-targets --locked
       - name: Test workspace
-        run: flock /tmp/mui-cargo.lock cargo test --workspace --locked
+        run: flock --close /tmp/mui-cargo.lock cargo test --workspace --locked
