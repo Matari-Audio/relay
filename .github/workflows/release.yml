@@ -1,0 +1,161 @@
+name: Release
+
+# Modeled on KURV's release.yml. Builds CLAP + VST3 for Linux and Windows, and
+# CLAP + VST3 + AU for universal macOS (signed, notarized .pkg via
+# scripts/build-macos-signed.sh).
+# Main-branch changes and manual runs build and upload workflow artifacts. Pushing a v* tag
+# also creates the GitHub Release and publishes to the R2 manifest that drives
+# the matari-audio.com download panel (scripts/publish-release.py).
+# All secrets are Matari-Audio org secrets, same names as KURV / drop-recorder.
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'plugin/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/build-macos-signed.sh'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-release-${{ github.ref }}
+  # Only the newest branch build is useful; tagged releases must finish.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Standard GitHub-hosted runners are free for this public repository.
+  # Keep these labels; larger runners are paid even for public repositories.
+  build:
+    name: Build ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-22.04 # glibc 2.35 floor
+            target: x86_64-unknown-linux-gnu
+            py: python3
+          - os: windows
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            py: python
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-moose
+      - name: Install cargo-moose
+        run: cargo install --git https://github.com/Matari-Audio/moose --rev f8f4b79125f8ed61153eeb66a99d31b6b9817182 cargo-moose --locked
+      - name: Build bundles
+        working-directory: plugin
+        run: cargo moose build --clap --vst3 --target ${{ matrix.target }} --target-cpu baseline
+      - name: Package zip
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' plugin/Cargo.toml | head -1)
+          mkdir -p target/dist
+          out="$PWD/target/dist/relay-${{ matrix.os }}-${version}.zip"
+          cd target/bundles/${{ matrix.target }}
+          cp "$GITHUB_WORKSPACE/plugin/assets/DepartureMono-OFL.txt" .
+          cp "$GITHUB_WORKSPACE/plugin/assets/Silkscreen-OFL.txt" .
+          ${{ matrix.py }} -m zipfile -c "$out" RELAY.clap RELAY.vst3 DepartureMono-OFL.txt Silkscreen-OFL.txt
+          ${{ matrix.py }} -m zipfile -l "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-${{ matrix.os }}
+          path: target/dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: Build, sign and notarize macOS
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Add Apple targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      # build-macos-signed.sh uses its own target dirs, so only cache the registry and cargo-moose.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          key: cargo-moose
+      - name: Install cargo-moose
+        run: cargo install --git https://github.com/Matari-Audio/moose --rev f8f4b79125f8ed61153eeb66a99d31b6b9817182 cargo-moose --locked
+      - name: Build, sign, notarize, and staple
+        env:
+          APPLE_APPLICATION_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_APPLICATION_CERTIFICATE_P12_BASE64 }}
+          APPLE_INSTALLER_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_DEVELOPER_ID_INSTALLER: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/build-macos-signed.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-macos
+          path: target/macos-release/*.pkg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: GitHub Release and matari-audio.com
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Check the tag matches the plugin version
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' plugin/Cargo.toml | head -1)
+          [[ "$GITHUB_REF_NAME" == "v$version" ]] || { echo "::error::tag $GITHUB_REF_NAME != v$version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v h="## $VERSION" '$0==h{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "RELAY $VERSION" --notes-file notes.md \
+            artifacts/relay-linux/*.zip artifacts/relay-windows/*.zip artifacts/relay-macos/*.pkg
+      - name: Upload to R2 and update the manifest
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 scripts/publish-release.py \
+            --linux artifacts/relay-linux/relay-linux-*.zip \
+            --windows artifacts/relay-windows/relay-windows-*.zip \
+            --macos-pkg artifacts/relay-macos/RELAY-*-macos.pkg \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

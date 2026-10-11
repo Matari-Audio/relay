@@ -1,73 +1,98 @@
 # RELAY
 
-![The RELAY plugin editor in Share, live on a named session](docs/images/relay-editor.png)
+![The RELAY editor sharing a room](docs/images/relay-editor.png)
 
-Low-latency real-time audio transport with native DAW, browser, and server adapters.
+An insert that sends and receives the track it sits on, peer to peer. One
+plugin shares a room; another joins it. Both send their DAW input and hear
+the other plugin. Browser listeners hear their mix. Each source has its own
+gain and mute control in the sharing plugin; turn off **THRU** for an FX return.
 
-**Open source** under [MPL-2.0](LICENSE). Source: [github.com/DerpcatMusic/relay](https://github.com/DerpcatMusic/relay).
+| To | How | Audio |
+|---|---|---|
+| Another RELAY on your LAN | UDP, found by room name over mDNS | 32-bit float PCM, no codec |
+| Another RELAY over the internet | WebRTC | Opus, 192 kbps default ceiling, self-sizing jitter buffer |
+| Anyone's browser | `relay.matari-audio.com/<room>` | Opus, 192 kbps default ceiling, nothing to install |
 
-## Status
+No account. The only server is a Cloudflare Durable Object that introduces
+the two ends; audio never passes through it. LAN PCM is currently unencrypted;
+see the [protocol and security notes](docs/protocol.md).
 
-The Phase 0 foundation, deterministic testkit, generated protocol consumers, golden contract tests, bootstrap policy, and local CI gates are implemented. The Phase 1 audio primitives and composed `relay-audio` path are also implemented and locally gated: bounded realtime rings, scheduled-playout clock recovery, RTP sequence reordering, fixed/adaptive Rubato resampling, a safe libopus boundary, loopback, 60-second media, finite drain, and the 12-virtual-hour soak. Phase 0 still requires a tracked Git baseline and hosted Linux/Windows/macOS CI; Phase 1 still requires a final callback-safety audit and locked workspace/platform runs. Native unpaid Connect and Stream work on localhost and the home LAN through `relay-session`, the CLIs, and the Truce plugin. **LAN is 5 ms uncompressed PCM** (no Opus). Named-session listen is live at [https://relay.matari-audio.com](https://relay.matari-audio.com). Download: [matari-audio.com/relay](https://matari-audio.com/relay). Test recipes: [`apps/plugin/README.md`](apps/plugin/README.md). Paid TURN, billing, and hosted three-OS CI remain open. Plugin→browser listen is P2P through `relay-transport` + libdatachannel: sendonly Opus audio track, Cloudflare STUN, no TURN (libnice when linked; STUN-only on juice).
+Open source under [MPL-2.0](LICENSE).
 
-- [Master architecture/specification](docs/plans/2026-08-15-relay-master-plan.md)
-- [Focused implementation plan index](docs/plans/README.md)
-- [Phase 0 foundation plan](docs/plans/2026-08-15-relay-phase-0-foundation-plan.md)
-- [Phase 0 integration evidence](docs/research/phase-0-integration.md)
-- [Task research contract](docs/research/README.md)
-
-## Current workspace
+## Layout
 
 ```text
-crates/relay-domain/   dependency-free domain vocabulary and V1 audio profile
-crates/relay-protocol/ generated Rust protocol consumer and golden fixture test
-crates/relay-testkit/  deterministic fake clock and audio source/sink
-crates/relay-rt/       bounded callback-safe SPSC audio sample rings
-crates/relay-clock/    scheduled-playout drift estimation and recovery control
-crates/relay-jitter/   bounded RTP sequence reorder and target-delay policy
-crates/relay-resample/ fixed, adaptive, and finite-stream sample-rate conversion
-crates/relay-opus*/    safe fixed-profile Opus facade and quarantined FFI
-proto/relay/v1/        signaling, capabilities, and sanitized telemetry contracts
-packages/protocol/     generated TypeScript protocol consumer and golden test
-packages/web-rtc/      framework-independent browser-session shell
-apps/connect/          standalone Connect CLI (`listen` / `join`)
-apps/stream/           unpaid local Stream CLI (`hub` / `publish` / `listen`)
-apps/plugin/           Truce adapter — CLAP, VST3, VST2, LV2, AU v2/v3, standalone (own Cargo workspace)
-apps/web/              Astro product page and listen hand-off
-docs/adr/              accepted foundation decisions
-docs/research/         per-task sources, corrections, and validation evidence
+core/            relay-core: shared state, LAN link, WebRTC, mDNS, port mapping, playout
+plugin/          relay-plugin: MOOSE CLAP/VST3/AU insert, MUI editor
+apps/relay-web/  signaling worker (Durable Object) and the browser listen page
+apps/web/        matari-audio.com/relay product page (Astro)
 ```
 
-## Validation
+## Build and test
 
 ```bash
-cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features --locked
-cargo test --workspace --all-targets --all-features --locked
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo nextest run --locked
-
-npx --yes pnpm@11.22.0 install --frozen-lockfile
-npx --yes pnpm@11.22.0 -r run typecheck
-npx --yes pnpm@11.22.0 -r run build
-
-cd proto
-npx --yes @bufbuild/buf lint
-npx --yes @bufbuild/buf build
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo install --git https://github.com/Matari-Audio/moose cargo-moose --locked
+cargo moose install --clap --vst3        # from plugin/; add --au2 on macOS
+pnpm install && pnpm -r test && pnpm -r build
 ```
 
-Every implementation task must create or update its own research evidence record and explicitly list potential corrections to the master plan.
+`cargo test -p relay-plugin` also renders the editor to
+`$TMPDIR/relay-editor-{share,join,about}.png`, so you can look at it without a DAW.
 
-## Plugin formats
+The public [Release workflow](https://github.com/Matari-Audio/relay/actions/workflows/release.yml)
+builds Linux and Windows CLAP/VST3 archives and a signed, notarized universal
+macOS CLAP/VST3/AU installer. It runs automatically for plugin/core changes on
+`main`, or manually for a branch. Those builds are downloadable workflow artifacts;
+only a matching `v<version>` tag publishes a stable release and updates the site.
 
-```bash
-cd apps/plugin
-cargo truce install                 # CLAP + VST3 + VST2 + LV2 + AU (macOS) + standalone
-cargo truce install --lv2 --vst2    # subset
-```
+## Deploying signaling
 
-AU v2/v3 need macOS. AUv3 also needs Xcode (`cargo truce install --au3`). AAX is optional and needs the Avid SDK. See [apps/plugin/README.md](apps/plugin/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+`apps/relay-web` deploys with `wrangler deploy`. TURN is **disabled by default**:
+only direct P2P connections and free STUN discovery are offered. Existing
+secrets or `EXTRA_ICE` do not enable relaying.
+
+To deliberately enable TURN, set `vars.TURN_ENABLED` to the string `"true"`
+in `apps/relay-web/wrangler.jsonc` and deploy. Configure `TURN_KEY_ID` and
+`TURN_KEY_TOKEN` secrets for Cloudflare Realtime TURN, or `EXTRA_ICE` (JSON)
+for a self-hosted relay. Relayed traffic may incur charges. Set the flag back
+to `"false"` and deploy to disable it; credentials already issued can remain
+valid until their 24 h expiration.
+
+IPv4 and IPv6 interfaces are probed with STUN while router port mapping runs
+in parallel. Newly discovered addresses are forwarded to current peers, so
+they can help the first connection too. Brief interruptions can recover before
+a replacement connection is requested.
+Native signaling tries alternate IPv4/IPv6 addresses after 250 ms, so an
+unreachable route does not delay a working address by its full timeout.
+
+| Network | Direct connection support |
+|---|---|
+| Same LAN | Lossless UDP with automatic discovery |
+| Typical home internet | IPv4 STUN, optional router mapping and IPv6 candidates |
+| Mobile data / CGNAT | Direct ICE can work with a reachable peer; restrictive NATs can still block it |
+| Networks blocking UDP | Direct audio cannot work; no paid relay is enabled automatically |
+
+TURN remains optional for browser listeners and is not implemented in the
+native plugins. Neither IPv6 nor TURN guarantees access through every firewall.
+
+New plugin instances default to a 192 kbps internet quality ceiling (64, 128,
+192 or 510 kbps). Saved quality settings keep their positions; the former
+256 kbps step now uses 192 kbps. The ceiling adapts down for slower listeners.
+Click the bitrate readout in Share or Join to cycle the ceiling during
+playback, without reconnecting. Share controls the stream it sends to listeners;
+Join controls its outgoing return audio. LAN audio stays lossless.
+At 192 kbps, encoded music uses about 86.4 MB per listener-hour before network
+headers, 62% less than 510 kbps. Direct P2P audio uses the host's upload and
+listener's download, with no Cloudflare media bandwidth charge.
+
+For connection troubleshooting, run `await relayDiagnostics()` in the listen
+page's browser console. It reports setup milestones, selected candidate types,
+RTT, audio jitter, average jitter-buffer delay and packet loss locally. RTT is
+a round trip and jitter-buffer delay is one component of playback latency;
+neither measures total one-way audio latency. Diagnostics are not uploaded.
 
 ## License
 
-Mozilla Public License 2.0. You can use, modify, and distribute RELAY; files you change stay under MPL-2.0 so improvements can flow back. The complete text is in [LICENSE](LICENSE).
+Mozilla Public License 2.0; see [LICENSE](LICENSE).
