@@ -7,16 +7,25 @@
     "url": "https://github.com/DerpcatMusic/relay.git"
   },
   "homepage": "https://relay.matari-audio.com",
-  "packageManager": "pnpm@11.22.0",
+  "packageManager": "bun@1.4.2",
   "scripts": {
-    "build": "pnpm --recursive build",
-    "typecheck": "pnpm --recursive typecheck",
-    "test": "pnpm --recursive --if-present test"
+    "build": "bun run --filter '*' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test"
   },
   "devDependencies": {
     "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=22.12.0"
-  }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "trustedDependencies": [
+    "esbuild",
+    "sharp",
+    "workerd"
+  ]
 }
