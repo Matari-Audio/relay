@@ -1,0 +1,85 @@
+# Keep this plugin on MUI's latest main. Copy to .github/workflows/follow-mui.yml.
+#
+# Every 6 hours, on demand, or when MUI's main moves (repository_dispatch
+# "mui-main" sent by MUI's notify-plugins workflow): update the MUI git
+# packages in Cargo.lock, run this repo's own CI on that lock, and merge it
+# when CI passes. A red CI leaves the PR open: that is API drift to fix, not
+# something to pin away.
+#
+# Requirements in this repo:
+# - CI workflow at .github/workflows/ci.yml with an `on: workflow_call:`
+#   trigger taking an optional `ref` input that its checkout steps use
+#   (`ref: ${{ inputs.ref || github.ref }}`). If the file has another name,
+#   change `uses:` in the ci job below.
+# - Settings > Actions > General: "Allow GitHub Actions to create and approve
+#   pull requests" enabled.
+name: Follow MUI main
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [mui-main]
+
+concurrency:
+  group: follow-mui
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  BRANCH: chore/follow-mui-main
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.lock.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update MUI in Cargo.lock
+        id: lock
+        run: |
+          # Every package whose source is the MUI git repository.
+          # Full source IDs distinguish vendored vello_encoding from crates.io.
+          pkgs=$(awk '/^name = /{n=$3} /^version = /{v=$3} /^source = "git\+https:\/\/github.com\/Matari-Audio\/MUI/{s=$3; gsub(/"/,"",n); gsub(/"/,"",v); gsub(/"/,"",s); sub(/#.*/,"",s); print s "#" n "@" v}' Cargo.lock | sort -u)
+          if [ -z "$pkgs" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          args=""; for p in $pkgs; do args="$args -p $p"; done
+          # -p keeps unrelated crates at their locked versions (a full
+          # re-resolve once pulled gpu-allocator onto windows 0.56 and broke
+          # wgpu-hal DX12); --locked metadata proves the result is consistent.
+          cargo update $args
+          cargo metadata --locked --format-version 1 > /dev/null
+          if git diff --quiet Cargo.lock; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          rev=$(grep -m1 -o 'Matari-Audio/MUI#[0-9a-f]*' Cargo.lock | cut -d'#' -f2)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git commit -am "chore: follow MUI main (${rev:0:12})"
+          git push -f origin "$BRANCH"
+          gh pr view "$BRANCH" > /dev/null 2>&1 || gh pr create --head "$BRANCH" \
+            --title "Follow MUI main" \
+            --body "Updates MUI to Matari-Audio/MUI@${rev}. Merged automatically when CI passes."
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  ci:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: chore/follow-mui-main
+    secrets: inherit
+
+  merge:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh pr merge chore/follow-mui-main --squash --delete-branch
+        env:
+          GH_TOKEN: ${{ github.token }}
