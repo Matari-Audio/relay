@@ -1,0 +1,3 @@
+# pnpm-style isolated node_modules: astro check needs typescript 6.x, hoisting picks 7.x.
+[install]
+linker = "isolated"
