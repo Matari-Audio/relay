@@ -149,6 +149,10 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "RELAY $VERSION" --notes-file notes.md \
             artifacts/relay-linux/*.zip artifacts/relay-windows/*.zip artifacts/relay-macos/*.pkg
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - name: Upload to R2 and update the manifest
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

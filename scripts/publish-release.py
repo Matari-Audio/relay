@@ -38,7 +38,7 @@ TRUST = {  # (signature_status, notarization_status), as the site expects
 
 
 def wrangler(*args: str) -> None:
-    subprocess.run(["npx", "-y", "wrangler", *args], check=True)
+    subprocess.run(["bunx", "wrangler", *args], check=True)
 
 
 def version() -> str:
@@ -141,7 +141,7 @@ def main() -> int:
     wrangler("r2", "object", "put", f"{BUCKET}/manifest.json", "--remote", "--file", str(new_path),
              "--content-type", "application/json")
     for key in stale:
-        subprocess.run(["npx", "-y", "wrangler", "r2", "object", "delete", f"{BUCKET}/{key}", "--remote"])
+        subprocess.run(["bunx", "wrangler", "r2", "object", "delete", f"{BUCKET}/{key}", "--remote"])
     print(f"Published {PRODUCT_NAME} {ver} to {BUCKET}")
     return 0
 
