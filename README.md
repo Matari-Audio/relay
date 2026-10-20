@@ -35,7 +35,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo install --git https://github.com/Matari-Audio/moose cargo-moose --locked
 cargo moose install --clap --vst3        # from plugin/; add --au2 on macOS
-pnpm install && pnpm -r test && pnpm -r build
+bun install && bun run test && bun run build
 ```
 
 `cargo test -p relay-plugin` also renders the editor to
