@@ -18,15 +18,15 @@ au = ["dep:moose-au", "moose/au"]
 
 [dependencies]
 relay-core = { path = "../core" }
-moose = { git = "https://github.com/Matari-Audio/moose", rev = "bffa4677d0b82119d38566ce7e932dc5c463d497", default-features = false, features = ["mui"] }
-moose-core = { git = "https://github.com/Matari-Audio/moose", rev = "bffa4677d0b82119d38566ce7e932dc5c463d497" }
-moose-clap = { git = "https://github.com/Matari-Audio/moose", rev = "bffa4677d0b82119d38566ce7e932dc5c463d497", optional = true }
-moose-vst3 = { git = "https://github.com/Matari-Audio/moose", rev = "bffa4677d0b82119d38566ce7e932dc5c463d497", optional = true }
-moose-au = { git = "https://github.com/Matari-Audio/moose", rev = "bffa4677d0b82119d38566ce7e932dc5c463d497", optional = true }
+moose = { git = "https://github.com/Matari-Audio/moose", rev = "9a6a944373a2773f3fbf33bbfd304510ac3ee381", default-features = false, features = ["mui"] }
+moose-core = { git = "https://github.com/Matari-Audio/moose", rev = "9a6a944373a2773f3fbf33bbfd304510ac3ee381" }
+moose-clap = { git = "https://github.com/Matari-Audio/moose", rev = "9a6a944373a2773f3fbf33bbfd304510ac3ee381", optional = true }
+moose-vst3 = { git = "https://github.com/Matari-Audio/moose", rev = "9a6a944373a2773f3fbf33bbfd304510ac3ee381", optional = true }
+moose-au = { git = "https://github.com/Matari-Audio/moose", rev = "9a6a944373a2773f3fbf33bbfd304510ac3ee381", optional = true }
 clap-sys = { version = "0.5", optional = true }
 mui = { git = "https://github.com/Matari-Audio/MUI", features = ["reporting"] }
 
 [dev-dependencies]
 mui-vello = { git = "https://github.com/Matari-Audio/MUI", features = ["cpu"] }
-moose-params = { git = "https://github.com/Matari-Audio/moose", rev = "bffa4677d0b82119d38566ce7e932dc5c463d497" }
+moose-params = { git = "https://github.com/Matari-Audio/moose", rev = "9a6a944373a2773f3fbf33bbfd304510ac3ee381" }
 png = "0.17"

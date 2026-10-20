@@ -1612,11 +1612,7 @@ mod snapshot {
         ctx.flush();
         let mut pix = Pixmap::new(w as u16, h as u16);
         ctx.render(&mut pix, &mut resources);
-        let rgba: Vec<u8> = pix
-            .take_unpremultiplied()
-            .iter()
-            .flat_map(|p| [p.r, p.g, p.b, p.a])
-            .collect();
+        let rgba: Vec<u8> = pix.take_rgba8(mui::vello::peniko::ImageAlphaType::Alpha);
         let path = std::env::temp_dir().join(format!("relay-editor-{name}.png"));
         let mut enc = png::Encoder::new(std::fs::File::create(path).unwrap(), w, h);
         enc.set_color(png::ColorType::Rgba);
