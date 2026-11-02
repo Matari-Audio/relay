@@ -53,7 +53,7 @@ jobs:
           if-no-files-found: error
   editor:
     needs: build
-    uses: Matari-Audio/MUI/.github/workflows/plugin-ui.yml@dcf0796082feec053af1418e3a38a302ee61da0a
+    uses: ./.github/workflows/ui-editor.yml
     with:
       artifact-name: relay-vst3-ui
       plugin-path: RELAY.vst3

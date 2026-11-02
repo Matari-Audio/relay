@@ -22,7 +22,7 @@ function page(servers = []) {
     async setRemoteDescription() {}
     async addIceCandidate(c) { (this.remoteCandidates ??= []).push(c); }
     getTransceivers() { return [{ sender: { getParameters: () => ({}) } }]; }
-    async createAnswer() { return { type: "answer", sdp: "answer with current candidates" }; }
+    async createAnswer() { return { type: "answer", sdp: "v=0\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n" }; }
     async setLocalDescription(description) {
       this.localDescription = description;
       this.iceGatheringState = "gathering";
@@ -50,6 +50,7 @@ test("early answers preserve candidate order, legacy relay gathering and stale-c
   await modern.answer(true);
   assert.deepEqual(modern.sent.map((m) => m.t), ["answer", "candidate"]);
   assert.equal(modern.sent[1].ufrag, "hostGeneration");
+  assert.match(modern.sent[0].sdp, /a=fmtp:111 .*stereo=1/, "stereo answer reaches signaling");
   assert.equal(modern.timers.size, 0, "trickle never waits for full gathering");
   const old = modern.conns[0];
   await modern.answer(true);
@@ -104,4 +105,17 @@ test("early answers preserve candidate order, legacy relay gathering and stale-c
   await pending;
   assert.equal(relay.sent[0].t, "answer");
   assert.equal(relay.timers.size, 0);
+});
+
+test("Opus answers explicitly request stereo while preserving mono microphone and other codecs", () => {
+  const { context } = page();
+  const sdp = "v=0\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1;stereo=0\r\na=rtpmap:0 PCMU/8000\r\na=fmtp:0 other=1\r\n";
+  context.inputSdp = sdp;
+  const result = vm.runInContext("stereoAnswer(inputSdp)", context);
+  assert.match(result, /a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n/);
+  assert.match(result, /a=fmtp:0 other=1/);
+  assert.doesNotMatch(result, /sprop-stereo=1/, "mic remains mono");
+  assert.equal(vm.runInContext("stereoAnswer(stereoAnswer(inputSdp))", context), result);
+  context.inputSdp = "a=rtpmap:109 opus/48000/2\r\n";
+  assert.match(vm.runInContext("stereoAnswer(inputSdp)", context), /a=fmtp:109 stereo=1/);
 });

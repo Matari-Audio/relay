@@ -2,9 +2,9 @@
 
 ![The RELAY editor sharing a room](docs/images/relay-editor.png)
 
-An insert that sends and receives the track it sits on, peer to peer. One
-plugin shares a room; another joins it. Both send their DAW input and hear
-the other plugin. Browser listeners hear their mix. Each source has its own
+An insert that sends and receives the track it sits on, peer to peer. Enter
+the same room name or number in both plugins: they connect automatically.
+Both send their DAW input and hear the other plugin. Browser listeners hear their mix. Each source has its own
 gain and mute control in the sharing plugin; turn off **THRU** for an FX return.
 
 | To | How | Audio |

@@ -15,7 +15,7 @@ use rtrb::{Consumer, Producer};
 use serde_json::{Value, json};
 
 use crate::mdns::{Mdns, hex};
-use crate::rtc::{Guest, Host};
+use crate::rtc::{Guest, Host, Resample, resampler};
 use crate::signal::{Msg, Signal};
 use crate::{CHANNELS, Net, PORT, Role, SITE, Shared, Talker, tag, wire};
 
@@ -103,6 +103,9 @@ pub(crate) fn lan_ip() -> Option<std::net::IpAddr> {
 struct Session {
     sock: UdpSocket,
     role: Role,
+    automatic: bool,
+    discover: bool,
+    next_role: Option<Role>,
     tag: [u8; 8],
     /// Share: listeners and when each last said HELLO.
     peers: Vec<LanPeer>,
@@ -115,6 +118,9 @@ struct Session {
     /// Join: next host frame expected.
     received: u64,
     synced: bool,
+    receive_rate: u32,
+    down: Option<((u32, u32), Resample)>,
+    converted: Vec<f32>,
     buf: Vec<u8>,
     samples: Vec<f32>,
     lan_mix: Vec<f32>,
@@ -124,6 +130,7 @@ struct Session {
     mdns: Option<Mdns>,
     /// Join: the host came from mDNS, so drop it when it goes quiet.
     found: bool,
+    lan_probe: Option<Instant>,
     signal: Option<Signal>,
     /// Share: internet peers.
     rtc: Option<Host>,
@@ -141,6 +148,7 @@ struct LanPeer {
     seen: Instant,
     voice: VecDeque<f32>,
     primed: bool,
+    down: Option<((u32, u32), Resample)>,
 }
 
 impl Session {
@@ -148,13 +156,14 @@ impl Session {
         let mut s = Self::build(shared, role, true)?;
         let room = crate::slug(&Shared::text(&shared.room));
         let path = match role {
-            Role::Share => {
+            Role::Share | Role::Room => {
                 let mut key = shared.host_key.lock().unwrap_or_else(|e| e.into_inner());
                 if key.is_empty() {
                     // Not via set_text: that would rebuild this session.
                     *key = crate::random_key();
                 }
-                format!("/{room}/host?key={key}")
+                let auto = if s.automatic { "&auto=1" } else { "" };
+                format!("/{room}/host?key={key}{auto}")
             }
             _ if s.guest.is_some() => format!("/{room}/peer"),
             _ => return Some(s),
@@ -167,7 +176,11 @@ impl Session {
 
     /// `discover`: advertise/browse mDNS and map a router port. Off in tests.
     fn build(shared: &Shared, role: Role, discover: bool) -> Option<Self> {
+        let automatic = role == Role::Room;
+        let role = if automatic { Role::Share } else { role };
+        shared.hosting.store(role == Role::Share, Relaxed);
         shared.peers.store(0, Relaxed);
+        shared.talkers.lock().unwrap().clear();
         shared.port.store(0, Relaxed);
         shared.set_net(if role == Role::Off {
             Net::Idle
@@ -175,7 +188,7 @@ impl Session {
             Net::Waiting
         });
         let (sock, host) = match role {
-            Role::Off => return None,
+            Role::Off | Role::Room => return None,
             // Several instances on one machine each take the next port.
             Role::Share => (
                 (PORT..PORT + 16).find_map(|p| UdpSocket::bind(("0.0.0.0", p)).ok())?,
@@ -211,7 +224,7 @@ impl Session {
         let port = sock.local_addr().ok()?.port();
         let (mdns, rtc, guest) = match (role, host) {
             (Role::Share, _) => (
-                discover
+                (discover && !automatic)
                     .then(|| Mdns::advertise(&room, tag, port))
                     .flatten(),
                 Host::new(discover),
@@ -227,6 +240,9 @@ impl Session {
         Some(Self {
             sock,
             role,
+            automatic,
+            discover,
+            next_role: None,
             tag,
             peers: Vec::new(),
             host,
@@ -235,12 +251,16 @@ impl Session {
             frame: 0,
             received: 0,
             synced: false,
+            receive_rate: 0,
+            down: None,
+            converted: Vec::new(),
             buf: vec![0; 2048],
             samples: vec![0.0; wire::MAX_FRAMES * CHANNELS],
             lan_mix: Vec::new(),
             waiting: None,
             mdns,
             found: false,
+            lan_probe: None,
             signal: None,
             rtc,
             guest,
@@ -249,6 +269,11 @@ impl Session {
             trouble: None,
             opened: Instant::now(),
         })
+    }
+
+    /// A discovery is only a candidate until its first valid audio packet.
+    fn lan_selected(&self) -> bool {
+        self.host.is_some() && (!self.found || self.last_audio.is_some())
     }
 
     fn step(&mut self, shared: &Shared, tx: &mut Consumer<f32>, rx: &mut Producer<f32>) {
@@ -272,34 +297,68 @@ impl Session {
                             seen: now,
                             voice: VecDeque::new(),
                             primed: false,
+                            down: None,
                         });
                     }
                 }
                 (Role::Share, wire::BYE) => self.peers.retain(|p| p.addr != from),
-                (Role::Share, wire::AUDIO) if p.rate == shared.rate.load(Relaxed) => {
+                (Role::Share, wire::AUDIO) if (8_000..=384_000).contains(&p.rate) => {
                     if let Some(peer) = self.peers.iter_mut().find(|p| p.addr == from) {
-                        peer.voice.extend(wire::samples(p.samples).map(|s| {
-                            if s.is_finite() {
-                                s.clamp(-8.0, 8.0)
-                            } else {
-                                0.0
-                            }
-                        }));
-                        if peer.voice.len() > p.rate as usize * CHANNELS / 5 {
-                            peer.voice
-                                .drain(..peer.voice.len() - p.rate as usize * CHANNELS / 25);
+                        let rate = shared.rate.load(Relaxed);
+                        let input: Vec<f32> = wire::samples(p.samples).map(finite_sample).collect();
+                        self.converted.clear();
+                        match resampler(&mut peer.down, p.rate, rate) {
+                            Some(r) => r.run(&input, &mut self.converted),
+                            None => self.converted.extend_from_slice(&input),
                         }
-                        peer.primed |= peer.voice.len() >= p.rate as usize * CHANNELS / 25;
+                        peer.voice.extend(self.converted.iter().copied());
+                        if peer.voice.len() > rate as usize * CHANNELS / 5 {
+                            peer.voice
+                                .drain(..peer.voice.len() - rate as usize * CHANNELS / 25);
+                        }
+                        peer.primed |= peer.voice.len() >= rate as usize * CHANNELS / 25;
                     }
                 }
-                (Role::Join, wire::AUDIO) if Some(from) == self.host => {
+                (Role::Join, wire::AUDIO)
+                    if Some(from) == self.host && (8_000..=384_000).contains(&p.rate) =>
+                {
                     self.last_audio = Some(now);
+                    if let Some(g) = self.guest.as_mut() {
+                        g.close();
+                    }
                     self.receive(shared, p.rate, p.frame, p.samples, rx);
                 }
                 _ => {}
             }
         }
         self.signaling(now);
+        if let Some(role) = self.next_role.take() {
+            if role == Role::Room {
+                if let Some(next) = Self::open(shared, role) {
+                    *self = next;
+                }
+            } else if let Some(mut next) = Self::build(shared, role, self.discover) {
+                next.automatic = true;
+                next.signal = self.signal.take();
+                next.up = true;
+                next.opened -= LAN_FIRST;
+                *self = next;
+            }
+            return;
+        }
+        if self.automatic
+            && self.discover
+            && self.up
+            && self.role == Role::Share
+            && self.mdns.is_none()
+        {
+            let room = crate::slug(&Shared::text(&shared.room));
+            self.mdns = Mdns::advertise(
+                &room,
+                self.tag,
+                self.sock.local_addr().map_or(PORT, |a| a.port()),
+            );
+        }
         match self.role {
             Role::Share => {
                 self.peers.retain(|p| now - p.seen < PEER_TIMEOUT);
@@ -364,12 +423,15 @@ impl Session {
                     // The LAN wins: lossless, and no double audio.
                     self.host = Some(addr);
                     self.found = true;
-                    self.last_audio = Some(now);
-                    if let Some(g) = self.guest.as_mut() {
-                        g.close();
-                    }
+                    self.last_audio = None;
+                    self.lan_probe = Some(now);
                 }
-                if self.found && self.last_audio.is_some_and(|t| now - t > PEER_TIMEOUT) {
+                if self.found
+                    && self
+                        .last_audio
+                        .or(self.lan_probe)
+                        .is_some_and(|t| now - t > PEER_TIMEOUT)
+                {
                     // Found host went quiet: back to looking, internet included.
                     (self.host, self.found, self.hello_sent) = (None, false, false);
                 }
@@ -381,7 +443,7 @@ impl Session {
                     |t: Option<Instant>| t.is_some_and(|t| now - t < Duration::from_millis(500));
                 let lan = self.host.is_some() && fresh(self.last_audio);
                 let mut internet = false;
-                if let (None, Some(g)) = (self.host, self.guest.as_mut()) {
+                if let (false, Some(g)) = (self.lan_selected(), self.guest.as_mut()) {
                     let cap = shared.bitrate_cap.load(Relaxed);
                     shared.bitrate.store(
                         g.set_cap(if cap == 0 { crate::MAX_BPS } else { cap }),
@@ -411,12 +473,13 @@ impl Session {
                 }
                 self.send(shared, tx, rx, now);
             }
-            Role::Off => {}
+            Role::Off | Role::Room => {}
         }
     }
 
     /// Handle what signaling says; Join also says hello when it is time.
     fn signaling(&mut self, now: Instant) {
+        let lan_selected = self.lan_selected();
         let Some(signal) = self.signal.as_ref() else {
             return;
         };
@@ -443,14 +506,26 @@ impl Session {
                 // Each connect starts with `ice`: whatever went wrong before
                 // is over, and a joiner says hello.
                 // ponytail: TURN servers in it are unused; str0m has no TURN client.
-                ("ice", ..) => (self.trouble, self.up, self.hello_sent) = (None, true, false),
+                ("ice", ..) => {
+                    (self.trouble, self.up, self.hello_sent) = (None, true, false);
+                    if self.automatic && s("role") == "peer" && self.role == Role::Share {
+                        self.next_role = Some(Role::Join);
+                    } else if self.automatic && s("role") == "host" && self.role == Role::Join {
+                        self.next_role = Some(Role::Share);
+                    }
+                }
                 ("error", ..) => match s("code") {
                     "taken" => self.trouble = Some(Net::Taken),
                     "denied" => self.trouble = Some(Net::Denied),
                     // Hold the hello until `host`: one sent now would reach
                     // a host that arrives meanwhile, and so would the one
                     // after `host`, and two offers cross.
-                    "no-host" => self.up = false,
+                    "no-host" => {
+                        self.up = false;
+                        if self.automatic && self.role == Role::Join {
+                            self.next_role = Some(Role::Room);
+                        }
+                    }
                     // full: wait for a reconnect's `ice`.
                     _ => {}
                 },
@@ -490,7 +565,7 @@ impl Session {
                 ("candidate", _, Some(g)) => g.candidate(s("candidate"), s("ufrag")),
                 ("leave", Some(h), _) => h.leave(&id),
                 ("host", ..) => (self.up, self.hello_sent) = (true, false),
-                ("offer", _, Some(g)) if self.host.is_none() => {
+                ("offer", _, Some(g)) if !lan_selected => {
                     if let Some(sdp) = g.offer(s("sdp"), now) {
                         signal.send(&json!({"t": "answer", "sdp": sdp}));
                     }
@@ -502,7 +577,8 @@ impl Session {
         if self.role == Role::Join
             && self.up
             && !self.hello_sent
-            && self.host.is_none()
+            && self.next_role.is_none()
+            && !lan_selected
             && lan_had_its_chance
         {
             self.hello_sent = true;
@@ -526,6 +602,7 @@ impl Session {
         now: Instant,
     ) {
         let rate = shared.rate.load(Relaxed);
+        let lan_selected = self.lan_selected();
         if self.role == Role::Share
             && self.peers.is_empty()
             && self.rtc.as_ref().is_none_or(|h| h.live() == 0)
@@ -606,13 +683,11 @@ impl Session {
                 {
                     chunk.fill_from_iter(self.lan_mix.iter().copied());
                 }
-            } else if self.host.is_none()
-                && let Some(g) = self.guest.as_mut()
-            {
+            } else if !lan_selected && let Some(g) = self.guest.as_mut() {
                 g.audio(&self.samples[..n * CHANNELS], rate, now);
             }
             if self.role == Role::Share && !self.peers.is_empty()
-                || self.role == Role::Join && self.host.is_some()
+                || self.role == Role::Join && lan_selected
             {
                 wire::encode(
                     &mut self.buf,
@@ -644,13 +719,12 @@ impl Session {
         bytes: &[u8],
         rx: &mut Producer<f32>,
     ) {
-        let mismatch = rate != shared.rate.load(Relaxed);
-        if mismatch {
-            shared.set_net(Net::RateMismatch);
-        }
-        // ponytail: equal rates only; resample in the link if mixed rates matter.
-        if mismatch {
+        if !(8_000..=384_000).contains(&rate) {
             return;
+        }
+        if self.receive_rate != rate {
+            self.receive_rate = rate;
+            self.synced = false;
         }
         let n = (bytes.len() / (4 * CHANNELS)) as u64;
         let max_gap = u64::from(rate / 10);
@@ -666,19 +740,27 @@ impl Session {
         }
         let gap = frame.saturating_sub(self.received) as usize * CHANNELS;
         let skip = self.received.saturating_sub(frame) as usize * CHANNELS;
-        let fresh = wire::samples(bytes).skip(skip).map(|s| {
-            if s.is_finite() {
-                s.clamp(-8.0, 8.0)
-            } else {
-                0.0
-            }
-        });
-        let len = gap + (n as usize * CHANNELS - skip);
+        let input: Vec<f32> = std::iter::repeat_n(0.0, gap)
+            .chain(wire::samples(bytes).skip(skip).map(finite_sample))
+            .collect();
+        self.converted.clear();
+        match resampler(&mut self.down, rate, shared.rate.load(Relaxed)) {
+            Some(r) => r.run(&input, &mut self.converted),
+            None => self.converted.extend_from_slice(&input),
+        }
         // A full ring means playout is stalled; it trims itself when it resumes.
-        if let Ok(chunk) = rx.write_chunk_uninit(len) {
-            chunk.fill_from_iter(std::iter::repeat_n(0.0, gap).chain(fresh));
+        if let Ok(chunk) = rx.write_chunk_uninit(self.converted.len()) {
+            chunk.fill_from_iter(self.converted.iter().copied());
         }
         self.received = frame + n;
+    }
+}
+
+fn finite_sample(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample.clamp(-8.0, 8.0)
+    } else {
+        0.0
     }
 }
 
@@ -721,6 +803,165 @@ mod tests {
     }
 
     #[test]
+    fn automatic_room_uses_the_elected_role_and_re_elects_after_host_leaves() {
+        let shared = Shared::new();
+        shared.rate.store(48_000, Relaxed);
+        let mut session = Session::build(&shared, Role::Room, false).unwrap();
+        let (out, from_plugin) = std::sync::mpsc::channel();
+        let (to_plugin, inbox) = std::sync::mpsc::channel();
+        session.signal = Some(Signal { out, inbox });
+        let ((_, mut tx), (mut rx, _)) = crate::rings();
+        to_plugin
+            .send(Msg::Text(json!({"t": "ice", "role": "peer"}).to_string()))
+            .unwrap();
+        session.step(&shared, &mut tx, &mut rx);
+        assert_eq!(session.role, Role::Join);
+        assert!(session.automatic);
+        assert!(!shared.hosting.load(Relaxed));
+        session.step(&shared, &mut tx, &mut rx);
+        let hello: Value = serde_json::from_str(&from_plugin.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            hello["t"], "hello",
+            "room automatically starts two-way negotiation"
+        );
+        // The existing automatic socket can reconnect and be elected host.
+        to_plugin
+            .send(Msg::Text(json!({"t": "ice", "role": "host"}).to_string()))
+            .unwrap();
+        session.step(&shared, &mut tx, &mut rx);
+        assert_eq!(session.role, Role::Share);
+        assert!(shared.hosting.load(Relaxed));
+        assert!(session.signal.is_some(), "role change preserves signaling");
+        to_plugin
+            .send(Msg::Text(json!({"t": "ice", "role": "peer"}).to_string()))
+            .unwrap();
+        session.step(&shared, &mut tx, &mut rx);
+        to_plugin
+            .send(Msg::Text(
+                json!({"t": "error", "code": "no-host"}).to_string(),
+            ))
+            .unwrap();
+        session.signaling(Instant::now());
+        assert_eq!(
+            session.next_role,
+            Some(Role::Room),
+            "departed host triggers a fresh election"
+        );
+    }
+
+    #[test]
+    fn lan_mixed_rates_send_and_receive_in_both_directions() {
+        for (host_rate, join_rate) in [(96_000, 48_000), (44_100, 96_000), (48_000, 192_000)] {
+            let hs = Shared::new();
+            hs.rate.store(host_rate, Relaxed);
+            let mut host = Session::build(&hs, Role::Share, false).unwrap();
+            let js = Shared::new();
+            js.rate.store(join_rate, Relaxed);
+            js.set_text(
+                &js.peer,
+                &host
+                    .sock
+                    .local_addr()
+                    .unwrap()
+                    .to_string()
+                    .replace("0.0.0.0", "127.0.0.1"),
+            );
+            let mut join = Session::build(&js, Role::Join, false).unwrap();
+            let ((mut send, mut htx), (mut hrx, mut host_hear)) = crate::rings();
+            let ((mut back, mut jtx), (mut jrx, mut join_hear)) = crate::rings();
+            let (mut hf, mut jf) = (0, 0);
+            let (mut hout, mut jout) = (Vec::new(), Vec::new());
+            for _ in 0..100 {
+                // Equal wall-clock intervals, with enough frames for UDP coalescing.
+                for (rate, frame, tx) in [
+                    (host_rate, &mut hf, &mut send),
+                    (join_rate, &mut jf, &mut back),
+                ] {
+                    let n = rate as usize / 50;
+                    tx.write_chunk_uninit(n * CHANNELS).unwrap().fill_from_iter(
+                        (*frame..*frame + n).flat_map(|i| {
+                            let x = (i as f32 * 500.0 * std::f32::consts::TAU / rate as f32).sin()
+                                * 0.5;
+                            [x, -x]
+                        }),
+                    );
+                    *frame += n;
+                }
+                host.step(&hs, &mut htx, &mut hrx);
+                join.step(&js, &mut jtx, &mut jrx);
+                for (rx, out) in [(&mut host_hear, &mut hout), (&mut join_hear, &mut jout)] {
+                    let chunk = rx.read_chunk(rx.slots()).unwrap();
+                    let (a, b) = chunk.as_slices();
+                    out.extend(a.iter().chain(b).copied());
+                    chunk.commit_all();
+                }
+            }
+            assert_eq!((hs.net(), js.net()), (Net::Lan, Net::Lan));
+            for (rate, out) in [(host_rate, hout), (join_rate, jout)] {
+                assert!(out.len() > rate as usize, "audio arrived at {rate}");
+                let tail = &out[out.len() - rate as usize / 5..];
+                let (mut sin, mut cos) = (0.0, 0.0);
+                for (i, pair) in tail.as_chunks::<CHANNELS>().0.iter().enumerate() {
+                    assert!(
+                        (pair[0] + pair[1]).abs() < 1e-5,
+                        "stereo preserved at {rate}"
+                    );
+                    let phase = i as f64 * 500.0 * std::f64::consts::TAU / f64::from(rate);
+                    sin += f64::from(pair[0]) * phase.sin();
+                    cos += f64::from(pair[0]) * phase.cos();
+                }
+                let amplitude = 2.0 * sin.hypot(cos) / (tail.len() / CHANNELS) as f64;
+                assert!(
+                    (0.48..0.52).contains(&amplitude),
+                    "{host_rate}/{join_rate}, output {rate}: amplitude {amplitude}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn discovered_lan_host_is_not_live_until_audio_arrives() {
+        let shared = Shared::new();
+        shared.rate.store(48_000, Relaxed);
+        let mut join = Session::build(&shared, Role::Join, false).unwrap();
+        join.host = Some("127.0.0.1:9".parse().unwrap());
+        join.found = true;
+        join.lan_probe = Some(Instant::now());
+        let (out, from_join) = std::sync::mpsc::channel();
+        let (to_join, inbox) = std::sync::mpsc::channel();
+        join.signal = Some(Signal { out, inbox });
+        join.up = true;
+        join.opened -= LAN_FIRST;
+        let ((_, mut tx), (mut rx, _)) = crate::rings();
+        join.step(&shared, &mut tx, &mut rx);
+        let hello: Value = serde_json::from_str(&from_join.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            hello["t"], "hello",
+            "LAN probe must not block internet negotiation"
+        );
+        let mut host = Host::new(false).unwrap();
+        let sdp = host.offer("join", false, Instant::now()).unwrap();
+        to_join
+            .send(Msg::Text(json!({"t": "offer", "sdp": sdp}).to_string()))
+            .unwrap();
+        join.step(&shared, &mut tx, &mut rx);
+        let answer: Value = serde_json::from_str(&from_join.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            answer["t"], "answer",
+            "internet offer accepted during LAN probe"
+        );
+        assert_eq!(shared.peers.load(Relaxed), 0);
+        assert_eq!(shared.net(), Net::Waiting);
+        join.lan_probe = Some(Instant::now() - PEER_TIMEOUT - Duration::from_millis(1));
+        join.step(&shared, &mut tx, &mut rx);
+        assert!(
+            join.host.is_none(),
+            "unreachable discovery releases the internet path"
+        );
+        assert!(!join.hello_sent, "internet negotiation can retry");
+    }
+
+    #[test]
     fn share_without_listeners_discards_audio_until_a_peer_arrives() {
         let shared = Shared::new();
         shared.rate.store(48_000, Relaxed);
@@ -750,6 +991,7 @@ mod tests {
             seen: now,
             voice: VecDeque::new(),
             primed: false,
+            down: None,
         });
         send.write_chunk_uninit(wire::MAX_FRAMES * CHANNELS)
             .unwrap()

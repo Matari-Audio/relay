@@ -49,6 +49,8 @@ pub enum Role {
     Off = 0,
     Share = 1,
     Join = 2,
+    /// Enter a room; signaling elects the coordinator automatically.
+    Room = 3,
 }
 
 impl Role {
@@ -56,6 +58,7 @@ impl Role {
         match v {
             1 => Self::Share,
             2 => Self::Join,
+            3 => Self::Room,
             _ => Self::Off,
         }
     }
@@ -131,6 +134,8 @@ pub struct Shared {
     pub config: AtomicU32,
     /// Share: listeners, LAN and internet. Join: 1 while audio arrives.
     pub peers: AtomicU32,
+    /// Whether this instance currently coordinates the room.
+    pub hosting: AtomicBool,
     /// Share: browser listeners whose mic is playing.
     pub talking: AtomicU32,
     /// Share: browser microphones and their individual monitor gains.
@@ -281,8 +286,16 @@ pub mod wire {
 /// A room name as signaling and URLs accept it: lowercase `a-z0-9-`,
 /// at most 48 characters.
 pub fn slug(room: &str) -> String {
+    let room = room.trim();
+    let room = room
+        .strip_prefix("https://")
+        .or_else(|| room.strip_prefix("http://"))
+        .unwrap_or(room);
+    let prefix = format!("{SITE}/");
+    let room = room.strip_prefix(&prefix).unwrap_or(room);
+    let room = room.split(['?', '#']).next().unwrap_or(room);
     let mut out = String::new();
-    for c in room.trim().to_lowercase().chars() {
+    for c in room.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {
             out.push(c);
         } else if !out.is_empty() && !out.ends_with('-') {
@@ -332,6 +345,18 @@ pub fn rings() -> (Ring, Ring) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_links_match_typed_room_names() {
+        for room in [
+            "https://relay.matari-audio.com/studio-room",
+            "http://relay.matari-audio.com/studio-room/",
+            "relay.matari-audio.com/studio-room?from=invite#listen",
+        ] {
+            assert_eq!(slug(room), "studio-room");
+            assert_eq!(tag(room, "pw"), tag("studio-room", "pw"));
+        }
+    }
 
     #[test]
     fn wire_round_trip_and_rejects_garbage() {

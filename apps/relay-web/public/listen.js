@@ -181,7 +181,9 @@ async function answer(sdp, acceptedServers, trickle = false) {
   }
   if (!canTalk && mic) talk(false);
   micButton();
-  await conn.setLocalDescription(await conn.createAnswer());
+  const local = await conn.createAnswer();
+  local.sdp = stereoAnswer(local.sdp);
+  await conn.setLocalDescription(local);
   // New hosts can start ICE immediately; discoveries follow over the same socket.
   // Legacy hosts get a gathered answer as soon as a public route is available.
   if (!trickle && conn.iceGatheringState !== "complete") {
@@ -200,6 +202,25 @@ async function answer(sdp, acceptedServers, trickle = false) {
     params.encodings[0].maxBitrate = 32_000;
     sender.setParameters(params).catch(() => {});
   }
+}
+
+// opus/48000/2 declares codec capability; Chromium still defaults its
+// receive pipeline to mono unless the local answer explicitly requests stereo.
+function stereoAnswer(sdp) {
+  const opus = [...sdp.matchAll(/^a=rtpmap:(\d+) opus\/48000\/2\r?$/gmi)].map((m) => m[1]);
+  for (const pt of opus) {
+    const line = new RegExp(`^a=fmtp:${pt} ([^\\r\\n]*)`, "m");
+    if (line.test(sdp)) {
+      sdp = sdp.replace(line, (_, params) => {
+        const kept = params.split(";").map((p) => p.trim()).filter((p) => !/^stereo=/.test(p));
+        return `a=fmtp:${pt} ${[...kept, "stereo=1"].join(";")}`;
+      });
+    } else {
+      sdp = sdp.replace(new RegExp(`(^a=rtpmap:${pt} [^\\r\\n]*)(\\r?\\n|$)`, "m"),
+        `$1\r\na=fmtp:${pt} stereo=1$2`);
+    }
+  }
+  return sdp;
 }
 
 async function candidate({ candidate, ufrag }) {
