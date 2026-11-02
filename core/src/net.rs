@@ -310,6 +310,7 @@ impl Session {
                     if let Some(g) = self.guest.as_mut() {
                         g.close();
                     }
+                    self.receive(shared, p.rate, p.frame, p.samples, rx);
                 }
                 _ => {}
             }
