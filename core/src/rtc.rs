@@ -1179,7 +1179,7 @@ mod tests {
             let tail = &output[output.len() - rate as usize / 5..];
             let mut energy = 0.0;
             let (mut sin, mut cos) = (0.0, 0.0);
-            for (i, pair) in tail.chunks_exact(2).enumerate() {
+            for (i, pair) in tail.as_chunks::<CHANNELS>().0.iter().enumerate() {
                 assert!((pair[0] + pair[1]).abs() < 1e-5, "stereo at {rate}");
                 let phase = i as f64 * 1_000.0 * std::f64::consts::TAU / f64::from(rate);
                 let x = f64::from(pair[0]);
