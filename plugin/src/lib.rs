@@ -51,7 +51,7 @@ impl Quality {
 
 #[derive(Params)]
 pub struct RelayParams {
-    #[param(name = "Mode")]
+    #[param(name = "Mode", default = 1)]
     pub mode: EnumParam<Mode>,
     /// Level of this plugin's output: what you hear.
     #[param(name = "Output", range = "linear(-24, 12)", unit = "dB", default = 0.0)]
@@ -188,8 +188,7 @@ impl PluginLogic for Relay {
     ) -> ProcessStatus {
         let role = match params.mode.value() {
             Mode::Off => Role::Off,
-            Mode::Share => Role::Share,
-            Mode::Join => Role::Join,
+            Mode::Share | Mode::Join => Role::Room,
         };
         state.shared.set_role(role);
         state
@@ -309,9 +308,10 @@ mod state {
     }
 
     #[test]
-    fn default_quality_is_192_kbps() {
+    fn default_room_connects_automatically_at_192_kbps() {
         let p = Plugin::create();
         assert_eq!(p.params().quality.value().bps(), 192_000);
+        assert!(matches!(p.params().mode.value(), Mode::Share));
     }
 
     #[test]

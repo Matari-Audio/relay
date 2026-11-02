@@ -13,8 +13,9 @@ machine in the room, a collaborator across town, or a client's phone.
 
 ## Product Purpose
 
-RELAY is an insert. **Share** sends the track; **Join** plays someone else's. On
-a LAN it is lossless and adds no latency beyond the receiver's jitter buffer.
+RELAY is an insert. Enter the same room name or number in both plugins to
+connect automatically. Every plugin sends and receives; users do not choose
+Share or Join. On a LAN equal-rate audio is lossless.
 Over the internet it is Opus 510 kbps plugin to plugin, or to a browser link.
 Success is audio that stays up with no account and nothing to configure.
 
@@ -27,7 +28,9 @@ Audiomovers' link, and free to run: the operator hosts signaling only.
 
 - A room is three words (`quiet-dusty-papaya`). The password is optional and is
   checked by the sharing plugin, never by the server.
-- Join finds the room on the LAN by mDNS first, then over the internet.
+- Signaling elects the room coordinator automatically. The other plugin finds
+  it by mDNS on the LAN or connects over the internet. New instances connect
+  by default; editing the room enters it automatically. Off disconnects.
 - The share link is `relay.matari-audio.com/<room>`, with up to 16 listeners.
   Each one is streamed directly from the sharing machine.
 

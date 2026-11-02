@@ -45,6 +45,8 @@ Barlow and Martian Mono with 4px corners, retaining the Signal palette.
 
 ## Editor
 
+- The header has Off / Connect. New instances connect automatically and a
+  committed room edit enters it; Share/Join are internal transport roles.
 - One flat panel: room, password, link and status on the left; IN and OUT L/R
   meters with gain handles on the right. The meter column remains visible at
   the 380×150 minimum editor size.

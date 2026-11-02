@@ -213,3 +213,28 @@ it("sends everyone the roster when the host arrives, a peer is admitted or leave
   h.ws.close(1000);
   expect((await q.roster()).peers).toEqual([]);
 });
+
+
+it("elects one coordinator for simultaneous automatic room connections, even with a copied project key", async () => {
+  const r = room();
+  const sockets = await Promise.all([
+    open(`/${r}/host?key=${KEY}&auto=1`),
+    open(`/${r}/host?key=${KEY}&auto=1`),
+  ]);
+  const roles = await Promise.all(sockets.map((socket) => socket.next()));
+  expect(roles.map((m) => m.role).sort()).toEqual(["host", "peer"]);
+  const h = sockets[roles.findIndex((m) => m.role === "host")];
+  const p = sockets[roles.findIndex((m) => m.role === "peer")];
+  p.send({ t: "hello", kind: "plugin", auth: AUTH });
+  const hello = await h.next();
+  expect(hello).toMatchObject({ t: "hello", kind: "plugin", auth: AUTH });
+  h.send({ t: "offer", to: hello.id, sdp: "two-way offer" });
+  expect(await p.next()).toMatchObject({ t: "offer", sdp: "two-way offer" });
+  p.send({ t: "answer", sdp: "two-way answer" });
+  expect(await h.next()).toMatchObject({ t: "answer", sdp: "two-way answer" });
+  h.ws.close(1000);
+  expect(await p.next()).toEqual({ t: "error", code: "no-host" });
+  p.ws.close(1000);
+  const replacement = await open(`/${r}/host?key=${KEY}&auto=1`);
+  expect(await replacement.next()).toMatchObject({ t: "ice", role: "host" });
+});

@@ -8,6 +8,23 @@ Three paths. The operator runs signaling only; audio never touches it.
 | Plugin ↔ plugin, internet | WebRTC (str0m) | Opus 48 kHz stereo, 192 kbps default ceiling, 10 ms frames |
 | Plugins → browser | WebRTC | host and joined-plugin mix |
 
+## Automatic plugin rooms
+
+Plugins expose Off / Connect. New instances connect by default, and committing
+a room edit enters that room. Both saved active mode values use automatic
+connection, preserving existing DAW state indices.
+
+An automatic plugin opens `/<room>/host?key=<hex>&auto=1`. The worker serializes
+admission: if no coordinator exists the plugin becomes host; otherwise it
+becomes a peer on that same socket, including when both projects have the same
+saved key. The initial `ice` includes `role: "host" | "peer"`. The plugin selects
+its internal transport role from that response and both ends send and receive.
+A peer reconnects for a fresh election when its host leaves. Existing explicit
+host/peer endpoints and browser listeners retain their protocol.
+
+Automatic role negotiation requires the updated signaling worker and plugin
+together.
+
 ## LAN
 
 A Share instance binds UDP 17492–17507 and advertises

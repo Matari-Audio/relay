@@ -49,6 +49,8 @@ pub enum Role {
     Off = 0,
     Share = 1,
     Join = 2,
+    /// Enter a room; signaling elects the coordinator automatically.
+    Room = 3,
 }
 
 impl Role {
@@ -56,6 +58,7 @@ impl Role {
         match v {
             1 => Self::Share,
             2 => Self::Join,
+            3 => Self::Room,
             _ => Self::Off,
         }
     }
@@ -131,6 +134,8 @@ pub struct Shared {
     pub config: AtomicU32,
     /// Share: listeners, LAN and internet. Join: 1 while audio arrives.
     pub peers: AtomicU32,
+    /// Whether this instance currently coordinates the room.
+    pub hosting: AtomicBool,
     /// Share: browser listeners whose mic is playing.
     pub talking: AtomicU32,
     /// Share: browser microphones and their individual monitor gains.

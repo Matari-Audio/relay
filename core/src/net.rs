@@ -103,6 +103,9 @@ pub(crate) fn lan_ip() -> Option<std::net::IpAddr> {
 struct Session {
     sock: UdpSocket,
     role: Role,
+    automatic: bool,
+    discover: bool,
+    next_role: Option<Role>,
     tag: [u8; 8],
     /// Share: listeners and when each last said HELLO.
     peers: Vec<LanPeer>,
@@ -153,13 +156,14 @@ impl Session {
         let mut s = Self::build(shared, role, true)?;
         let room = crate::slug(&Shared::text(&shared.room));
         let path = match role {
-            Role::Share => {
+            Role::Share | Role::Room => {
                 let mut key = shared.host_key.lock().unwrap_or_else(|e| e.into_inner());
                 if key.is_empty() {
                     // Not via set_text: that would rebuild this session.
                     *key = crate::random_key();
                 }
-                format!("/{room}/host?key={key}")
+                let auto = if s.automatic { "&auto=1" } else { "" };
+                format!("/{room}/host?key={key}{auto}")
             }
             _ if s.guest.is_some() => format!("/{room}/peer"),
             _ => return Some(s),
@@ -172,7 +176,11 @@ impl Session {
 
     /// `discover`: advertise/browse mDNS and map a router port. Off in tests.
     fn build(shared: &Shared, role: Role, discover: bool) -> Option<Self> {
+        let automatic = role == Role::Room;
+        let role = if automatic { Role::Share } else { role };
+        shared.hosting.store(role == Role::Share, Relaxed);
         shared.peers.store(0, Relaxed);
+        shared.talkers.lock().unwrap().clear();
         shared.port.store(0, Relaxed);
         shared.set_net(if role == Role::Off {
             Net::Idle
@@ -180,7 +188,7 @@ impl Session {
             Net::Waiting
         });
         let (sock, host) = match role {
-            Role::Off => return None,
+            Role::Off | Role::Room => return None,
             // Several instances on one machine each take the next port.
             Role::Share => (
                 (PORT..PORT + 16).find_map(|p| UdpSocket::bind(("0.0.0.0", p)).ok())?,
@@ -216,7 +224,7 @@ impl Session {
         let port = sock.local_addr().ok()?.port();
         let (mdns, rtc, guest) = match (role, host) {
             (Role::Share, _) => (
-                discover
+                (discover && !automatic)
                     .then(|| Mdns::advertise(&room, tag, port))
                     .flatten(),
                 Host::new(discover),
@@ -232,6 +240,9 @@ impl Session {
         Some(Self {
             sock,
             role,
+            automatic,
+            discover,
+            next_role: None,
             tag,
             peers: Vec::new(),
             host,
@@ -321,6 +332,33 @@ impl Session {
             }
         }
         self.signaling(now);
+        if let Some(role) = self.next_role.take() {
+            if role == Role::Room {
+                if let Some(next) = Self::open(shared, role) {
+                    *self = next;
+                }
+            } else if let Some(mut next) = Self::build(shared, role, self.discover) {
+                next.automatic = true;
+                next.signal = self.signal.take();
+                next.up = true;
+                next.opened -= LAN_FIRST;
+                *self = next;
+            }
+            return;
+        }
+        if self.automatic
+            && self.discover
+            && self.up
+            && self.role == Role::Share
+            && self.mdns.is_none()
+        {
+            let room = crate::slug(&Shared::text(&shared.room));
+            self.mdns = Mdns::advertise(
+                &room,
+                self.tag,
+                self.sock.local_addr().map_or(PORT, |a| a.port()),
+            );
+        }
         match self.role {
             Role::Share => {
                 self.peers.retain(|p| now - p.seen < PEER_TIMEOUT);
@@ -435,7 +473,7 @@ impl Session {
                 }
                 self.send(shared, tx, rx, now);
             }
-            Role::Off => {}
+            Role::Off | Role::Room => {}
         }
     }
 
@@ -468,14 +506,26 @@ impl Session {
                 // Each connect starts with `ice`: whatever went wrong before
                 // is over, and a joiner says hello.
                 // ponytail: TURN servers in it are unused; str0m has no TURN client.
-                ("ice", ..) => (self.trouble, self.up, self.hello_sent) = (None, true, false),
+                ("ice", ..) => {
+                    (self.trouble, self.up, self.hello_sent) = (None, true, false);
+                    if self.automatic && s("role") == "peer" && self.role == Role::Share {
+                        self.next_role = Some(Role::Join);
+                    } else if self.automatic && s("role") == "host" && self.role == Role::Join {
+                        self.next_role = Some(Role::Share);
+                    }
+                }
                 ("error", ..) => match s("code") {
                     "taken" => self.trouble = Some(Net::Taken),
                     "denied" => self.trouble = Some(Net::Denied),
                     // Hold the hello until `host`: one sent now would reach
                     // a host that arrives meanwhile, and so would the one
                     // after `host`, and two offers cross.
-                    "no-host" => self.up = false,
+                    "no-host" => {
+                        self.up = false;
+                        if self.automatic && self.role == Role::Join {
+                            self.next_role = Some(Role::Room);
+                        }
+                    }
                     // full: wait for a reconnect's `ice`.
                     _ => {}
                 },
@@ -527,6 +577,7 @@ impl Session {
         if self.role == Role::Join
             && self.up
             && !self.hello_sent
+            && self.next_role.is_none()
             && !lan_selected
             && lan_had_its_chance
         {
@@ -749,6 +800,53 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         false
+    }
+
+    #[test]
+    fn automatic_room_uses_the_elected_role_and_re_elects_after_host_leaves() {
+        let shared = Shared::new();
+        shared.rate.store(48_000, Relaxed);
+        let mut session = Session::build(&shared, Role::Room, false).unwrap();
+        let (out, from_plugin) = std::sync::mpsc::channel();
+        let (to_plugin, inbox) = std::sync::mpsc::channel();
+        session.signal = Some(Signal { out, inbox });
+        let ((_, mut tx), (mut rx, _)) = crate::rings();
+        to_plugin
+            .send(Msg::Text(json!({"t": "ice", "role": "peer"}).to_string()))
+            .unwrap();
+        session.step(&shared, &mut tx, &mut rx);
+        assert_eq!(session.role, Role::Join);
+        assert!(session.automatic);
+        assert!(!shared.hosting.load(Relaxed));
+        session.step(&shared, &mut tx, &mut rx);
+        let hello: Value = serde_json::from_str(&from_plugin.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            hello["t"], "hello",
+            "room automatically starts two-way negotiation"
+        );
+        // The existing automatic socket can reconnect and be elected host.
+        to_plugin
+            .send(Msg::Text(json!({"t": "ice", "role": "host"}).to_string()))
+            .unwrap();
+        session.step(&shared, &mut tx, &mut rx);
+        assert_eq!(session.role, Role::Share);
+        assert!(shared.hosting.load(Relaxed));
+        assert!(session.signal.is_some(), "role change preserves signaling");
+        to_plugin
+            .send(Msg::Text(json!({"t": "ice", "role": "peer"}).to_string()))
+            .unwrap();
+        session.step(&shared, &mut tx, &mut rx);
+        to_plugin
+            .send(Msg::Text(
+                json!({"t": "error", "code": "no-host"}).to_string(),
+            ))
+            .unwrap();
+        session.signaling(Instant::now());
+        assert_eq!(
+            session.next_role,
+            Some(Role::Room),
+            "departed host triggers a fresh election"
+        );
     }
 
     #[test]

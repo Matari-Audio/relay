@@ -138,6 +138,7 @@ struct TalkerState {
 
 #[derive(PartialEq)]
 struct LinkState {
+    hosting: bool,
     net: Net,
     config: u32,
     peers: u32,
@@ -225,6 +226,7 @@ impl View {
         let address = Shared::text(&shared.address);
         let talkers = shared.talkers.lock().unwrap();
         let link = LinkState {
+            hosting: shared.hosting.load(Relaxed),
             net: shared.net(),
             config: shared.config.load(Relaxed),
             peers: shared.peers.load(Relaxed),
@@ -391,46 +393,7 @@ fn build(
     } else {
         fonts.semibold.clone()
     }));
-    let picked = (bridge.value(P::Mode) * 2.0).round() as usize;
-    let mode = bridge.bind(ui, P::Mode, |ui, _, v| {
-        let segments: Vec<El> = ["Off", "Share", "Join"]
-            .into_iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let r = ui.get(name);
-                if r.clicked_with(Button::Primary) {
-                    *v = i as f64 / 2.0;
-                }
-                let (bg, fg) = match (i == picked, r.hovered) {
-                    (true, _) => (LIME, ON_LIME),
-                    (false, true) => (HOT, TEXT),
-                    (false, false) => (FIELD, DIM),
-                };
-                row([text(name)
-                    .font(if pixel {
-                        fonts.pixel_head.clone()
-                    } else {
-                        fonts.semibold.clone()
-                    })
-                    .text_size(if pixel { 9.0 } else { 10.5 })
-                    .fill(fg)])
-                .justify(Justify::Center)
-                .center()
-                .size(42.0, 18.0)
-                .radius((corner(fonts) - 1.0).max(0.0))
-                .fill(bg)
-                .a11y(A11y::Button)
-                .named(name)
-                .focusable()
-                .id(name)
-            })
-            .collect();
-        row(segments)
-            .gap(2.0)
-            .pad(2.0)
-            .radius(corner(fonts))
-            .fill(FIELD)
-    });
+    let mut enter_room = false;
 
     let now = Instant::now();
     if view.room_edit.is_none() {
@@ -445,12 +408,14 @@ fn build(
             || ui.keys("room").iter().any(|k| k.key == Key::Enter)
     }) {
         shared.set_text(&shared.room, &view.room);
+        enter_room = !relay_core::slug(&view.room).is_empty();
         view.room_edit = None;
     }
     let (dice, roll) = action(ui, fonts, "roll", DICE, "New room name");
     if roll {
         view.room = relay_core::room_name();
         shared.set_text(&shared.room, &view.room);
+        enter_room = !relay_core::slug(&view.room).is_empty();
         view.room_edit = None;
     }
     let room = view.room.clone();
@@ -488,6 +453,57 @@ fn build(
     );
     view.show_password ^= toggle;
     rows.push(field(fonts, LOCK, bare(input), eye));
+
+    let connected = bridge.value(P::Mode) > 0.0 || enter_room;
+    let picked = if !connected {
+        0
+    } else if shared.hosting.load(Relaxed) {
+        1
+    } else {
+        2
+    };
+    let mode = bridge.bind(ui, P::Mode, |ui, _, v| {
+        if enter_room {
+            *v = 0.5;
+        }
+        let segments: Vec<El> = ["Off", "Connect"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let r = ui.get(name);
+                if r.clicked_with(Button::Primary) {
+                    *v = i as f64 / 2.0;
+                }
+                let (bg, fg) = match ((i == 1) == connected, r.hovered) {
+                    (true, _) => (LIME, ON_LIME),
+                    (false, true) => (HOT, TEXT),
+                    (false, false) => (FIELD, DIM),
+                };
+                row([text(name)
+                    .font(if pixel {
+                        fonts.pixel_head.clone()
+                    } else {
+                        fonts.semibold.clone()
+                    })
+                    .text_size(if pixel { 9.0 } else { 10.5 })
+                    .fill(fg)])
+                .justify(Justify::Center)
+                .center()
+                .size(if i == 1 { 56.0 } else { 42.0 }, 18.0)
+                .radius((corner(fonts) - 1.0).max(0.0))
+                .fill(bg)
+                .a11y(A11y::Button)
+                .named(name)
+                .focusable()
+                .id(name)
+            })
+            .collect();
+        row(segments)
+            .gap(2.0)
+            .pad(2.0)
+            .radius(corner(fonts))
+            .fill(FIELD)
+    });
 
     let peers = shared.peers.load(Relaxed);
     // Internet bitrate over its live ceiling. Join controls return audio.
@@ -591,8 +607,8 @@ fn build(
         (_, Net::Denied) => (RED, "Wrong password".into()),
         (_, Net::RateMismatch) => (YELLOW, "Sample rates differ".into()),
         (1, Net::Offline) if peers == 0 => (YELLOW, "LAN only".into()),
-        (1, _) if peers == 0 => (TEXT, "Waiting for listeners".into()),
-        (1, _) => (LIME, format!("{peers} listening")),
+        (1, _) if peers == 0 => (TEXT, "Waiting for room members".into()),
+        (1, _) => (LIME, format!("{peers} connected")),
         (_, Net::Lan) => (LIME, "Live · LAN".into()),
         (_, Net::Internet) => (LIME, "Live · Internet".into()),
         (_, Net::Offline) => (YELLOW, "Searching LAN".into()),
@@ -1458,6 +1474,7 @@ mod snapshot {
         shared.set_text(&shared.password, "hunter2");
         shared.set_text(&shared.address, "192.168.1.20");
         shared.set_net(net);
+        shared.hosting.store(mode == 0.5, Relaxed);
         shared
             .peers
             .store(if name.contains("waiting") { 0 } else { 2 }, Relaxed);

@@ -118,8 +118,15 @@ export class Room extends DurableObject<Env> {
   }
 
   async fetch(req: Request): Promise<Response> {
+    // Elect and register one coordinator before another connection can enter.
+    return this.ctx.blockConcurrencyWhile(() => this.acceptConnection(req));
+  }
+
+  private async acceptConnection(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const isHost = url.pathname.replace(/\/$/, "").endsWith("/host");
+    const automatic = url.searchParams.get("auto") === "1";
+    const isHost = url.pathname.replace(/\/$/, "").endsWith("/host")
+      && (!automatic || !this.host());
     let tags: string[];
     let tag: Tag;
     if (isHost) {
@@ -142,7 +149,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, tags);
     server.serializeAttachment(tag);
     // TURN is only needed once the host accepts a browser listener.
-    send(server, { t: "ice", servers: [STUN] });
+    send(server, { t: "ice", servers: [STUN], ...(automatic ? { role: isHost ? "host" : "peer" } : {}) });
     if (isHost) for (const p of this.peers()) send(p, { t: "host" });
     else if (!this.host()) send(server, { t: "error", code: "no-host" });
     if (isHost) this.roster();
