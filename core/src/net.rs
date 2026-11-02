@@ -260,6 +260,11 @@ impl Session {
         })
     }
 
+    /// A discovery is only a candidate until its first valid audio packet.
+    fn lan_selected(&self) -> bool {
+        self.host.is_some() && (!self.found || self.last_audio.is_some())
+    }
+
     fn step(&mut self, shared: &Shared, tx: &mut Consumer<f32>, rx: &mut Producer<f32>) {
         let now = Instant::now();
         let mut recv = [0u8; 2048];
@@ -400,7 +405,7 @@ impl Session {
                     |t: Option<Instant>| t.is_some_and(|t| now - t < Duration::from_millis(500));
                 let lan = self.host.is_some() && fresh(self.last_audio);
                 let mut internet = false;
-                if let (None, Some(g)) = (self.host, self.guest.as_mut()) {
+                if let (false, Some(g)) = (self.lan_selected(), self.guest.as_mut()) {
                     let cap = shared.bitrate_cap.load(Relaxed);
                     shared.bitrate.store(
                         g.set_cap(if cap == 0 { crate::MAX_BPS } else { cap }),
@@ -436,6 +441,7 @@ impl Session {
 
     /// Handle what signaling says; Join also says hello when it is time.
     fn signaling(&mut self, now: Instant) {
+        let lan_selected = self.lan_selected();
         let Some(signal) = self.signal.as_ref() else {
             return;
         };
@@ -509,7 +515,7 @@ impl Session {
                 ("candidate", _, Some(g)) => g.candidate(s("candidate"), s("ufrag")),
                 ("leave", Some(h), _) => h.leave(&id),
                 ("host", ..) => (self.up, self.hello_sent) = (true, false),
-                ("offer", _, Some(g)) if self.host.is_none() => {
+                ("offer", _, Some(g)) if !lan_selected => {
                     if let Some(sdp) = g.offer(s("sdp"), now) {
                         signal.send(&json!({"t": "answer", "sdp": sdp}));
                     }
@@ -521,7 +527,7 @@ impl Session {
         if self.role == Role::Join
             && self.up
             && !self.hello_sent
-            && self.host.is_none()
+            && !lan_selected
             && lan_had_its_chance
         {
             self.hello_sent = true;
@@ -545,6 +551,7 @@ impl Session {
         now: Instant,
     ) {
         let rate = shared.rate.load(Relaxed);
+        let lan_selected = self.lan_selected();
         if self.role == Role::Share
             && self.peers.is_empty()
             && self.rtc.as_ref().is_none_or(|h| h.live() == 0)
@@ -625,13 +632,11 @@ impl Session {
                 {
                     chunk.fill_from_iter(self.lan_mix.iter().copied());
                 }
-            } else if self.host.is_none()
-                && let Some(g) = self.guest.as_mut()
-            {
+            } else if !lan_selected && let Some(g) = self.guest.as_mut() {
                 g.audio(&self.samples[..n * CHANNELS], rate, now);
             }
             if self.role == Role::Share && !self.peers.is_empty()
-                || self.role == Role::Join && self.host.is_some()
+                || self.role == Role::Join && lan_selected
             {
                 wire::encode(
                     &mut self.buf,
@@ -824,8 +829,29 @@ mod tests {
         join.host = Some("127.0.0.1:9".parse().unwrap());
         join.found = true;
         join.lan_probe = Some(Instant::now());
+        let (out, from_join) = std::sync::mpsc::channel();
+        let (to_join, inbox) = std::sync::mpsc::channel();
+        join.signal = Some(Signal { out, inbox });
+        join.up = true;
+        join.opened -= LAN_FIRST;
         let ((_, mut tx), (mut rx, _)) = crate::rings();
         join.step(&shared, &mut tx, &mut rx);
+        let hello: Value = serde_json::from_str(&from_join.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            hello["t"], "hello",
+            "LAN probe must not block internet negotiation"
+        );
+        let mut host = Host::new(false).unwrap();
+        let sdp = host.offer("join", false, Instant::now()).unwrap();
+        to_join
+            .send(Msg::Text(json!({"t": "offer", "sdp": sdp}).to_string()))
+            .unwrap();
+        join.step(&shared, &mut tx, &mut rx);
+        let answer: Value = serde_json::from_str(&from_join.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            answer["t"], "answer",
+            "internet offer accepted during LAN probe"
+        );
         assert_eq!(shared.peers.load(Relaxed), 0);
         assert_eq!(shared.net(), Net::Waiting);
         join.lan_probe = Some(Instant::now() - PEER_TIMEOUT - Duration::from_millis(1));
