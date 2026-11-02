@@ -274,7 +274,7 @@ fn drain(rtc: &mut Rtc, ice: &Ice, mut on: impl FnMut(Event)) -> Option<Instant>
 }
 
 /// Interleaved stereo at one fixed rate to another.
-struct Resample {
+pub(crate) struct Resample {
     rs: Async<f32>,
     input: Vec<f32>,
 }
@@ -290,7 +290,7 @@ impl Resample {
         })
     }
 
-    fn run(&mut self, input: &[f32], out: &mut Vec<f32>) {
+    pub(crate) fn run(&mut self, input: &[f32], out: &mut Vec<f32>) {
         self.input.extend_from_slice(input);
         loop {
             let need = self.rs.input_frames_next();
@@ -316,8 +316,8 @@ impl Resample {
     }
 }
 
-/// To (or from) 48 kHz: `None` when already there.
-fn resampler(
+/// Reuse a converter for this rate pair; equal rates bypass conversion.
+pub(crate) fn resampler(
     slot: &mut Option<((u32, u32), Resample)>,
     from: u32,
     to: u32,
@@ -495,6 +495,9 @@ pub struct Host {
     lan_pcm: Vec<f32>,
     down: Option<((u32, u32), Resample)>,
     talk: Vec<f32>,
+    talk_queue: VecDeque<f32>,
+    talk_primed: bool,
+    talk_rate: u32,
     /// The user's ceiling, bits/s. The encoder runs at the lowest peer
     /// estimate under it.
     pub cap: u32,
@@ -528,6 +531,9 @@ impl Host {
             lan_pcm: Vec::new(),
             down: None,
             talk: Vec::new(),
+            talk_queue: VecDeque::new(),
+            talk_primed: false,
+            talk_rate: 0,
             cap: MAX_BPS,
             silent: 0,
         })
@@ -793,6 +799,12 @@ impl Host {
         if rate == 0 {
             return;
         }
+        if self.talk_rate != rate {
+            self.talk_rate = rate;
+            self.talk_queue.clear();
+            self.talk_primed = false;
+            self.owed = 0;
+        }
         self.owed += frames as u64 * 48_000;
         let n = (self.owed / u64::from(rate)) as usize;
         self.owed %= u64::from(rate);
@@ -807,15 +819,28 @@ impl Host {
         for p in self.peers.iter_mut().filter(|p| p.web) {
             p.voice.mix_into(&mut self.mix, p.gain);
         }
-        if !self.mix.iter().any(|s| *s != 0.0) && !lan.iter().any(|s| *s != 0.0) {
-            return;
-        }
         self.talk.clear();
         match resampler(&mut self.down, 48_000, rate) {
             Some(r) => r.run(&self.mix, &mut self.talk),
             None => self.talk.extend_from_slice(&self.mix),
         }
-        self.talk.resize(lan.len(), 0.0);
+        // SRC emits complete chunks, independently of network block sizes.
+        // Preserve every output sample and hold one chunk of headroom before
+        // consuming on the DAW clock. Keep clocking silence to flush filter tails.
+        self.talk_queue.extend(self.talk.drain(..));
+        let headroom = if rate == 48_000 {
+            0
+        } else {
+            (256 * u64::from(rate)).div_ceil(48_000) as usize
+        };
+        self.talk_primed |= self.talk_queue.len() >= (frames + headroom) * CHANNELS;
+        self.talk.resize(frames * CHANNELS, 0.0);
+        self.talk.fill(0.0);
+        if self.talk_primed {
+            for dst in &mut self.talk {
+                *dst = self.talk_queue.pop_front().unwrap_or(0.0);
+            }
+        }
         for (dst, src) in self.talk.iter_mut().zip(lan) {
             *dst += src;
         }
@@ -1130,6 +1155,46 @@ impl Guest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn talkback_preserves_tone_across_rates_and_network_blocks() {
+        for rate in [8_000, 44_100, 48_000, 88_200, 96_000, 192_000, 384_000] {
+            let mut host = Host::new(false).unwrap();
+            host.offer("browser", true, Instant::now()).unwrap();
+            let voice = &mut host.peers[0].voice;
+            voice.queue.extend((0..48_000).flat_map(|i| {
+                let x = (i as f32 * 1_000.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5;
+                [x, -x]
+            }));
+            voice.primed = true;
+            let ((_, _), (mut rx, mut heard)) = crate::rings();
+            let mut output = Vec::new();
+            for _ in 0..rate / 180 {
+                host.talk_back(180, rate, &mut rx, &[0.0; 360]);
+                let chunk = heard.read_chunk(heard.slots()).unwrap();
+                let (a, b) = chunk.as_slices();
+                output.extend(a.iter().chain(b).copied());
+                chunk.commit_all();
+            }
+            let tail = &output[output.len() - rate as usize / 5..];
+            let mut energy = 0.0;
+            let (mut sin, mut cos) = (0.0, 0.0);
+            for (i, pair) in tail.chunks_exact(2).enumerate() {
+                assert!((pair[0] + pair[1]).abs() < 1e-5, "stereo at {rate}");
+                let phase = i as f64 * 1_000.0 * std::f64::consts::TAU / f64::from(rate);
+                let x = f64::from(pair[0]);
+                energy += x * x;
+                sin += x * phase.sin();
+                cos += x * phase.cos();
+            }
+            let n = (tail.len() / 2) as f64;
+            let rms = (energy / n).sqrt();
+            let tone = 2.0 * sin.hypot(cos) / n;
+            assert!((0.34..0.37).contains(&rms), "rate {rate}: rms {rms}");
+            assert!((0.48..0.52).contains(&tone), "rate {rate}: tone {tone}");
+            assert!(host.talk_queue.len() < 8_192, "bounded SRC queue at {rate}");
+        }
+    }
 
     #[test]
     fn browser_candidates_require_an_answer_and_current_offer_generation() {

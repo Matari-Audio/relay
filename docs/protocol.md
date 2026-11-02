@@ -15,7 +15,11 @@ A Share instance binds UDP 17492–17507 and advertises
 `tag=<16 hex>` (see `relay_core::tag`). A joiner browses for its room's
 instance, sends `HELLO` once a second and exchanges `AUDIO` datagrams.
 The wire format is `relay_core::wire`. If mDNS finds nothing in 1.5 s, the
-joiner falls back to the internet path, and keeps browsing.
+joiner falls back to the internet path, and keeps browsing. Discovery alone
+is not a live connection: a discovered LAN host must send valid audio before
+Join reports LAN audio. An unreachable discovery times out after three seconds.
+LAN packets carry the sender's rate; each receiver converts to its own DAW
+rate when they differ. Equal-rate LAN audio bypasses conversion.
 
 ## Signaling
 
@@ -123,10 +127,18 @@ keeping the encoder and RTP clock running for immediate resumption. An ICE
 disconnection gets five seconds to recover before a plugin join retries; the
 browser requests a new offer after three seconds of persistent disconnection.
 
+The browser answer explicitly requests Opus stereo (`stereo=1`); declaring
+`opus/48000/2` alone does not request stereo reception. Browser microphones
+remain mono.
+
 A host at 44.1 kHz resamples to 48 kHz before encoding. A joining plugin
 does the same for its DAW input and decodes the host stream to its own rate.
 The host hears each joined plugin and browser microphone through an
-independent gain and mute control. Browser listeners hear the host plus
+independent gain and mute control. Talkback conversion keeps a FIFO between
+the resampler and the DAW clock: complete SRC chunks are retained, with one
+chunk of headroom, then consumed at the exact local frame count. Silence also
+clocks the converter so filter tails and timing survive quiet passages.
+Browser listeners hear the host plus
 joined plugins, excluding browser microphones. Joined plugins hear the host
 only; with more than two plugins, joined plugins do not hear one another.
 Each plugin can mute its outgoing input or local output, and disable local
