@@ -798,7 +798,7 @@ mod tests {
                 assert!(out.len() > rate as usize, "audio arrived at {rate}");
                 let tail = &out[out.len() - rate as usize / 5..];
                 let (mut sin, mut cos) = (0.0, 0.0);
-                for (i, pair) in tail.chunks_exact(CHANNELS).enumerate() {
+                for (i, pair) in tail.as_chunks::<CHANNELS>().0.iter().enumerate() {
                     assert!(
                         (pair[0] + pair[1]).abs() < 1e-5,
                         "stereo preserved at {rate}"
