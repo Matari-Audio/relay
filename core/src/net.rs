@@ -303,13 +303,12 @@ impl Session {
                         peer.primed |= peer.voice.len() >= rate as usize * CHANNELS / 25;
                     }
                 }
-                (Role::Join, wire::AUDIO) if Some(from) == self.host => {
-                    if (8_000..=384_000).contains(&p.rate) {
-                        self.last_audio = Some(now);
-                        if let Some(g) = self.guest.as_mut() {
-                            g.close();
-                        }
-                        self.receive(shared, p.rate, p.frame, p.samples, rx);
+                (Role::Join, wire::AUDIO)
+                    if Some(from) == self.host && (8_000..=384_000).contains(&p.rate) =>
+                {
+                    self.last_audio = Some(now);
+                    if let Some(g) = self.guest.as_mut() {
+                        g.close();
                     }
                 }
                 _ => {}
