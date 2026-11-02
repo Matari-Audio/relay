@@ -39,7 +39,7 @@ jobs:
     outputs:
       changed: ${{ steps.lock.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Update MUI in Cargo.lock
         id: lock
         run: |
@@ -79,7 +79,7 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: gh pr merge chore/follow-mui-main --squash --delete-branch
         env:
           GH_TOKEN: ${{ github.token }}
