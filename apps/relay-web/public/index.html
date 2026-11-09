@@ -91,6 +91,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .who span + span { color: var(--dim); }
 .who .n { font: 400 11px var(--mono); color: var(--text); }
 .about { margin: 0; color: var(--dim); }
+#detail, #rtc-help { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 /* Meters: -60..0 dB, one gradient in a well, clipped to the level. */
 .meters { display: grid; grid-template-columns: auto 16px 16px; grid-template-rows: 1fr auto; column-gap: 1px; row-gap: 4px;
   color: var(--dim); font-size: 11px; min-height: 150px; }
@@ -160,6 +161,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
       <select id="device" aria-label="Microphone"></select>
       <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
     </div>
+    <p id="detail" role="status" aria-live="polite" hidden></p>
+    <p id="rtc-help" role="status" aria-live="polite" hidden>In Firefox or Zen, open <code>about:config</code> and check that <code>media.peerconnection.enabled</code> is true. WebRTC can reveal network addresses to other peers. <a href="https://support.mozilla.org/en-US/kb/about-config-editor-firefox">About advanced settings</a></p>
     <ul class="who room-only" id="who" hidden><li><span>In the room</span><span class="n" id="count"></span></li></ul>
     <p class="about home-only">Live audio from a RELAY room to your browser, peer to peer. <a href="https://matari-audio.com/relay">Get the plugin</a></p>
   </form>
