@@ -62,7 +62,7 @@ jobs:
         with:
           key: cargo-moose
       - name: Install cargo-moose
-        run: cargo install --git https://github.com/Matari-Audio/moose --rev 44e39845d7d78d03612a8d17e9538b3481dcc9e3 cargo-moose --locked
+        run: cargo install --git https://github.com/Matari-Audio/moose --rev 79da7e1bd01e808c8f1a106a3fdfe387c7bf8850 cargo-moose --locked
       - name: Build bundles
         working-directory: plugin
         run: cargo moose build --clap --vst3 --target ${{ matrix.target }} --target-cpu baseline
@@ -102,7 +102,7 @@ jobs:
           cache-targets: false
           key: cargo-moose
       - name: Install cargo-moose
-        run: cargo install --git https://github.com/Matari-Audio/moose --rev 44e39845d7d78d03612a8d17e9538b3481dcc9e3 cargo-moose --locked
+        run: cargo install --git https://github.com/Matari-Audio/moose --rev 79da7e1bd01e808c8f1a106a3fdfe387c7bf8850 cargo-moose --locked
       - name: Build, sign, notarize, and staple
         env:
           APPLE_APPLICATION_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_APPLICATION_CERTIFICATE_P12_BASE64 }}
