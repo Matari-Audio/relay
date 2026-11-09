@@ -65,6 +65,7 @@ test("early answers preserve candidate order, legacy relay gathering and stale-c
   assert.equal(modern.conns[1].remoteCandidates[0].candidate, candidate.candidate);
   vm.runInContext("on = true", modern.context);
   const current = modern.conns[1];
+  current.relayAudioReady = true;
   current.connectionState = "disconnected";
   current.onconnectionstatechange();
   assert.equal(modern.timers.size, 1);
