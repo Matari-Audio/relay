@@ -14,8 +14,8 @@ $("name").onchange = () => {
 };
 window.onpopstate = () => location.reload();
 
-let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, on = false;
-let timing;
+let ws, pc, ctx, src, gain, analysers = [], servers = [], tries = 0, retry, deadline, on = false;
+let timing, peerGeneration = 0, offerRequest = 0;
 const elapsed = (at) => at == null || !timing ? null : Math.round(at - timing.start);
 out.onplaying = () => { if (timing && pc?.connectionState === "connected") timing.audio ??= performance.now(); };
 
@@ -44,7 +44,7 @@ window.relayDiagnostics = async () => {
 };
 // Talk: the mic stream while on, its level meter, and whether this room's
 // plugin can hear browsers (older RELAYs offer a send-only track).
-let mic, micLevel, canTalk = true;
+let mic, micLevel, canTalk = true, micRequest = 0;
 
 // The volume fader, dB; the bottom stop mutes. Remembered per browser.
 const vol = $("vol");
@@ -59,6 +59,12 @@ try { if (localStorage.volume) vol.value = localStorage.volume; } catch {}
 vol.oninput = volume;
 vol.ondblclick = () => { vol.value = 0; volume(); };
 volume();
+
+function detail(text = "") {
+  $("detail").textContent = text;
+  $("detail").hidden = !text;
+  $("rtc-help").hidden = true;
+}
 
 function status(text, lamp = "") {
   $("status").textContent = text;
@@ -87,38 +93,102 @@ function setOn(v) {
   $("label").textContent = v ? "Stop" : "Listen";
 }
 
-async function hello() {
-  ws?.send(JSON.stringify({ t: "hello", kind: "web", auth: await auth(room, $("pw").value), name: $("name").value.trim() }));
+function closePeer() {
+  peerGeneration++;
+  offerRequest++;
+  const conn = pc;
+  pc = undefined;
+  clearTimeout(conn?.relayRetry);
+  conn?.close();
+  out.srcObject = null;
+  src?.disconnect();
+  src = undefined;
+  analysers = [];
+}
+
+function fail(title, message) {
+  stop();
+  status(title, "bad");
+  detail(message);
+}
+
+function waitFor(ms, title, message) {
+  clearTimeout(deadline);
+  deadline = setTimeout(() => fail(title, message), ms);
+}
+
+async function hello(sock, request) {
+  const credentials = await auth(room, $("pw").value);
+  if (on && sock === ws && request === offerRequest && sock.readyState === WebSocket.OPEN) {
+    sock.send(JSON.stringify({ t: "hello", kind: "web", auth: credentials, name: $("name").value.trim() }));
+  }
+}
+
+function requestOffer(sock) {
+  const request = ++offerRequest;
+  status("Connecting");
+  waitFor(20_000, "Host did not respond", "Check the host's connection, then press Listen to retry.");
+  hello(sock, request).catch(() => {
+    if (on && sock === ws && request === offerRequest) fail("Could not join", "Check your connection and press Listen to retry.");
+  });
 }
 
 function connect() {
   clearTimeout(retry);
   timing = { start: performance.now() };
-  const sock = (ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/${room}/peer`));
+  let sock;
+  try {
+    sock = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/${room}/peer`);
+  } catch {
+    return fail("Could not connect", "Check your connection and press Listen to retry.");
+  }
+  ws = sock;
+  waitFor(15_000, "Connection timed out", "Check your connection and press Listen to retry.");
   sock.onopen = () => { if (sock === ws) timing.socket = performance.now(); };
-  sock.onmessage = async ({ data }) => {
-    if (data === "pong") return;
-    const m = JSON.parse(data);
-    if (m.t === "ice") { servers = m.servers; tries = 0; status("Connecting"); hello(); }
-    else if (m.t === "host") hello();
-    else if (m.t === "offer") answer(m.sdp, m.servers, m.trickle === true);
-    else if (m.t === "candidate") candidate(m);
+  sock.onmessage = ({ data }) => {
+    if (!on || sock !== ws || data === "pong") return;
+    let m;
+    try { m = JSON.parse(data); } catch {
+      return fail("Connection error", "The server sent an invalid response. Press Listen to retry.");
+    }
+    if (m.t === "ice") { servers = m.servers; requestOffer(sock); }
+    else if (m.t === "host") requestOffer(sock);
+    else if (m.t === "offer") {
+      waitFor(30_000, "Connection timed out", "Check browser privacy settings, VPN, firewall, or network, then press Listen to retry.");
+      const result = answer(m.sdp, m.servers, m.trickle === true);
+      const generation = peerGeneration;
+      result.catch(() => {
+        if (on && sock === ws && generation === peerGeneration) fail("Connection failed", "Check browser privacy settings or try another browser, then press Listen to retry.");
+      });
+    }
+    else if (m.t === "candidate") {
+      const generation = peerGeneration;
+      candidate(m).catch(() => {
+        if (on && sock === ws && generation === peerGeneration) fail("Connection failed", "Check your network and press Listen to retry.");
+      });
+    }
     else if (m.t === "roster") roster(m);
-    else if (m.code === "no-host") status("Waiting for host", "warn");
-    else if (m.code === "denied") { stop(); status("Wrong password", "bad"); $("pw").focus(); }
-    else if (m.code === "full") { stop(); status("Room is full", "bad"); }
+    else if (m.code === "no-host") {
+      clearTimeout(deadline);
+      closePeer();
+      status("Waiting for host", "warn");
+    }
+    else if (m.code === "denied") { fail("Wrong password", "Check the password and press Listen to retry."); $("pw").focus(); }
+    else if (m.code === "full") fail("Room is full", "Try again when a place is available.");
   };
   sock.onclose = () => {
     if (!on || sock !== ws) return;
-    const wait = Math.min(30_000, 1000 * 2 ** tries++) * (0.5 + Math.random() / 2);
+    clearTimeout(deadline);
+    closePeer();
+    if (tries++ >= 3) return fail("Could not connect", "Check your connection and press Listen to retry.");
+    const wait = Math.min(30_000, 1000 * 2 ** (tries - 1)) * (0.5 + Math.random() / 2);
     status("Reconnecting", "warn");
     retry = setTimeout(connect, wait);
   };
 }
 
 async function answer(sdp, acceptedServers, trickle = false) {
-  clearTimeout(pc?.relayRetry);
-  pc?.close();
+  closePeer();
   if (timing) {
     timing.offer = performance.now();
     delete timing.answer;
@@ -150,29 +220,58 @@ async function answer(sdp, acceptedServers, trickle = false) {
     gathered();
   };
   conn.ontrack = ({ track, streams, receiver }) => {
+    if (conn !== pc || sock !== ws) return;
     // Ask for the smallest jitter buffer the browser allows.
     if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
     if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 0;
     const stream = streams[0] ?? new MediaStream([track]);
     out.srcObject = stream;
-    out.play().catch(() => {});
-    meter(stream);
+    try {
+      meter(stream);
+      Promise.all([out.play(), ctx.resume()]).then(() => {
+        if (!on || conn !== pc || sock !== ws) return;
+        conn.relayAudioReady = true;
+        if (conn.connectionState === "connected") {
+          clearTimeout(deadline);
+          status("Live", "ok");
+        }
+      }).catch(() => {
+        if (on && conn === pc && sock === ws) {
+          fail("Audio blocked", "Allow audio playback in your browser, then press Listen to retry.");
+        }
+      });
+    } catch {
+      if (on && conn === pc && sock === ws) {
+        fail("Audio unavailable", "Check your browser audio settings or try another browser, then press Listen to retry.");
+      }
+    }
   };
   conn.onconnectionstatechange = () => {
     if (conn !== pc) return;
     clearTimeout(conn.relayRetry);
     const s = conn.connectionState;
-    if (s === "connected") { if (timing) timing.connected = performance.now(); status("Live", "ok"); }
-    else if (s === "failed") { status("Reconnecting", "warn"); hello(); }
+    if (s === "connected") {
+      tries = 0;
+      if (timing) timing.connected = performance.now();
+      if (conn.relayAudioReady) {
+        clearTimeout(deadline);
+        status("Live", "ok");
+      } else {
+        status("Starting audio", "warn");
+        waitFor(15_000, "Audio did not start", "Check your browser audio settings, then press Listen to retry.");
+      }
+    }
+    else if (s === "failed") fail("Connection failed", "Check browser privacy settings, VPN, firewall, or network, then press Listen to retry.");
     else if (s === "disconnected") {
       status("Reconnecting", "warn");
       conn.relayRetry = setTimeout(() => {
         if (!on || conn !== pc || conn.connectionState !== "disconnected") return;
-        if (ws?.readyState === WebSocket.OPEN) hello(); else connect();
+        if (sock.readyState === WebSocket.OPEN) requestOffer(sock); else connect();
       }, 3000);
     }
   };
   await (conn.relayRemote = conn.setRemoteDescription({ type: "offer", sdp }));
+  if (conn !== pc || sock !== ws) return;
   const t = conn.getTransceivers()[0];
   canTalk = /a=sendrecv/.test(sdp);
   if (t && canTalk) {
@@ -182,6 +281,7 @@ async function answer(sdp, acceptedServers, trickle = false) {
   if (!canTalk && mic) talk(false);
   micButton();
   const local = await conn.createAnswer();
+  if (conn !== pc || sock !== ws) return;
   local.sdp = stereoAnswer(local.sdp);
   await conn.setLocalDescription(local);
   // New hosts can start ICE immediately; discoveries follow over the same socket.
@@ -240,6 +340,7 @@ function meter(stream) {
   out.muted = true;
   src = ctx.createMediaStreamSource(stream);
   gain ??= ctx.createGain();
+  gain.disconnect();
   gain.gain.value = linear();
   gain.connect(ctx.destination);
   const split = ctx.createChannelSplitter(2);
@@ -295,20 +396,16 @@ requestAnimationFrame(draw);
 function stop() {
   setOn(false);
   clearTimeout(retry);
+  clearTimeout(deadline);
   const sock = ws;
   ws = undefined;
   sock?.close();
-  clearTimeout(pc?.relayRetry);
-  pc?.close();
-  pc = undefined;
-  out.srcObject = null;
-  src?.disconnect();
-  src = undefined;
-  analysers = [];
+  closePeer();
   talk(false);
   peaks.fill(0);
   roster({ peers: [] });
   status("Ready");
+  detail();
 }
 
 $("form").onsubmit = (e) => {
@@ -324,10 +421,28 @@ $("form").onsubmit = (e) => {
   }
   if (on) return stop();
   if (!room) return $("room").focus();
+  detail();
+  if (typeof window.RTCPeerConnection !== "function") {
+    fail("WebRTC unavailable", "Enable WebRTC in your browser settings or try another browser, then press Listen to retry.");
+    $("rtc-help").hidden = false;
+    return;
+  }
+  try {
+    new RTCPeerConnection().close();
+  } catch {
+    fail("WebRTC unavailable", "Your browser could not start WebRTC. Check your browser settings or try another browser, then press Listen to retry.");
+    $("rtc-help").hidden = false;
+    return;
+  }
   // Inside the click: unlock audio before any await.
-  ctx ??= new AudioContext({ latencyHint: "interactive" });
-  ctx.resume();
-  out.play().catch(() => {});
+  try {
+    ctx ??= new AudioContext({ latencyHint: "interactive" });
+    ctx.resume().catch(() => {});
+    out.play().catch(() => {});
+  } catch {
+    return fail("Audio unavailable", "Check your browser audio settings or try another browser, then press Listen to retry.");
+  }
+  tries = 0;
   setOn(true);
   status("Connecting");
   connect();
@@ -350,20 +465,39 @@ function micButton(state = "") {
 }
 
 async function openMic(deviceId) {
+  const request = ++micRequest;
   ctx ??= new AudioContext({ latencyHint: "interactive" });
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { deviceId: deviceId ? { exact: deviceId } : undefined, channelCount: 1,
-      echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  });
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: deviceId ? { exact: deviceId } : undefined, channelCount: 1,
+        echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch (error) {
+    if (on && request === micRequest) throw error;
+    return;
+  }
+  if (!on || request !== micRequest) {
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  }
   mic?.getTracks().forEach((t) => t.stop());
   mic = stream;
   const track = stream.getAudioTracks()[0];
-  await pc?.getTransceivers()[0]?.sender.replaceTrack(track).catch(() => {});
+  const sender = pc?.getTransceivers()[0]?.sender;
+  await sender?.replaceTrack(track).catch(() => {});
+  if (!on || request !== micRequest) {
+    if (sender && sender === pc?.getTransceivers()[0]?.sender) {
+      sender.replaceTrack(mic?.getAudioTracks()[0] ?? null).catch(() => {});
+    }
+    return;
+  }
   micLevel = ctx.createAnalyser();
   micLevel.fftSize = 1024;
   ctx.createMediaStreamSource(stream).connect(micLevel);
   // Labels only show once permission is granted.
   const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+  if (!on || request !== micRequest) return;
   $("device").replaceChildren(...inputs.map((d, i) => new Option(d.label || `Microphone ${i + 1}`, d.deviceId)));
   $("device").value = track.getSettings().deviceId ?? "";
   micButton();
@@ -371,19 +505,23 @@ async function openMic(deviceId) {
 
 function talk(want) {
   if (!want) {
+    micRequest++;
     mic?.getTracks().forEach((t) => t.stop());
     mic = micLevel = undefined;
     pc?.getTransceivers()[0]?.sender.replaceTrack(null).catch(() => {});
     return micButton();
   }
   micButton("asking");
-  openMic($("device").value || undefined).catch((e) => micButton(e.name === "NotAllowedError" ? "denied" : ""));
+  const pending = openMic($("device").value || undefined), request = micRequest;
+  pending.catch((e) => {
+    if (on && request === micRequest) micButton(e.name === "NotAllowedError" ? "denied" : "");
+  });
 }
 
 $("mic").onclick = () => {
   if (mic) return talk(false);
   if (!on) $("form").requestSubmit(); // talking implies listening
-  talk(true);
+  if (on) talk(true);
 };
 $("device").onchange = () => mic && openMic($("device").value).catch(() => {});
 
