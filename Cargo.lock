@@ -2567,7 +2567,7 @@ dependencies = [
 [[package]]
 name = "moose"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "moose-au",
  "moose-clap",
@@ -2584,7 +2584,7 @@ dependencies = [
 [[package]]
 name = "moose-au"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -2629,7 +2629,7 @@ dependencies = [
 [[package]]
 name = "moose-build"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "base64 0.22.1",
  "moose-utils",
@@ -2640,7 +2640,7 @@ dependencies = [
 [[package]]
 name = "moose-clap"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -2653,7 +2653,7 @@ dependencies = [
 [[package]]
 name = "moose-core"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -2666,7 +2666,7 @@ dependencies = [
 [[package]]
 name = "moose-derive"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "moose-build",
  "moose-params",
@@ -2680,7 +2680,7 @@ dependencies = [
 [[package]]
 name = "moose-gui-types"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "moose-core",
  "objc2 0.6.4",
@@ -2689,7 +2689,7 @@ dependencies = [
 [[package]]
 name = "moose-loader"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "crc32fast",
  "log",
@@ -2702,7 +2702,7 @@ dependencies = [
 [[package]]
 name = "moose-mui"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "moose-core",
  "moose-params",
@@ -2714,7 +2714,7 @@ dependencies = [
 [[package]]
 name = "moose-params"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "bitflags 2.13.2",
 ]
@@ -2722,7 +2722,7 @@ dependencies = [
 [[package]]
 name = "moose-plugin"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "moose-core",
  "moose-gui-types",
@@ -2732,17 +2732,17 @@ dependencies = [
 [[package]]
 name = "moose-shim-types"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 
 [[package]]
 name = "moose-utils"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 
 [[package]]
 name = "moose-vst3"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose?rev=5dfb23df2c9eebfef229b0d2e286110637197c79#5dfb23df2c9eebfef229b0d2e286110637197c79"
+source = "git+https://github.com/Matari-Audio/moose?rev=44e39845d7d78d03612a8d17e9538b3481dcc9e3#44e39845d7d78d03612a8d17e9538b3481dcc9e3"
 dependencies = [
  "cc",
  "crossbeam-queue",
