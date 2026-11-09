@@ -214,3 +214,25 @@ test("late microphone grants from stopped or superseded attempts are released", 
   page.click();
   assert.equal(current.track.stopped, true, "stopping releases the current microphone");
 });
+
+test("the latest overlapping microphone request wins", async () => {
+  const page = browser();
+  const stream = () => {
+    const track = { stopped: false, stop() { this.stopped = true; }, getSettings: () => ({}) };
+    return { track, getTracks: () => [track], getAudioTracks: () => [track] };
+  };
+  page.click();
+  page.elements.get("mic").onclick();
+  page.elements.get("mic").onclick();
+  assert.equal(page.micRequests.length, 2);
+  const stale = stream(), current = stream();
+  page.micRequests[1].resolve(current);
+  await flush();
+  page.micRequests[0].resolve(stale);
+  await flush();
+  assert.equal(stale.track.stopped, true);
+  assert.equal(current.track.stopped, false);
+  assert.equal(page.elements.get("mic").getAttribute("aria-pressed"), "true");
+  page.click();
+  assert.equal(current.track.stopped, true);
+});
