@@ -33,7 +33,7 @@ apps/web/        matari-audio.com/relay product page (Astro)
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo install --git https://github.com/Matari-Audio/moose --rev 5cb2dac7e2b74136bbcf7caafb6bac09633d4f34 cargo-moose --locked
+cargo install --git https://github.com/Matari-Audio/moose --rev 156879b8a404d7dd28af3ce5b87139ffbab0e614 cargo-moose --locked
 cargo moose install --clap --vst3        # from plugin/; add --au2 on macOS
 bun install && bun run test && bun run build
 ```
