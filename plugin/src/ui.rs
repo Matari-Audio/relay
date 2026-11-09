@@ -358,7 +358,11 @@ fn field(fonts: &Fonts, c: char, body: El, action: El) -> El {
 }
 
 /// A text input with its own chrome stripped, to sit in a [`field`].
-fn bare(input: El) -> El {
+fn bare(mut input: El) -> El {
+    // MUI stores editable text insets separately from element padding.
+    if let Some(edit) = input.payload_mut().extras_mut().editable_text.as_mut() {
+        edit.insets[1] = 0.0;
+    }
     input.fill(FIELD).radius(0.0).pad((0.0, 0.0)).h(H - 4.0)
 }
 
@@ -579,7 +583,7 @@ fn build(
         let r = ui.get("lan");
         view.show_address ^= r.clicked_with(Button::Primary);
         let lan = row![
-            glyph(fonts, WIFI, DIM),
+            glyph(fonts, WIFI, DIM).size(14.0, 14.0),
             mono(fonts, address, 9.0, if r.hovered { TEXT } else { DIM }),
         ]
         .center()
@@ -679,8 +683,7 @@ fn build(
         microphones(ui, shared, fonts, view)
     } else {
         col([
-            col(rows).gap(4.0),
-            spacer().grow(1.0),
+            col(rows).gap(4.0).shrink(0.0),
             row![
                 block(6.0, 6.0).radius(3.0).fill(lit),
                 text(status).text_size(10.5).fill(TEXT),
@@ -688,15 +691,22 @@ fn build(
                 tail,
             ]
             .gap(6.0)
-            .center(),
+            .center()
+            .shrink(0.0)
+            .id("status-row"),
         ])
         .gap(6.0)
+        .justify(Justify::SpaceBetween)
+        .min_h(0.0)
+        .basis(0.0)
         .grow(1.0)
     };
     let left = col([
         row![brand, spacer().grow(1.0), talk, mode]
             .gap(6.0)
-            .center(),
+            .center()
+            .h(H)
+            .shrink(0.0),
         body,
     ])
     .gap(6.0)
@@ -1460,7 +1470,7 @@ mod snapshot {
     use mui::vello::vello_cpu::{Pixmap, RenderContext, Resources};
     use mui::vello::{Cache, Cpu};
 
-    fn render(mode: f64, net: Net, name: &str, about: bool) {
+    fn render(mode: f64, net: Net, name: &str, about: bool) -> Vec<[f64; 4]> {
         let params = Arc::new(RelayParams::new());
         params.set_normalized(P::Mode.into(), mode);
         if name.ends_with("muted") {
@@ -1582,9 +1592,59 @@ mod snapshot {
             ui.frame(root, Some(size), mui::input::Input::default(), 0.0)
                 .unwrap();
         }
-        assert!(
-            ui.scene().unwrap().layout.frame("meters").unwrap().right() <= f64::from(logical.0)
-        );
+        if name == "standard" {
+            let room = ui.scene().unwrap().layout.frame("room").unwrap();
+            let pos = Point::new(
+                room.x + room.size.width / 2.0,
+                room.y + room.size.height / 2.0,
+            );
+            for buttons in [mui::input::Buttons::PRIMARY, mui::input::Buttons::default()] {
+                let root = build(
+                    &mut ui,
+                    &mut bridge,
+                    &shared,
+                    &settings.standard_ui,
+                    &fonts,
+                    &mut view,
+                );
+                let input = mui::input::PointerInput {
+                    pos: Some(pos),
+                    buttons,
+                    ..Default::default()
+                };
+                ui.frame(root, Some(size), input, 0.0).unwrap();
+            }
+            assert!(ui.focused("room"));
+        }
+        let scene = ui.scene().unwrap();
+        assert!(scene.layout.frame("meters").unwrap().right() <= f64::from(logical.0));
+        if !about && !view.mic_panel {
+            for id in ["room", "pass"] {
+                let geometry = scene.surface(id).unwrap().text_geometry.as_ref().unwrap();
+                assert!(
+                    geometry.viewport.height >= geometry.line_height,
+                    "{name} {id} viewport {} clips line height {}",
+                    geometry.viewport.height,
+                    geometry.line_height
+                );
+            }
+            let status = scene.layout.frame("status-row").unwrap();
+            assert!(
+                status.bottom() <= f64::from(logical.1) - 10.0,
+                "{name} status overflows panel: {status:?}"
+            );
+        }
+        let frames = if !about && !view.mic_panel {
+            ["about", "Off", "Connect", "room", "pass", "meters"]
+                .iter()
+                .map(|id| {
+                    let f = scene.layout.frame(id).unwrap();
+                    [f.x, f.y, f.size.width, f.size.height]
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         if about {
             assert!(
                 ui.scene()
@@ -1638,7 +1698,7 @@ mod snapshot {
         let mut enc = png::Encoder::new(std::fs::File::create(path).unwrap(), w, h);
         enc.set_color(png::ColorType::Rgba);
         enc.write_header().unwrap().write_image_data(&rgba).unwrap();
-        if !about && !view.mic_panel {
+        if !about && !view.mic_panel && mode != 0.0 {
             let id = moose::mui::widget_id(P::Quality);
             for cap in [128_000, 64_000, 510_000, 192_000] {
                 let bounds = ui.scene().unwrap().layout.frame(&id).unwrap();
@@ -1670,13 +1730,27 @@ mod snapshot {
                 assert_eq!(settings.quality.value().bps(), cap, "{name} quality click");
             }
         }
+        frames
     }
 
     #[test]
     fn editor_renders() {
-        render(0.5, Net::Internet, "share", false);
+        let share = render(0.5, Net::Internet, "share", false);
+        let off = render(0.0, Net::Idle, "off", false);
+        assert_eq!(share, off, "controls move when switching modes");
         render(0.5, Net::Internet, "share-default", false);
-        render(0.5, Net::Internet, "standard", false);
+        let standard = render(0.5, Net::Internet, "standard", false);
+        let standard_off = render(0.0, Net::Idle, "standard-off", false);
+        assert_eq!(
+            standard, standard_off,
+            "standard controls move when switching modes"
+        );
+        let compact = render(0.5, Net::Internet, "compact-standard", false);
+        let compact_off = render(0.0, Net::Idle, "compact-standard-off", false);
+        assert_eq!(
+            compact, compact_off,
+            "compact controls move when switching modes"
+        );
         render(1.0, Net::Lan, "join", false);
         render(1.0, Net::Internet, "join-internet", false);
         render(1.0, Net::Internet, "compact-join-standard", false);
