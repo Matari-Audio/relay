@@ -3687,7 +3687,7 @@ dependencies = [
 
 [[package]]
 name = "relay-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "igd-next",
  "mdns-sd",
@@ -3704,7 +3704,7 @@ dependencies = [
 
 [[package]]
 name = "relay-plugin"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "clap-sys",
  "moose",
