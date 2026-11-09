@@ -1,3 +1,7 @@
+[build]
+# Local edit loops use rustc incremental compilation. CI may set RUSTC_WRAPPER.
+rustc-wrapper = ""
+
 [alias]
 relay-check = "check --locked -p relay-domain --all-targets --all-features"
 relay-test = "nextest run --locked -p relay-domain --all-targets --all-features"
