@@ -3,7 +3,7 @@
 ## 0.5.2
 
 - The browser listener reports unavailable WebRTC, connection failures and audio playback problems with steps to retry.
-- The plugin editor keeps its controls aligned when switching between Off and Connect and displays room text without clipping.
+- The plugin editor keeps its controls and status aligned when switching between Off and Connect and displays room text without clipping.
 
 ## 0.5.1
 
