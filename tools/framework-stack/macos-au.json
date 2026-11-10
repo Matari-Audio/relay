@@ -1,0 +1,12 @@
+{
+  "name": "macos-au",
+  "target": "aarch64-apple-darwin",
+  "feature_mode": "no-default",
+  "features": [
+    "relay-plugin/au"
+  ],
+  "root_packages": [
+    "relay-plugin"
+  ],
+  "lockfile": "Cargo.lock"
+}

@@ -291,7 +291,7 @@ fn new_ui() -> (Ui, Fonts) {
 pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     let mut config = mui::diagnostics::Config::new("relay", env!("CARGO_PKG_VERSION"));
     config.build = option_env!("APP_GIT_REVISION").unwrap_or("unknown").into();
-    config.mui_revision = "41084a94dc9e811bb4955cd34b94cedcdc82efaa".into();
+    config.mui_revision = env!("RELAY_MUI_REVISION").into();
     let reporter = mui::diagnostics::Reporter::start(config)
         .inspect_err(|error| eprintln!("RELAY MUI reporting: {error}"))
         .ok();
@@ -1724,11 +1724,7 @@ mod snapshot {
         ctx.flush();
         let mut pix = Pixmap::new(w as u16, h as u16);
         ctx.render(&mut pix, &mut resources);
-        let rgba: Vec<u8> = pix
-            .take_unpremultiplied()
-            .iter()
-            .flat_map(|p| [p.r, p.g, p.b, p.a])
-            .collect();
+        let rgba = pix.take_rgba8(mui::vello::peniko::ImageAlphaType::Alpha);
         let path = std::env::temp_dir().join(format!("relay-editor-{name}.png"));
         let mut enc = png::Encoder::new(std::fs::File::create(path).unwrap(), w, h);
         enc.set_color(png::ColorType::Rgba);

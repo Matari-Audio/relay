@@ -36,12 +36,6 @@ jobs:
         run: cargo test --locked -p relay-plugin --lib ui::tests
       - name: Verify shared MUI source and build VST3
         run: |
-          python3 - <<'PYPIN'
-          import pathlib, re, tomllib
-          revision = re.search(r'config.mui_revision = "([0-9a-f]{40})"', pathlib.Path('plugin/src/ui.rs').read_text()).group(1)
-          sources = {p['source'].split('#')[-1] for p in tomllib.loads(pathlib.Path('Cargo.lock').read_text())['package'] if 'Matari-Audio/MUI' in p.get('source', '')}
-          assert sources == {revision}, f'MUI reporting identity differs from compiled sources: {sources}'
-          PYPIN
           cargo build --locked --release -p relay-plugin --lib
           mkdir -p ui-plugin/RELAY.vst3/Contents/x86_64-linux
           cp target/release/librelay_plugin.so ui-plugin/RELAY.vst3/Contents/x86_64-linux/RELAY.so

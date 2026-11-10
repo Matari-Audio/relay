@@ -104,7 +104,7 @@ jobs:
           logs = list(Path(os.environ["MUI_DIAGNOSTICS_DIR"]).rglob("*.log"))
           lines = [line for path in logs for line in path.read_text().splitlines()]
           fallback = os.environ["MUI_RENDERER"] == "gpu" and os.environ["WGPU_BACKEND"] == "gl"
-          frame = "mui-baseview/cpu_frame_presented" if fallback or os.environ["MUI_RENDERER"] == "cpu" else "mui-vello/frame_presented"
+          frame = "mui-baseview/cpu_frame_presented" if fallback or os.environ["MUI_RENDERER"] == "cpu" else "mui-baseview/gpu_frame_presented"
           assert any(frame in line for line in lines), f"missing successful presentation: {frame}"
           allowed = {
               "mui-vello/cpu_presenter: no compute-capable native backend enabled",
