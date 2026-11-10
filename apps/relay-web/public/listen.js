@@ -550,5 +550,8 @@ setInterval(async () => {
   rxBytes = bytes;
   $("kbps").textContent = pc && kbps > 0 ? `${kbps} kbps` : "";
 }, 1000);
-if (!room) { $("label").textContent = "Join"; $("room").focus(); }
+if (!room) {
+  $("label").textContent = "Join";
+  if (window.self === window.top) $("room").focus();
+}
 micButton();

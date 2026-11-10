@@ -8,7 +8,7 @@ const source = readFileSync(process.env.LISTEN_SOURCE ?? new URL("../public/list
 const offer = { t: "offer", sdp: "v=0\r\na=ice-ufrag:host\r\na=sendrecv\r\n", trickle: true };
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-function browser({ webRtc = true, constructorThrows = false, rejectOffer = false, rejectPlayback = false } = {}) {
+function browser({ webRtc = true, constructorThrows = false, rejectOffer = false, rejectPlayback = false, embedded = false, pathname = "/test-room" } = {}) {
   const elements = new Map(), sockets = [], peers = [], timers = new Map(), micRequests = [];
   let now = 0, nextTimer = 0;
   const element = (id) => {
@@ -19,7 +19,7 @@ function browser({ webRtc = true, constructorThrows = false, rejectOffer = false
       style: { setProperty() {} }, classList: { toggle() {}, remove() {} },
       setAttribute(key, value) { attributes.set(key, value); },
       getAttribute(key) { return attributes.get(key); },
-      focus() {}, replaceChildren() {}, appendChild() { return {}; },
+      focus() { this.focused = true; }, replaceChildren() {}, appendChild() { return {}; },
       play: () => rejectPlayback ? Promise.reject(Error("playback blocked")) : Promise.resolve(),
       });
     }
@@ -57,9 +57,10 @@ function browser({ webRtc = true, constructorThrows = false, rejectOffer = false
     createChannelSplitter() { return node(); }
     createAnalyser() { return node(); }
   }
+  const topWindow = {};
   const context = vm.createContext({
     document: { getElementById: element, createElement: () => element("created"), documentElement: { classList: { remove() {} } } },
-    window: { RTCPeerConnection: webRtc ? Peer : undefined }, localStorage: {}, location: { pathname: "/test-room", protocol: "https:", host: "relay.test" },
+    window: { RTCPeerConnection: webRtc ? Peer : undefined, top: topWindow, self: embedded ? {} : topWindow }, localStorage: {}, location: { pathname, protocol: "https:", host: "relay.test" },
     performance: { now: () => now }, WebSocket: Socket, AudioContext: Audio,
     navigator: { mediaDevices: {
       getUserMedia: () => new Promise((resolve, reject) => micRequests.push({ resolve, reject })),
@@ -86,6 +87,14 @@ function browser({ webRtc = true, constructorThrows = false, rejectOffer = false
     },
   };
 }
+
+test("embedding the home player preserves the host page's keyboard focus", () => {
+  const embedded = browser({ embedded: true, pathname: "/" });
+  assert.equal(embedded.elements.get("room").focused, undefined);
+  assert.equal(embedded.elements.get("label").textContent, "Join");
+  const standalone = browser({ pathname: "/" });
+  assert.equal(standalone.elements.get("room").focused, true);
+});
 
 test("disabled WebRTC explains the failure before joining and allows another attempt", () => {
   const page = browser({ webRtc: false });
