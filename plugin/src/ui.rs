@@ -41,6 +41,7 @@ const SPEAKER_OFF: char = '\u{E45A}';
 const SIZE: (u32, u32) = (440, 156);
 /// Field height and corner.
 const H: f64 = 24.0;
+const STATUS_H: f64 = 14.0;
 const R: f64 = 4.0;
 /// Meter floor, dB.
 const FLOOR: f32 = -60.0;
@@ -583,8 +584,8 @@ fn build(
         let r = ui.get("lan");
         view.show_address ^= r.clicked_with(Button::Primary);
         let lan = row![
-            glyph(fonts, WIFI, DIM).size(14.0, 14.0),
-            mono(fonts, address, 9.0, if r.hovered { TEXT } else { DIM }),
+            glyph(fonts, WIFI, DIM).size(STATUS_H, STATUS_H),
+            mono(fonts, address, 9.0, if r.hovered { TEXT } else { DIM }).id("lan-address"),
         ]
         .center()
         .a11y(A11y::Button)
@@ -607,11 +608,11 @@ fn build(
 
     let (lit, status) = match (picked, shared.net()) {
         (0, _) | (_, Net::Idle) => (DIM, "Off".to_owned()),
-        (1, Net::Taken) => (RED, "Room taken, roll a new name".into()),
+        (1, Net::Taken) => (RED, "Room taken, reroll".into()),
         (_, Net::Denied) => (RED, "Wrong password".into()),
         (_, Net::RateMismatch) => (YELLOW, "Sample rates differ".into()),
         (1, Net::Offline) if peers == 0 => (YELLOW, "LAN only".into()),
-        (1, _) if peers == 0 => (TEXT, "Waiting for room members".into()),
+        (1, _) if peers == 0 => (TEXT, "Waiting for members".into()),
         (1, _) => (LIME, format!("{peers} connected")),
         (_, Net::Lan) => (LIME, "Live · LAN".into()),
         (_, Net::Internet) => (LIME, "Live · Internet".into()),
@@ -685,13 +686,22 @@ fn build(
         col([
             col(rows).gap(4.0).shrink(0.0),
             row![
-                block(6.0, 6.0).radius(3.0).fill(lit),
-                text(status).text_size(10.5).fill(TEXT),
+                block(6.0, 6.0)
+                    .radius(3.0)
+                    .fill(lit)
+                    .shrink(0.0)
+                    .id("status-dot"),
+                text(status)
+                    .text_size(10.5)
+                    .fill(TEXT)
+                    .shrink(0.0)
+                    .id("status-text"),
                 spacer().grow(1.0),
                 tail,
             ]
             .gap(6.0)
             .center()
+            .min_h(STATUS_H)
             .shrink(0.0)
             .id("status-row"),
         ])
@@ -1629,19 +1639,44 @@ mod snapshot {
                 );
             }
             let status = scene.layout.frame("status-row").unwrap();
+            if let Some(address) = scene.layout.frame("lan-address") {
+                assert!(
+                    address.right() <= status.right() + 0.001,
+                    "{name} address clipped"
+                );
+            }
             assert!(
                 status.bottom() <= f64::from(logical.1) - 10.0,
                 "{name} status overflows panel: {status:?}"
             );
         }
         let frames = if !about && !view.mic_panel {
-            ["about", "Off", "Connect", "room", "pass", "meters"]
-                .iter()
-                .map(|id| {
-                    let f = scene.layout.frame(id).unwrap();
-                    [f.x, f.y, f.size.width, f.size.height]
-                })
-                .collect()
+            [
+                "about",
+                "Off",
+                "Connect",
+                "room",
+                "pass",
+                "meters",
+                "status-row",
+                "status-dot",
+                "status-text",
+            ]
+            .iter()
+            .map(|id| {
+                let f = scene.layout.frame(id).unwrap();
+                [
+                    f.x,
+                    f.y,
+                    if *id == "status-text" {
+                        0.0
+                    } else {
+                        f.size.width
+                    },
+                    f.size.height,
+                ]
+            })
+            .collect()
         } else {
             Vec::new()
         };
@@ -1759,6 +1794,35 @@ mod snapshot {
         render(0.5, Net::Internet, "mics-large", false);
         render(0.5, Net::Internet, "compact-mics", false);
         render(0.5, Net::Internet, "compact-mics-muted", false);
+    }
+
+    #[test]
+    fn status_stays_in_place_across_modes_and_sizes() {
+        for size in ["compact", "default", "large"] {
+            for theme in ["pixel", "standard"] {
+                let prefix = format!("{size}-{theme}");
+                let off = render(0.0, Net::Idle, &format!("{prefix}-off"), false);
+                for (mode, net, state) in [
+                    (0.5, Net::Internet, "host"),
+                    (0.5, Net::Waiting, "host-waiting"),
+                    (0.5, Net::Taken, "host-taken"),
+                    (1.0, Net::Denied, "join-denied"),
+                    (1.0, Net::RateMismatch, "join-rate"),
+                    (1.0, Net::Lan, "join"),
+                    (1.0, Net::Waiting, "join-waiting"),
+                ] {
+                    let actual = render(mode, net, &format!("{prefix}-{state}"), false);
+                    for (actual, expected) in actual[6..].iter().zip(&off[6..]) {
+                        for (actual, expected) in actual.iter().zip(expected) {
+                            assert!(
+                                (actual - expected).abs() < 0.001,
+                                "status position changes in {prefix}-{state}: {actual} vs {expected}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
