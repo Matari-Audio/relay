@@ -358,13 +358,19 @@ fn field(fonts: &Fonts, c: char, body: El, action: El) -> El {
         .fill(FIELD)
 }
 
-/// A text input with its own chrome stripped, to sit in a [`field`].
-fn bare(mut input: El) -> El {
-    // MUI stores editable text insets separately from element padding.
-    if let Some(edit) = input.payload_mut().extras_mut().editable_text.as_mut() {
-        edit.insets[1] = 0.0;
+/// A one-line text input without its own chrome, to sit in a [`field`];
+/// a `secret` one shows dots.
+fn bare(ui: &mut Ui, id: &str, value: &mut String, secret: bool) -> Response {
+    let opts = TextOpts {
+        flush: true,
+        secret,
+        ..TextOpts::default()
+    };
+    let r = text_edit(ui, id, value, opts);
+    Response {
+        el: r.el.fill(FIELD).radius(0.0).h(H - 4.0),
+        changed: r.changed.changed,
     }
-    input.fill(FIELD).radius(0.0).pad((0.0, 0.0)).h(H - 4.0)
 }
 
 fn mono(fonts: &Fonts, s: String, size: f64, ink: Color) -> El {
@@ -404,7 +410,7 @@ fn build(
     if view.room_edit.is_none() {
         view.room = Shared::text(&shared.room);
     }
-    let Response { el: input, changed } = text_input(ui, "room", &mut view.room);
+    let Response { el: input, changed } = bare(ui, "room", &mut view.room, false);
     if changed {
         view.room_edit = Some(now);
     }
@@ -424,17 +430,13 @@ fn build(
         view.room_edit = None;
     }
     let room = view.room.clone();
-    let mut rows = vec![field(fonts, HASH, bare(input), dice)];
+    let mut rows = vec![field(fonts, HASH, input, dice)];
 
     if view.password_edit.is_none() {
         view.password = Shared::text(&shared.password);
     }
     let show = view.show_password;
-    let Response { el: input, changed } = if show {
-        text_input(ui, "pass", &mut view.password)
-    } else {
-        masked_input(ui, "pass", &mut view.password)
-    };
+    let Response { el: input, changed } = bare(ui, "pass", &mut view.password, !show);
     if changed {
         view.password_edit = Some(now);
     }
@@ -457,7 +459,7 @@ fn build(
         },
     );
     view.show_password ^= toggle;
-    rows.push(field(fonts, LOCK, bare(input), eye));
+    rows.push(field(fonts, LOCK, input, eye));
 
     let connected = bridge.value(P::Mode) > 0.0 || enter_room;
     let picked = if !connected {
@@ -1309,35 +1311,6 @@ fn rail(r: Rail, muted: bool) -> El {
     stack(layers).grow(1.0)
 }
 
-/// A text input that shows `•` for every character. Typing and deleting go
-/// through: what changed among the dots is spliced into `value`.
-fn masked_input(ui: &mut Ui, id: &str, value: &mut String) -> Response {
-    let old: Vec<char> = value.chars().collect();
-    let mut shown = "•".repeat(old.len());
-    let Response { el, changed } = text_input(ui, id, &mut shown);
-    if changed {
-        *value = unmask(&old, &shown);
-    }
-    Response { el, changed }
-}
-
-/// `old` after the edit that turned its dots into `shown`.
-fn unmask(old: &[char], shown: &str) -> String {
-    let new: Vec<char> = shown.chars().collect();
-    let head = new.iter().take_while(|c| **c == '•').count().min(old.len());
-    let tail = new[head..]
-        .iter()
-        .rev()
-        .take_while(|c| **c == '•')
-        .count()
-        .min(old.len() - head);
-    old[..head]
-        .iter()
-        .chain(&new[head..new.len() - tail])
-        .chain(&old[old.len() - tail..])
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1459,16 +1432,6 @@ mod tests {
         assert_eq!(still.len(), 3);
         assert_ne!(format!("{still:?}"), format!("{moving:?}"));
     }
-
-    #[test]
-    fn unmask_splices_edits() {
-        let old: Vec<char> = "secret".chars().collect();
-        assert_eq!(unmask(&old, "••••••x"), "secretx");
-        assert_eq!(unmask(&old, "•••••"), "secre");
-        assert_eq!(unmask(&old, "••X••••"), "seXcret");
-        assert_eq!(unmask(&old, "ab"), "ab");
-        assert_eq!(unmask(&[], "pw"), "pw");
-    }
 }
 
 /// Renders the editor to `$TMPDIR/relay-editor-<mode>.png` on the CPU so it
@@ -1477,8 +1440,6 @@ mod tests {
 mod snapshot {
     use super::*;
     use moose_params::Params;
-    use mui::vello::vello_cpu::{Pixmap, RenderContext, Resources};
-    use mui::vello::{Cache, Cpu};
 
     fn render(mode: f64, net: Net, name: &str, about: bool) -> Vec<[f64; 4]> {
         let params = Arc::new(RelayParams::new());
@@ -1708,27 +1669,11 @@ mod snapshot {
                 );
             }
         }
-        let mut ctx = RenderContext::new(w as u16, h as u16);
-        let mut resources = Resources::default();
-        let cpu = &mut Cpu {
-            ctx: &mut ctx,
-            resources: &mut resources,
-            cache: &mut Cache::default(),
-        };
-        mui::vello::paint(
-            cpu,
-            ui.scene().unwrap(),
-            mui::vello::kurbo::Affine::scale(2.0),
-        )
-        .unwrap();
-        ctx.flush();
-        let mut pix = Pixmap::new(w as u16, h as u16);
-        ctx.render(&mut pix, &mut resources);
-        let rgba = pix.take_rgba8(mui::vello::vello_cpu::peniko::ImageAlphaType::Alpha);
+        let rgba = mui_headless::Raster::new(w as u16, h as u16)
+            .draw(ui.scene().unwrap(), 2.0)
+            .unwrap();
         let path = std::env::temp_dir().join(format!("relay-editor-{name}.png"));
-        let mut enc = png::Encoder::new(std::fs::File::create(path).unwrap(), w, h);
-        enc.set_color(png::ColorType::Rgba);
-        enc.write_header().unwrap().write_image_data(&rgba).unwrap();
+        mui_headless::write_png(&path, w, h, &rgba).unwrap();
         if !about && !view.mic_panel && mode != 0.0 {
             let id = moose::mui::widget_id(P::Quality);
             for cap in [128_000, 64_000, 510_000, 192_000] {
