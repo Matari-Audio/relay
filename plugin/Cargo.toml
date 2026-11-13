@@ -27,6 +27,5 @@ clap-sys = { version = "0.5", optional = true }
 mui = { git = "https://github.com/Matari-Audio/MUI", features = ["reporting"] }
 
 [dev-dependencies]
-mui-vello = { git = "https://github.com/Matari-Audio/MUI", features = ["cpu"] }
+mui-headless = { git = "https://github.com/Matari-Audio/MUI" }
 moose-params = { git = "https://github.com/Matari-Audio/moose" }
-png = "0.17"
