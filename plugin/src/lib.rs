@@ -172,11 +172,24 @@ impl PluginLogic for Relay {
         Dsp::new(Arc::clone(&params.link.0), true)
     }
 
+    fn prepare(
+        state: &mut Dsp,
+        params: &RelayParams,
+        config: &moose::core::plugin::PreparationConfig,
+    ) -> Result<(), moose::core::plugin::PreparationError> {
+        config.validate()?;
+        state.left.resize(config.audio.max_block_size, 0.0);
+        state.right.resize(config.audio.max_block_size, 0.0);
+        <Self as PluginLogic>::reset(state, params, &config.audio);
+        Ok(())
+    }
+
+    /// May run on the audio thread: no allocation.
     fn reset(state: &mut Dsp, _params: &RelayParams, config: &AudioConfig) {
         let rate = config.sample_rate.round().clamp(8_000.0, 384_000.0) as u32;
         state.shared.rate.store(rate, Relaxed);
-        state.left.resize(config.max_block_size, 0.0);
-        state.right.resize(config.max_block_size, 0.0);
+        state.left.fill(0.0);
+        state.right.fill(0.0);
     }
 
     fn process(
