@@ -77,7 +77,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/plugin/assets/Silkscreen-OFL.txt" .
           ${{ matrix.py }} -m zipfile -c "$out" RELAY.clap RELAY.vst3 DepartureMono-OFL.txt Silkscreen-OFL.txt
           ${{ matrix.py }} -m zipfile -l "$out"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: relay-${{ matrix.os }}
           path: target/dist/*.zip
@@ -114,7 +114,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: bash scripts/build-macos-signed.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: relay-macos
           path: target/macos-release/*.pkg
