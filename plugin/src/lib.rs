@@ -6,7 +6,7 @@
 mod ui;
 
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use moose::prelude::*;
 use moose_core::custom_state::{PersistField, StateCursor};
@@ -76,15 +76,59 @@ pub struct RelayParams {
 
 /// The editor's and link's handle on [`Shared`]; saves room, password,
 /// direct host and the room's host key with the project.
-#[derive(Clone)]
-pub struct Session(pub Arc<Shared>);
+///
+/// Also owns the instance's link thread, which outlives activations: the
+/// thread's stop flag is never cleared, so it is spawned once per instance.
+pub struct Session(pub Arc<Shared>, Arc<Mutex<Wire>>);
 
 impl Default for Session {
     fn default() -> Self {
         let shared = Shared::new();
         shared.set_text(&shared.room, &relay_core::room_name());
         shared.set_text(&shared.host_key, &relay_core::random_key());
-        Self(shared)
+        Self(shared, Arc::default())
+    }
+}
+
+/// The link thread and, between activations, the processor parked by
+/// `deactivate` with the audio ends of the link's rings.
+#[derive(Default)]
+struct Wire {
+    /// Stops and joins the link thread on drop.
+    link: Option<Link>,
+    parked: Option<RelayProcessor>,
+}
+
+impl Session {
+    fn wire(&self) -> std::sync::MutexGuard<'_, Wire> {
+        self.1.lock().expect("relay wire lock poisoned")
+    }
+
+    /// Starts the link thread; later calls do nothing. Main thread only.
+    fn start(&self) {
+        let mut wire = self.wire();
+        if wire.link.is_none() {
+            let ((tx, tx_out), (rx_in, rx)) = relay_core::rings();
+            wire.link = Some(Link::spawn(Arc::clone(&self.0), tx_out, rx_in));
+            wire.parked = Some(RelayProcessor::new(
+                Arc::clone(&self.0),
+                tx,
+                rx,
+                Arc::downgrade(&self.1),
+            ));
+        }
+    }
+
+    /// The processor last parked by `deactivate`, so its ring ends and
+    /// gains carry across activations. Main thread only.
+    fn checkout(&self) -> RelayProcessor {
+        self.start();
+        self.wire().parked.take().unwrap_or_else(|| {
+            // Only after a processor was dropped without `deactivate`
+            // (hot reload): play unlinked rather than fail activation.
+            let ((tx, _), (_, rx)) = relay_core::rings();
+            RelayProcessor::new(Arc::clone(&self.0), tx, rx, Weak::new())
+        })
     }
 }
 
@@ -126,7 +170,7 @@ impl PersistField for Session {
 
 pub struct Relay;
 
-pub struct Dsp {
+pub struct RelayProcessor {
     shared: Arc<Shared>,
     tx: relay_core::rtrb::Producer<f32>,
     playout: Playout,
@@ -135,15 +179,20 @@ pub struct Dsp {
     /// The input and output gains the last block ended on, linear.
     gain: [f32; 2],
     dry: f32,
-    /// Stops and joins the link thread on drop.
-    _link: Option<Link>,
+    /// The activation rate, clamped to what the link encodes.
+    rate: u32,
+    /// Where `deactivate` parks this processor for the next activation.
+    home: Weak<Mutex<Wire>>,
 }
 
-impl Dsp {
-    fn new(shared: Arc<Shared>, spawn: bool) -> Self {
-        let ((tx, tx_out), (rx_in, rx)) = relay_core::rings();
+impl RelayProcessor {
+    fn new(
+        shared: Arc<Shared>,
+        tx: relay_core::rtrb::Producer<f32>,
+        rx: relay_core::rtrb::Consumer<f32>,
+        home: Weak<Mutex<Wire>>,
+    ) -> Self {
         Self {
-            _link: spawn.then(|| Link::spawn(Arc::clone(&shared), tx_out, rx_in)),
             shared,
             tx,
             playout: Playout::new(rx),
@@ -151,49 +200,51 @@ impl Dsp {
             right: Vec::new(),
             gain: [1.0; 2],
             dry: 1.0,
+            rate: 48_000,
+            home,
         }
     }
 }
 
-/// Unlinked: what moose holds before `init`.
-impl Default for Dsp {
-    fn default() -> Self {
-        Self::new(Shared::new(), false)
-    }
-}
+impl Plugin for Relay {
+    type Shared = RelayParams;
+    type MainThread = ();
+    type Processor = RelayProcessor;
 
-impl PluginLogic for Relay {
-    type Params = RelayParams;
-    type DspState = Dsp;
-
-    const PRESERVE_DSP_STATE: bool = false;
-
-    fn init(params: &RelayParams, _cx: &InitContext) -> Dsp {
-        Dsp::new(Arc::clone(&params.link.0), true)
+    /// Starts the link at instantiation (CLAP, VST3); other formats start
+    /// it on the first `activate`.
+    fn main_thread(shared: &Arc<RelayParams>) {
+        shared.link.start();
     }
 
-    fn prepare(
-        state: &mut Dsp,
-        params: &RelayParams,
-        config: &moose::core::plugin::PreparationConfig,
-    ) -> Result<(), moose::core::plugin::PreparationError> {
-        config.validate()?;
-        state.left.resize(config.audio.max_block_size, 0.0);
-        state.right.resize(config.audio.max_block_size, 0.0);
-        <Self as PluginLogic>::reset(state, params, &config.audio);
-        Ok(())
+    fn activate(
+        shared: &RelayParams,
+        config: &AudioConfig,
+        _cx: &InitContext,
+    ) -> Result<RelayProcessor, PreparationError> {
+        let mut state = shared.link.checkout();
+        state.left.resize(config.max_block_size, 0.0);
+        state.right.resize(config.max_block_size, 0.0);
+        state.rate = config.sample_rate.round().clamp(8_000.0, 384_000.0) as u32;
+        <Self as Plugin>::reset(&mut state, shared);
+        Ok(state)
+    }
+
+    fn deactivate(processor: RelayProcessor) {
+        if let Some(home) = processor.home.upgrade() {
+            home.lock().expect("relay wire lock poisoned").parked = Some(processor);
+        }
     }
 
     /// May run on the audio thread: no allocation.
-    fn reset(state: &mut Dsp, _params: &RelayParams, config: &AudioConfig) {
-        let rate = config.sample_rate.round().clamp(8_000.0, 384_000.0) as u32;
-        state.shared.rate.store(rate, Relaxed);
+    fn reset(state: &mut RelayProcessor, _params: &RelayParams) {
+        state.shared.rate.store(state.rate, Relaxed);
         state.left.fill(0.0);
         state.right.fill(0.0);
     }
 
     fn process(
-        state: &mut Dsp,
+        state: &mut RelayProcessor,
         params: &RelayParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
@@ -295,7 +346,7 @@ fn ramp(x: &mut [f32], from: f32, to: f32) {
 }
 
 moose::plugin! {
-    logic: Relay,
+    plugin: Relay,
     params: RelayParams,
 }
 
@@ -310,26 +361,26 @@ mod state {
     /// 64 kbps, and the session below.
     const TRUCE_STATE: &[u8] = include_bytes!("../tests/fixtures/relay-0.2.0-truce.state");
 
-    fn texts(p: &Plugin) -> [String; 4] {
+    fn texts(p: &PluginShell) -> [String; 4] {
         let s = &p.params().link.0;
         [&s.room, &s.password, &s.peer, &s.host_key].map(Shared::text)
     }
 
-    fn values(p: &Plugin) -> [f64; 4] {
+    fn values(p: &PluginShell) -> [f64; 4] {
         [P::Mode, P::Output, P::Input, P::Quality]
             .map(|id| p.params().get_normalized(id.into()).unwrap())
     }
 
     #[test]
     fn default_room_connects_automatically_at_192_kbps() {
-        let p = Plugin::create();
+        let p = PluginShell::create();
         assert_eq!(p.params().quality.value().bps(), 192_000);
         assert!(matches!(p.params().mode.value(), Mode::Share));
     }
 
     #[test]
     fn truce_session_loads() {
-        let mut p = Plugin::create();
+        let mut p = PluginShell::create();
         restore_plugin(&mut p, TRUCE_STATE).unwrap();
         assert_eq!(values(&p), [0.5, 0.25, 0.75, 1.0]);
         assert_eq!(
@@ -346,15 +397,15 @@ mod state {
 
     #[test]
     fn round_trips() {
-        let mut a = Plugin::create();
+        let mut a = PluginShell::create();
         restore_plugin(&mut a, TRUCE_STATE).unwrap();
-        let mut b = Plugin::create();
+        let mut b = PluginShell::create();
         restore_plugin(&mut b, &snapshot_plugin(&a)).unwrap();
         assert_eq!(values(&b), values(&a));
         assert_eq!(texts(&b), texts(&a));
         assert!(!*b.params().standard_ui.read().unwrap());
         *b.params().standard_ui.write().unwrap() = true;
-        let mut c = Plugin::create();
+        let mut c = PluginShell::create();
         restore_plugin(&mut c, &snapshot_plugin(&b)).unwrap();
         assert!(*c.params().standard_ui.read().unwrap());
         assert_eq!(values(&c), values(&a));
@@ -363,7 +414,7 @@ mod state {
 
     #[test]
     fn empty_state_is_rejected() {
-        let mut p = Plugin::create();
+        let mut p = PluginShell::create();
         let before = texts(&p);
         assert!(restore_plugin(&mut p, &[]).is_err());
         assert_eq!(texts(&p), before);
@@ -376,7 +427,7 @@ moose::enable_rt_paranoid!();
 mod reset_realtime_tests {
     #[test]
     fn reset_is_realtime_after_prepare() {
-        moose_test::assert_reset_realtime::<super::Relay, f32>(
+        moose_test::assert_reset_realtime::<moose::Lifecycle<super::Relay>, f32>(
             &super::RelayParams::default(),
             &moose::prelude::AudioConfig::new(48_000.0, 512),
         );
