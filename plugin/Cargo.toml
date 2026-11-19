@@ -10,6 +10,8 @@ description = "RELAY: share the track you're on with another DAW or a browser"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
+# Counting allocator for the real-time tests: `cargo test --features rt-paranoid`.
+rt-paranoid = ["moose/rt-paranoid"]
 default = ["clap", "vst3"]
 clap = ["dep:moose-clap", "dep:clap-sys", "moose/clap"]
 vst3 = ["dep:moose-vst3", "moose/vst3"]
@@ -27,5 +29,6 @@ clap-sys = { version = "0.5", optional = true }
 mui = { git = "https://github.com/Matari-Audio/MUI", features = ["reporting"] }
 
 [dev-dependencies]
+moose-test = { git = "https://github.com/Matari-Audio/moose" }
 mui-headless = { git = "https://github.com/Matari-Audio/MUI" }
 moose-params = { git = "https://github.com/Matari-Audio/moose" }

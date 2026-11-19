@@ -75,6 +75,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "addr2line"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e567177890eb1617b1f774005b66b26b2377afd138a2ca37aae7d8f0c81429d4"
+dependencies = [
+ "gimli",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -467,6 +476,21 @@ dependencies = [
  "dunce",
  "fs_extra",
  "pkg-config",
+]
+
+[[package]]
+name = "backtrace"
+version = "0.3.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42f4220217f3288537b83684130f42fad43320b1c3b805f1910d683d52ded24f"
+dependencies = [
+ "addr2line",
+ "cfg-if",
+ "libc",
+ "miniz_oxide 0.9.1",
+ "object",
+ "rustc-demangle",
+ "windows-link",
 ]
 
 [[package]]
@@ -1544,6 +1568,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "gimli"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2431,6 +2461,7 @@ dependencies = [
 name = "moose-core"
 version = "7.0.0"
 dependencies = [
+ "backtrace",
  "crossbeam-queue",
  "crossbeam-utils",
  "moose-params",
@@ -2450,6 +2481,14 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "toml",
+]
+
+[[package]]
+name = "moose-driver"
+version = "7.0.0"
+dependencies = [
+ "moose-core",
+ "moose-params",
 ]
 
 [[package]]
@@ -2502,6 +2541,19 @@ dependencies = [
 [[package]]
 name = "moose-shim-types"
 version = "7.0.0"
+
+[[package]]
+name = "moose-test"
+version = "7.0.0"
+dependencies = [
+ "moose-build",
+ "moose-core",
+ "moose-driver",
+ "moose-params",
+ "moose-plugin",
+ "png",
+ "toml",
+]
 
 [[package]]
 name = "moose-utils"
@@ -3113,6 +3165,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3675,6 +3736,7 @@ dependencies = [
  "moose-clap",
  "moose-core",
  "moose-params",
+ "moose-test",
  "moose-vst3",
  "mui",
  "mui-headless",
@@ -3736,6 +3798,12 @@ dependencies = [
  "visibility",
  "windowfunctions",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"
@@ -5902,8 +5970,4 @@ version = "7.0.0"
 
 [[patch.unused]]
 name = "moose-standalone"
-version = "7.0.0"
-
-[[patch.unused]]
-name = "moose-test"
 version = "7.0.0"

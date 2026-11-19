@@ -369,3 +369,16 @@ mod state {
         assert_eq!(texts(&p), before);
     }
 }
+
+moose::enable_rt_paranoid!();
+
+#[cfg(all(test, feature = "rt-paranoid"))]
+mod reset_realtime_tests {
+    #[test]
+    fn reset_is_realtime_after_prepare() {
+        moose_test::assert_reset_realtime::<super::Relay, f32>(
+            &super::RelayParams::default(),
+            &moose::prelude::AudioConfig::new(48_000.0, 512),
+        );
+    }
+}
