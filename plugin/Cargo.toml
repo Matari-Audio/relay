@@ -17,6 +17,8 @@ clap = ["dep:moose-clap", "dep:clap-sys", "moose/clap"]
 vst3 = ["dep:moose-vst3", "moose/vst3"]
 # AU v2 (macOS): `cargo moose build --au2`.
 au = ["dep:moose-au", "moose/au"]
+# AAX (macOS/Windows): `cargo moose build --aax`.
+aax = ["moose/aax"]
 
 [dependencies]
 relay-core = { path = "../core" }
