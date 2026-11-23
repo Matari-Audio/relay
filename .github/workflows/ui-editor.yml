@@ -106,10 +106,8 @@ jobs:
           fallback = os.environ["MUI_RENDERER"] == "gpu" and os.environ["WGPU_BACKEND"] == "gl"
           frame = "mui-baseview/cpu_frame_presented" if fallback or os.environ["MUI_RENDERER"] == "cpu" else "mui-vello/frame_presented"
           assert any(frame in line for line in lines), f"missing successful presentation: {frame}"
-          allowed = {
-              "mui-vello/cpu_presenter: no compute-capable native backend enabled",
-              "mui-baseview/window_error: mui-baseview: GPU unavailable (no compute-capable native backend enabled); using CPU rendering",
-          } if fallback else set()
+          # The native session excludes GL before attempting to create a surface.
+          allowed = {"mui-vello/cpu_presenter: no native GPU backend enabled"} if fallback else set()
           errors = [line.split(" ERROR ", 1)[1] for line in lines if " ERROR " in line]
           if fallback:
               assert allowed.issubset(errors), "GL must record the expected native-backend fallback"
