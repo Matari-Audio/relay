@@ -38,7 +38,6 @@ dependencies = [
 [[package]]
 name = "accesskit_macos"
 version = "0.26.3"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -51,7 +50,6 @@ dependencies = [
 [[package]]
 name = "accesskit_unix"
 version = "0.22.1"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "accesskit",
  "accesskit_atspi_common",
@@ -204,7 +202,7 @@ dependencies = [
  "nom 7.1.3",
  "num-traits",
  "rusticata-macros",
- "thiserror 2.0.21",
+ "thiserror",
  "time",
 ]
 
@@ -972,15 +970,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctor"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83cf0d42651b16c6dfe68685716d18480d18a9c39c62d76e8cf3eb6ed5d8bcbf"
-dependencies = [
- "dtor",
-]
-
-[[package]]
 name = "ctr"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1194,12 +1183,6 @@ name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
-
-[[package]]
-name = "dtor"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
 name = "dunce"
@@ -1578,7 +1561,6 @@ checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 [[package]]
 name = "glifo"
 version = "0.4.0"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "bytemuck",
  "foldhash",
@@ -1601,7 +1583,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "log",
  "presser",
- "thiserror 2.0.21",
+ "thiserror",
  "windows",
 ]
 
@@ -1705,7 +1687,7 @@ dependencies = [
  "ipnet",
  "jni",
  "rand 0.10.3",
- "thiserror 2.0.21",
+ "thiserror",
  "tinyvec",
  "tokio",
  "tracing",
@@ -1726,7 +1708,7 @@ dependencies = [
  "prefix-trie",
  "rand 0.10.3",
  "ring",
- "thiserror 2.0.21",
+ "thiserror",
  "tinyvec",
  "tracing",
  "url",
@@ -1753,7 +1735,7 @@ dependencies = [
  "resolv-conf",
  "smallvec",
  "system-configuration",
- "thiserror 2.0.21",
+ "thiserror",
  "tokio",
  "tracing",
 ]
@@ -2039,10 +2021,10 @@ dependencies = [
  "cfg-if",
  "combine",
  "jni-macros",
- "jni-sys 0.4.1",
+ "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.21",
+ "thiserror",
  "walkdir",
  "windows-link",
 ]
@@ -2058,15 +2040,6 @@ dependencies = [
  "rustc_version",
  "simd_cesu8",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "jni-sys"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41a652e1f9b6e0275df1f15b32661cf0d4b78d4d87ddec5e0c3c20f097433258"
-dependencies = [
- "jni-sys 0.4.1",
 ]
 
 [[package]]
@@ -2222,7 +2195,6 @@ dependencies = [
 [[package]]
 name = "matari-audio-drag-and-drop"
 version = "0.1.6"
-source = "git+https://github.com/Matari-Audio/matari-audio-drag-and-drop?rev=cdf658f67ba5a17b7370dd0577a347ab41a88978#cdf658f67ba5a17b7370dd0577a347ab41a88978"
 dependencies = [
  "libc",
  "objc2 0.6.4",
@@ -2334,7 +2306,6 @@ dependencies = [
 [[package]]
 name = "moose"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-aax",
  "moose-au",
@@ -2352,7 +2323,6 @@ dependencies = [
 [[package]]
 name = "moose-aax"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-core",
  "moose-params",
@@ -2361,7 +2331,6 @@ dependencies = [
 [[package]]
 name = "moose-au"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -2373,7 +2342,6 @@ dependencies = [
 [[package]]
 name = "moose-baseview"
 version = "0.4.1-moose.1"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "block2 0.6.2",
  "bytemuck",
@@ -2408,7 +2376,6 @@ dependencies = [
 [[package]]
 name = "moose-build"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "base64 0.22.1",
  "moose-utils",
@@ -2419,7 +2386,6 @@ dependencies = [
 [[package]]
 name = "moose-clap"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -2432,7 +2398,6 @@ dependencies = [
 [[package]]
 name = "moose-core"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "backtrace",
  "bitflags",
@@ -2448,7 +2413,6 @@ dependencies = [
 [[package]]
 name = "moose-derive"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-build",
  "moose-params",
@@ -2462,7 +2426,6 @@ dependencies = [
 [[package]]
 name = "moose-driver"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-core",
  "moose-params",
@@ -2471,7 +2434,6 @@ dependencies = [
 [[package]]
 name = "moose-gui-types"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-core",
  "objc2 0.6.4",
@@ -2480,7 +2442,6 @@ dependencies = [
 [[package]]
 name = "moose-loader"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "crc32fast",
  "log",
@@ -2493,7 +2454,6 @@ dependencies = [
 [[package]]
 name = "moose-mui"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-core",
  "moose-params",
@@ -2505,7 +2465,6 @@ dependencies = [
 [[package]]
 name = "moose-params"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "bitflags",
 ]
@@ -2513,7 +2472,6 @@ dependencies = [
 [[package]]
 name = "moose-plugin"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-core",
  "moose-gui-types",
@@ -2523,12 +2481,10 @@ dependencies = [
 [[package]]
 name = "moose-shim-types"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 
 [[package]]
 name = "moose-test"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "moose-build",
  "moose-core",
@@ -2542,12 +2498,10 @@ dependencies = [
 [[package]]
 name = "moose-utils"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 
 [[package]]
 name = "moose-vst3"
 version = "7.0.0"
-source = "git+https://github.com/Matari-Audio/moose#b6186b4a1139b2c06d747889cfbdbf218282c5e7"
 dependencies = [
  "crossbeam-queue",
  "libc",
@@ -2559,7 +2513,6 @@ dependencies = [
 [[package]]
 name = "mui"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "color",
  "mui-geometry",
@@ -2577,7 +2530,6 @@ dependencies = [
 [[package]]
 name = "mui-access"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "accesskit",
  "mui-geometry",
@@ -2588,7 +2540,6 @@ dependencies = [
 [[package]]
 name = "mui-baseview"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "accesskit_macos",
  "accesskit_unix",
@@ -2599,9 +2550,10 @@ dependencies = [
  "moose-baseview",
  "mui",
  "mui-access",
- "objc",
+ "mui-present",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "raw-window-handle",
  "serde_json",
  "wgpu",
@@ -2614,7 +2566,6 @@ dependencies = [
 [[package]]
 name = "mui-geometry"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "i_overlay",
  "kurbo",
@@ -2624,7 +2575,6 @@ dependencies = [
 [[package]]
 name = "mui-headless"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "mui",
  "png",
@@ -2634,7 +2584,6 @@ dependencies = [
 [[package]]
 name = "mui-input"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "mui-geometry",
  "mui-layout",
@@ -2644,7 +2593,6 @@ dependencies = [
 [[package]]
 name = "mui-layout"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "arrayvec",
  "rustc-hash 2.1.3",
@@ -2654,7 +2602,6 @@ dependencies = [
 [[package]]
 name = "mui-material"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "mui-scene",
 ]
@@ -2662,12 +2609,30 @@ dependencies = [
 [[package]]
 name = "mui-motion"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
+
+[[package]]
+name = "mui-present"
+version = "0.4.2"
+dependencies = [
+ "ash",
+ "libc",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-io-surface",
+ "objc2-quartz-core 0.3.2",
+ "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "windows-sys 0.61.2",
+ "x11rb",
+]
 
 [[package]]
 name = "mui-scene"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "mui-geometry",
  "mui-layout",
@@ -2681,9 +2646,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mui-shaders"
+version = "0.4.2"
+dependencies = [
+ "naga",
+]
+
+[[package]]
 name = "mui-style"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "color",
  "kurbo",
@@ -2696,12 +2667,10 @@ dependencies = [
 [[package]]
 name = "mui-symbols"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 
 [[package]]
 name = "mui-text"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "harfrust",
  "mui-geometry",
@@ -2715,22 +2684,21 @@ dependencies = [
 [[package]]
 name = "mui-vello"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "glifo",
  "hickory-resolver",
  "mach-dxcompiler-rs",
  "moose-baseview",
  "mui-geometry",
+ "mui-present",
  "mui-scene",
+ "mui-shaders",
  "mui-weld",
- "objc",
  "pollster",
  "raw-window-handle",
  "rustc-hash 2.1.3",
  "serde_json",
  "sha2",
- "softbuffer",
  "tokio",
  "ureq",
  "vello_common",
@@ -2741,7 +2709,6 @@ dependencies = [
 [[package]]
 name = "mui-weld"
 version = "0.4.2"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "color",
  "kurbo",
@@ -2776,7 +2743,7 @@ dependencies = [
  "once_cell",
  "rustc-hash 1.1.0",
  "spirv",
- "thiserror 2.0.21",
+ "thiserror",
  "unicode-ident",
 ]
 
@@ -2789,22 +2756,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
  "rustc-hash 1.1.0",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ndk"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3f42e7bbe13d351b6bead8286a43aac9534b82bd3cc43e47037f012ebfd62d4"
-dependencies = [
- "bitflags",
- "jni-sys 0.3.1",
- "log",
- "ndk-sys",
- "num_enum",
- "raw-window-handle",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -2812,15 +2764,6 @@ name = "ndk-context"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
-
-[[package]]
-name = "ndk-sys"
-version = "0.6.0+11769913"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
-dependencies = [
- "jni-sys 0.3.1",
-]
 
 [[package]]
 name = "netdev"
@@ -2926,28 +2869,6 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
-]
-
-[[package]]
-name = "num_enum"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
-dependencies = [
- "num_enum_derive",
- "rustversion",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -3101,6 +3022,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
 dependencies = [
  "bitflags",
+ "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
 ]
@@ -3912,7 +3834,7 @@ dependencies = [
  "rand 0.9.5",
  "rustc-hash 2.1.3",
  "slab",
- "thiserror 2.0.21",
+ "thiserror",
 ]
 
 [[package]]
@@ -4122,7 +4044,7 @@ dependencies = [
  "memmap2",
  "pkg-config",
  "rustix",
- "thiserror 2.0.21",
+ "thiserror",
  "wayland-client",
  "wayland-csd-frame",
  "wayland-cursor",
@@ -4154,37 +4076,6 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "softbuffer"
-version = "0.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aac18da81ebbf05109ab275b157c22a653bb3c12cf884450179942f81bcbf6c3"
-dependencies = [
- "as-raw-xcb-connection",
- "bytemuck",
- "fastrand",
- "js-sys",
- "memmap2",
- "ndk",
- "objc2 0.6.4",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "raw-window-handle",
- "redox_syscall",
- "rustix",
- "tiny-xlib",
- "tracing",
- "wasm-bindgen",
- "wayland-backend",
- "wayland-client",
- "wayland-sys",
- "web-sys",
- "windows-sys 0.61.2",
- "x11rb",
 ]
 
 [[package]]
@@ -4372,31 +4263,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.21",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -4447,19 +4318,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
-]
-
-[[package]]
-name = "tiny-xlib"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a90a0ca3ee6a69f2ad28fd11621a4c3f03b371f366be500b64df260c4ffbafb4"
-dependencies = [
- "as-raw-xcb-connection",
- "ctor",
- "libloading",
- "pkg-config",
- "tracing",
 ]
 
 [[package]]
@@ -4615,7 +4473,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1 0.11.0",
- "thiserror 2.0.21",
+ "thiserror",
  "webpki-roots 0.26.11",
 ]
 
@@ -4765,13 +4623,12 @@ dependencies = [
  "peniko",
  "png",
  "smallvec",
- "thiserror 2.0.21",
+ "thiserror",
 ]
 
 [[package]]
 name = "vello_cpu"
 version = "0.3.0"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "bytemuck",
  "glifo",
@@ -5090,7 +4947,7 @@ dependencies = [
  "raw-window-handle",
  "rustc-hash 1.1.0",
  "smallvec",
- "thiserror 2.0.21",
+ "thiserror",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
@@ -5157,7 +5014,7 @@ dependencies = [
  "renderdoc-sys",
  "smallvec",
  "static_assertions",
- "thiserror 2.0.21",
+ "thiserror",
  "wgpu-naga-bridge",
  "wgpu-types",
  "windows",
@@ -5530,7 +5387,7 @@ dependencies = [
  "nom 7.1.3",
  "oid-registry",
  "rusticata-macros",
- "thiserror 2.0.21",
+ "thiserror",
  "time",
 ]
 
@@ -5543,7 +5400,6 @@ checksum = "163b33ed8786455e2fa5d72f554057ce3f3182425434f756cd39c99839d88e23"
 [[package]]
 name = "xim-ctext"
 version = "0.3.0"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "encoding_rs",
 ]
@@ -5551,7 +5407,6 @@ dependencies = [
 [[package]]
 name = "xim-parser"
 version = "0.2.1"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "bitflags",
 ]
@@ -5747,7 +5602,6 @@ dependencies = [
 [[package]]
 name = "zed-xim"
 version = "0.4.0-zed"
-source = "git+https://github.com/Matari-Audio/MUI#7c5834ccd71fcd688d94b42dc2456810d39f207d"
 dependencies = [
  "ahash",
  "hashbrown 0.14.5",
