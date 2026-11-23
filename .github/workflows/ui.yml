@@ -42,7 +42,9 @@ jobs:
           sources = {p['source'].split('#')[-1] for p in tomllib.loads(pathlib.Path('Cargo.lock').read_text())['package'] if 'Matari-Audio/MUI' in p.get('source', '')}
           assert sources == {revision}, f'MUI reporting identity differs from compiled sources: {sources}'
           PYPIN
-          cargo build --locked --release -p relay-plugin --lib
+          # This VST3 is for editor CI only. MUI's test support allows the Vulkan
+          # lane to exercise GPU rendering with Mesa's CPU Vulkan adapter.
+          cargo build --locked --release -p relay-plugin --lib --features mui/test-support
           mkdir -p ui-plugin/RELAY.vst3/Contents/x86_64-linux
           cp target/release/librelay_plugin.so ui-plugin/RELAY.vst3/Contents/x86_64-linux/RELAY.so
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
