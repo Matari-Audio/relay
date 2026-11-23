@@ -291,7 +291,7 @@ fn new_ui() -> (Ui, Fonts) {
 pub fn editor(params: Arc<RelayParams>) -> Box<dyn Editor> {
     let mut config = mui::diagnostics::Config::new("relay", env!("CARGO_PKG_VERSION"));
     config.build = option_env!("APP_GIT_REVISION").unwrap_or("unknown").into();
-    config.mui_revision = "41084a94dc9e811bb4955cd34b94cedcdc82efaa".into();
+    config.mui_revision = "8e75c85baf15f97abd787efee3f122e595c02caa".into();
     let reporter = mui::diagnostics::Reporter::start(config)
         .inspect_err(|error| eprintln!("RELAY MUI reporting: {error}"))
         .ok();
