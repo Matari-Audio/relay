@@ -1372,7 +1372,13 @@ mod tests {
             host.poll(at);
             while let Some((local, from, n)) = guest.ice.recv() {
                 let data = &guest.ice.buf[..n];
-                if data.len() >= 12 && data[0] & 0xc0 == 0x80 && data[1] & 0x7f == *PT {
+                // str0m emits non-media BWE padding probes with the negotiated
+                // payload type on SSRC 0; only count and drop real media RTP.
+                let is_media_rtp = data.len() >= 12
+                    && data[0] & 0xc0 == 0x80
+                    && data[1] & 0x7f == *PT
+                    && data[8..12] != [0, 0, 0, 0];
+                if is_media_rtp {
                     packets += 1;
                     if packets == 2 {
                         continue;
