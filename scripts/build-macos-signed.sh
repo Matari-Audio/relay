@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Universal (arm64 + x86_64) RELAY CLAP/VST3/AU, signed, packaged as a .pkg,
-# notarized and stapled. Same flow and secret names as KURV's
-# scripts/build-macos-signed.sh. Runs on a macOS runner.
+# notarized and stapled. Same flow and secret names as the other
+# Matari plugins' macOS signing scripts. Runs on a macOS runner.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"

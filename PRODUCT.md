@@ -21,7 +21,7 @@ Success is audio that stays up with no account and nothing to configure.
 
 ## Positioning
 
-Matari Audio, same line as BUFFR. Peer to peer like SonoBus, simple like
+Matari Audio, same product line as the other Matari plugins. Peer to peer like SonoBus, simple like
 Audiomovers' link, and free to run: the operator hosts signaling only.
 
 ## Operating Context
