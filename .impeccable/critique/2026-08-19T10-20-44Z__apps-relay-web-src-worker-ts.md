@@ -39,7 +39,7 @@ Live: https://relay.matari-audio.com/<session>
 
 ## Overall Impression
 
-A debug build of a listen accessory. Token lock is right; the objects are wrong. Biggest opportunity: a BUFFR channel strip (vertical L+R, tactile fader, typeable session name) instead of a centered card with a log dump.
+A debug build of a listen accessory. Token lock is right; the objects are wrong. Biggest opportunity: a hardware-style channel strip (vertical L+R, tactile fader, typeable session name) instead of a centered card with a log dump.
 
 ## What's Working
 

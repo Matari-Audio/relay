@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publish a RELAY release to the matari-audio.com R2 manifest.
 
-Adapted from KURV's scripts/ci/publish-release.py: uploads the three platform
+Adapted from the shared Matari publish-release.py: uploads the three platform
 zips to R2 with wrangler and merges the release into manifest.json, which
 drives the download panel. Notes come from the version's CHANGELOG.md section.
 
@@ -64,7 +64,7 @@ def release_notes(ver: str) -> list[str]:
 
 
 def merge_manifest(manifest: dict, release: dict) -> tuple[dict, list[str]]:
-    # Same merge as KURV publish-release.py / release-plugins-podman.sh.
+    # Same merge as the other Matari publish-release.py / release-plugins-podman.sh.
     products = manifest.setdefault("products", [])
     old = next((p for p in products if p.get("id") == PLUGIN_ID), None)
     old_releases = (old or {}).get("releases", []) or []
@@ -131,7 +131,7 @@ def main() -> int:
         wrangler("r2", "object", "put", f"{BUCKET}/{keys[p]}", "--remote", "--file", str(a),
                  "--content-type", "application/zip")
     old_path = work / "manifest.json"
-    # Unlike KURV's copy, a failed read aborts: falling back to an empty
+    # Unlike older copies, a failed read aborts: falling back to an empty
     # manifest would erase every other product from the download panel.
     wrangler("r2", "object", "get", f"{BUCKET}/manifest.json", "--remote", "--file", str(old_path))
     manifest = json.loads(old_path.read_text())
